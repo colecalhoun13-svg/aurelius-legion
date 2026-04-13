@@ -1,0 +1,17 @@
+export type OperatorType =
+  | "athlete"
+  | "strategy"
+  | "training"
+  | "business"
+  | "wealth"
+  | "finance"
+  | "identity"
+  | "scheduling"
+  | "weeklyPlanning"
+  | "research"
+  | "content"
+  | "accountability"
+  | "goal"
+  | "tasks"
+  | "dailyPlanning"
+  | "reflection";

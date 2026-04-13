@@ -1,0 +1,45 @@
+/* ===============================================
+   AURELIUS OS 3.4 — GLOBAL STYLES
+   Includes Tailwind base + Aurelius identity layer.
+   =============================================== */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===============================================
+   AURELIUS — COLOR VARIABLES
+   =============================================== */
+:root {
+  --aurelius-bg: #0a0a0a;
+  --aurelius-panel: #111111;
+  --aurelius-border: #2a2a2a;
+  --aurelius-text: #e5e5e5;
+  --aurelius-gold: #d4af37;
+}
+
+/* ===============================================
+   AURELIUS — FADE IN ANIMATION (Startup Crest)
+   =============================================== */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 1.2s ease-out forwards;
+}
+
+/* ===============================================
+   GLOBAL BODY STYLING
+   =============================================== */
+body {
+  background: var(--aurelius-bg);
+  color: var(--aurelius-text);
+}

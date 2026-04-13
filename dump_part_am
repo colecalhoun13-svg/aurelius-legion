@@ -1,0 +1,3069 @@
+he resource it is pointing to. */
+        const O_SYMLINK: number;
+        /** Constant for fs.open(). When set, an attempt will be made to minimize caching effects of file I/O. */
+        const O_DIRECT: number;
+        /** Constant for fs.open(). Flag indicating to open the file in nonblocking mode when possible. */
+        const O_NONBLOCK: number;
+        // File Type Constants
+        /** Constant for fs.Stats mode property for determining a file's type. Bit mask used to extract the file type code. */
+        const S_IFMT: number;
+        /** Constant for fs.Stats mode property for determining a file's type. File type constant for a regular file. */
+        const S_IFREG: number;
+        /** Constant for fs.Stats mode property for determining a file's type. File type constant for a directory. */
+        const S_IFDIR: number;
+        /** Constant for fs.Stats mode property for determining a file's type. File type constant for a character-oriented device file. */
+        const S_IFCHR: number;
+        /** Constant for fs.Stats mode property for determining a file's type. File type constant for a block-oriented device file. */
+        const S_IFBLK: number;
+        /** Constant for fs.Stats mode property for determining a file's type. File type constant for a FIFO/pipe. */
+        const S_IFIFO: number;
+        /** Constant for fs.Stats mode property for determining a file's type. File type constant for a symbolic link. */
+        const S_IFLNK: number;
+        /** Constant for fs.Stats mode property for determining a file's type. File type constant for a socket. */
+        const S_IFSOCK: number;
+        // File Mode Constants
+        /** Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating readable, writable and executable by owner. */
+        const S_IRWXU: number;
+        /** Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating readable by owner. */
+        const S_IRUSR: number;
+        /** Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating writable by owner. */
+        const S_IWUSR: number;
+        /** Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating executable by owner. */
+        const S_IXUSR: number;
+        /** Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating readable, writable and executable by group. */
+        const S_IRWXG: number;
+        /** Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating readable by group. */
+        const S_IRGRP: number;
+        /** Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating writable by group. */
+        const S_IWGRP: number;
+        /** Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating executable by group. */
+        const S_IXGRP: number;
+        /** Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating readable, writable and executable by others. */
+        const S_IRWXO: number;
+        /** Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating readable by others. */
+        const S_IROTH: number;
+        /** Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating writable by others. */
+        const S_IWOTH: number;
+        /** Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating executable by others. */
+        const S_IXOTH: number;
+        /**
+         * When set, a memory file mapping is used to access the file. This flag
+         * is available on Windows operating systems only. On other operating systems,
+         * this flag is ignored.
+         */
+        const UV_FS_O_FILEMAP: number;
+    }
+    /**
+     * Tests a user's permissions for the file or directory specified by `path`.
+     * The `mode` argument is an optional integer that specifies the accessibility
+     * checks to be performed. `mode` should be either the value `fs.constants.F_OK` or a mask consisting of the bitwise OR of any of `fs.constants.R_OK`, `fs.constants.W_OK`, and `fs.constants.X_OK`
+     * (e.g.`fs.constants.W_OK | fs.constants.R_OK`). Check `File access constants` for
+     * possible values of `mode`.
+     *
+     * The final argument, `callback`, is a callback function that is invoked with
+     * a possible error argument. If any of the accessibility checks fail, the error
+     * argument will be an `Error` object. The following examples check if `package.json` exists, and if it is readable or writable.
+     *
+     * ```js
+     * import { access, constants } from 'node:fs';
+     *
+     * const file = 'package.json';
+     *
+     * // Check if the file exists in the current directory.
+     * access(file, constants.F_OK, (err) => {
+     *   console.log(`${file} ${err ? 'does not exist' : 'exists'}`);
+     * });
+     *
+     * // Check if the file is readable.
+     * access(file, constants.R_OK, (err) => {
+     *   console.log(`${file} ${err ? 'is not readable' : 'is readable'}`);
+     * });
+     *
+     * // Check if the file is writable.
+     * access(file, constants.W_OK, (err) => {
+     *   console.log(`${file} ${err ? 'is not writable' : 'is writable'}`);
+     * });
+     *
+     * // Check if the file is readable and writable.
+     * access(file, constants.R_OK | constants.W_OK, (err) => {
+     *   console.log(`${file} ${err ? 'is not' : 'is'} readable and writable`);
+     * });
+     * ```
+     *
+     * Do not use `fs.access()` to check for the accessibility of a file before calling `fs.open()`, `fs.readFile()`, or `fs.writeFile()`. Doing
+     * so introduces a race condition, since other processes may change the file's
+     * state between the two calls. Instead, user code should open/read/write the
+     * file directly and handle the error raised if the file is not accessible.
+     *
+     * **write (NOT RECOMMENDED)**
+     *
+     * ```js
+     * import { access, open, close } from 'node:fs';
+     *
+     * access('myfile', (err) => {
+     *   if (!err) {
+     *     console.error('myfile already exists');
+     *     return;
+     *   }
+     *
+     *   open('myfile', 'wx', (err, fd) => {
+     *     if (err) throw err;
+     *
+     *     try {
+     *       writeMyData(fd);
+     *     } finally {
+     *       close(fd, (err) => {
+     *         if (err) throw err;
+     *       });
+     *     }
+     *   });
+     * });
+     * ```
+     *
+     * **write (RECOMMENDED)**
+     *
+     * ```js
+     * import { open, close } from 'node:fs';
+     *
+     * open('myfile', 'wx', (err, fd) => {
+     *   if (err) {
+     *     if (err.code === 'EEXIST') {
+     *       console.error('myfile already exists');
+     *       return;
+     *     }
+     *
+     *     throw err;
+     *   }
+     *
+     *   try {
+     *     writeMyData(fd);
+     *   } finally {
+     *     close(fd, (err) => {
+     *       if (err) throw err;
+     *     });
+     *   }
+     * });
+     * ```
+     *
+     * **read (NOT RECOMMENDED)**
+     *
+     * ```js
+     * import { access, open, close } from 'node:fs';
+     * access('myfile', (err) => {
+     *   if (err) {
+     *     if (err.code === 'ENOENT') {
+     *       console.error('myfile does not exist');
+     *       return;
+     *     }
+     *
+     *     throw err;
+     *   }
+     *
+     *   open('myfile', 'r', (err, fd) => {
+     *     if (err) throw err;
+     *
+     *     try {
+     *       readMyData(fd);
+     *     } finally {
+     *       close(fd, (err) => {
+     *         if (err) throw err;
+     *       });
+     *     }
+     *   });
+     * });
+     * ```
+     *
+     * **read (RECOMMENDED)**
+     *
+     * ```js
+     * import { open, close } from 'node:fs';
+     *
+     * open('myfile', 'r', (err, fd) => {
+     *   if (err) {
+     *     if (err.code === 'ENOENT') {
+     *       console.error('myfile does not exist');
+     *       return;
+     *     }
+     *
+     *     throw err;
+     *   }
+     *
+     *   try {
+     *     readMyData(fd);
+     *   } finally {
+     *     close(fd, (err) => {
+     *       if (err) throw err;
+     *     });
+     *   }
+     * });
+     * ```
+     *
+     * The "not recommended" examples above check for accessibility and then use the
+     * file; the "recommended" examples are better because they use the file directly
+     * and handle the error, if any.
+     *
+     * In general, check for the accessibility of a file only if the file will not be
+     * used directly, for example when its accessibility is a signal from another
+     * process.
+     *
+     * On Windows, access-control policies (ACLs) on a directory may limit access to
+     * a file or directory. The `fs.access()` function, however, does not check the
+     * ACL and therefore may report that a path is accessible even if the ACL restricts
+     * the user from reading or writing to it.
+     * @since v0.11.15
+     * @param [mode=fs.constants.F_OK]
+     */
+    function access(path: PathLike, mode: number | undefined, callback: NoParamCallback): void;
+    /**
+     * Asynchronously tests a user's permissions for the file specified by path.
+     * @param path A path to a file or directory. If a URL is provided, it must use the `file:` protocol.
+     */
+    function access(path: PathLike, callback: NoParamCallback): void;
+    namespace access {
+        /**
+         * Asynchronously tests a user's permissions for the file specified by path.
+         * @param path A path to a file or directory. If a URL is provided, it must use the `file:` protocol.
+         * URL support is _experimental_.
+         */
+        function __promisify__(path: PathLike, mode?: number): Promise<void>;
+    }
+    /**
+     * Synchronously tests a user's permissions for the file or directory specified
+     * by `path`. The `mode` argument is an optional integer that specifies the
+     * accessibility checks to be performed. `mode` should be either the value `fs.constants.F_OK` or a mask consisting of the bitwise OR of any of `fs.constants.R_OK`, `fs.constants.W_OK`, and
+     * `fs.constants.X_OK` (e.g.`fs.constants.W_OK | fs.constants.R_OK`). Check `File access constants` for
+     * possible values of `mode`.
+     *
+     * If any of the accessibility checks fail, an `Error` will be thrown. Otherwise,
+     * the method will return `undefined`.
+     *
+     * ```js
+     * import { accessSync, constants } from 'node:fs';
+     *
+     * try {
+     *   accessSync('etc/passwd', constants.R_OK | constants.W_OK);
+     *   console.log('can read/write');
+     * } catch (err) {
+     *   console.error('no access!');
+     * }
+     * ```
+     * @since v0.11.15
+     * @param [mode=fs.constants.F_OK]
+     */
+    function accessSync(path: PathLike, mode?: number): void;
+    interface StreamOptions {
+        flags?: string | undefined;
+        encoding?: BufferEncoding | undefined;
+        fd?: number | FileHandle | undefined;
+        mode?: number | undefined;
+        autoClose?: boolean | undefined;
+        emitClose?: boolean | undefined;
+        start?: number | undefined;
+        signal?: AbortSignal | null | undefined;
+        highWaterMark?: number | undefined;
+    }
+    interface FSImplementation {
+        open?: (...args: any[]) => any;
+        close?: (...args: any[]) => any;
+    }
+    interface CreateReadStreamFSImplementation extends FSImplementation {
+        read: (...args: any[]) => any;
+    }
+    interface CreateWriteStreamFSImplementation extends FSImplementation {
+        write: (...args: any[]) => any;
+        writev?: (...args: any[]) => any;
+    }
+    interface ReadStreamOptions extends StreamOptions {
+        fs?: CreateReadStreamFSImplementation | null | undefined;
+        end?: number | undefined;
+    }
+    interface WriteStreamOptions extends StreamOptions {
+        fs?: CreateWriteStreamFSImplementation | null | undefined;
+        flush?: boolean | undefined;
+    }
+    /**
+     * `options` can include `start` and `end` values to read a range of bytes from
+     * the file instead of the entire file. Both `start` and `end` are inclusive and
+     * start counting at 0, allowed values are in the
+     * \[0, [`Number.MAX_SAFE_INTEGER`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number/MAX_SAFE_INTEGER)\] range. If `fd` is specified and `start` is
+     * omitted or `undefined`, `fs.createReadStream()` reads sequentially from the
+     * current file position. The `encoding` can be any one of those accepted by `Buffer`.
+     *
+     * If `fd` is specified, `ReadStream` will ignore the `path` argument and will use
+     * the specified file descriptor. This means that no `'open'` event will be
+     * emitted. `fd` should be blocking; non-blocking `fd`s should be passed to `net.Socket`.
+     *
+     * If `fd` points to a character device that only supports blocking reads
+     * (such as keyboard or sound card), read operations do not finish until data is
+     * available. This can prevent the process from exiting and the stream from
+     * closing naturally.
+     *
+     * By default, the stream will emit a `'close'` event after it has been
+     * destroyed.  Set the `emitClose` option to `false` to change this behavior.
+     *
+     * By providing the `fs` option, it is possible to override the corresponding `fs` implementations for `open`, `read`, and `close`. When providing the `fs` option,
+     * an override for `read` is required. If no `fd` is provided, an override for `open` is also required. If `autoClose` is `true`, an override for `close` is
+     * also required.
+     *
+     * ```js
+     * import { createReadStream } from 'node:fs';
+     *
+     * // Create a stream from some character device.
+     * const stream = createReadStream('/dev/input/event0');
+     * setTimeout(() => {
+     *   stream.close(); // This may not close the stream.
+     *   // Artificially marking end-of-stream, as if the underlying resource had
+     *   // indicated end-of-file by itself, allows the stream to close.
+     *   // This does not cancel pending read operations, and if there is such an
+     *   // operation, the process may still not be able to exit successfully
+     *   // until it finishes.
+     *   stream.push(null);
+     *   stream.read(0);
+     * }, 100);
+     * ```
+     *
+     * If `autoClose` is false, then the file descriptor won't be closed, even if
+     * there's an error. It is the application's responsibility to close it and make
+     * sure there's no file descriptor leak. If `autoClose` is set to true (default
+     * behavior), on `'error'` or `'end'` the file descriptor will be closed
+     * automatically.
+     *
+     * `mode` sets the file mode (permission and sticky bits), but only if the
+     * file was created.
+     *
+     * An example to read the last 10 bytes of a file which is 100 bytes long:
+     *
+     * ```js
+     * import { createReadStream } from 'node:fs';
+     *
+     * createReadStream('sample.txt', { start: 90, end: 99 });
+     * ```
+     *
+     * If `options` is a string, then it specifies the encoding.
+     * @since v0.1.31
+     */
+    function createReadStream(path: PathLike, options?: BufferEncoding | ReadStreamOptions): ReadStream;
+    /**
+     * `options` may also include a `start` option to allow writing data at some
+     * position past the beginning of the file, allowed values are in the
+     * \[0, [`Number.MAX_SAFE_INTEGER`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number/MAX_SAFE_INTEGER)\] range. Modifying a file rather than
+     * replacing it may require the `flags` option to be set to `r+` rather than the
+     * default `w`. The `encoding` can be any one of those accepted by `Buffer`.
+     *
+     * If `autoClose` is set to true (default behavior) on `'error'` or `'finish'` the file descriptor will be closed automatically. If `autoClose` is false,
+     * then the file descriptor won't be closed, even if there's an error.
+     * It is the application's responsibility to close it and make sure there's no
+     * file descriptor leak.
+     *
+     * By default, the stream will emit a `'close'` event after it has been
+     * destroyed.  Set the `emitClose` option to `false` to change this behavior.
+     *
+     * By providing the `fs` option it is possible to override the corresponding `fs` implementations for `open`, `write`, `writev`, and `close`. Overriding `write()` without `writev()` can reduce
+     * performance as some optimizations (`_writev()`)
+     * will be disabled. When providing the `fs` option, overrides for at least one of `write` and `writev` are required. If no `fd` option is supplied, an override
+     * for `open` is also required. If `autoClose` is `true`, an override for `close` is also required.
+     *
+     * Like `fs.ReadStream`, if `fd` is specified, `fs.WriteStream` will ignore the `path` argument and will use the specified file descriptor. This means that no `'open'` event will be
+     * emitted. `fd` should be blocking; non-blocking `fd`s
+     * should be passed to `net.Socket`.
+     *
+     * If `options` is a string, then it specifies the encoding.
+     * @since v0.1.31
+     */
+    function createWriteStream(path: PathLike, options?: BufferEncoding | WriteStreamOptions): WriteStream;
+    /**
+     * Forces all currently queued I/O operations associated with the file to the
+     * operating system's synchronized I/O completion state. Refer to the POSIX [`fdatasync(2)`](http://man7.org/linux/man-pages/man2/fdatasync.2.html) documentation for details. No arguments other
+     * than a possible
+     * exception are given to the completion callback.
+     * @since v0.1.96
+     */
+    function fdatasync(fd: number, callback: NoParamCallback): void;
+    namespace fdatasync {
+        /**
+         * Asynchronous fdatasync(2) - synchronize a file's in-core state with storage device.
+         * @param fd A file descriptor.
+         */
+        function __promisify__(fd: number): Promise<void>;
+    }
+    /**
+     * Forces all currently queued I/O operations associated with the file to the
+     * operating system's synchronized I/O completion state. Refer to the POSIX [`fdatasync(2)`](http://man7.org/linux/man-pages/man2/fdatasync.2.html) documentation for details. Returns `undefined`.
+     * @since v0.1.96
+     */
+    function fdatasyncSync(fd: number): void;
+    /**
+     * Asynchronously copies `src` to `dest`. By default, `dest` is overwritten if it
+     * already exists. No arguments other than a possible exception are given to the
+     * callback function. Node.js makes no guarantees about the atomicity of the copy
+     * operation. If an error occurs after the destination file has been opened for
+     * writing, Node.js will attempt to remove the destination.
+     *
+     * `mode` is an optional integer that specifies the behavior
+     * of the copy operation. It is possible to create a mask consisting of the bitwise
+     * OR of two or more values (e.g.`fs.constants.COPYFILE_EXCL | fs.constants.COPYFILE_FICLONE`).
+     *
+     * * `fs.constants.COPYFILE_EXCL`: The copy operation will fail if `dest` already
+     * exists.
+     * * `fs.constants.COPYFILE_FICLONE`: The copy operation will attempt to create a
+     * copy-on-write reflink. If the platform does not support copy-on-write, then a
+     * fallback copy mechanism is used.
+     * * `fs.constants.COPYFILE_FICLONE_FORCE`: The copy operation will attempt to
+     * create a copy-on-write reflink. If the platform does not support
+     * copy-on-write, then the operation will fail.
+     *
+     * ```js
+     * import { copyFile, constants } from 'node:fs';
+     *
+     * function callback(err) {
+     *   if (err) throw err;
+     *   console.log('source.txt was copied to destination.txt');
+     * }
+     *
+     * // destination.txt will be created or overwritten by default.
+     * copyFile('source.txt', 'destination.txt', callback);
+     *
+     * // By using COPYFILE_EXCL, the operation will fail if destination.txt exists.
+     * copyFile('source.txt', 'destination.txt', constants.COPYFILE_EXCL, callback);
+     * ```
+     * @since v8.5.0
+     * @param src source filename to copy
+     * @param dest destination filename of the copy operation
+     * @param [mode=0] modifiers for copy operation.
+     */
+    function copyFile(src: PathLike, dest: PathLike, callback: NoParamCallback): void;
+    function copyFile(src: PathLike, dest: PathLike, mode: number, callback: NoParamCallback): void;
+    namespace copyFile {
+        function __promisify__(src: PathLike, dst: PathLike, mode?: number): Promise<void>;
+    }
+    /**
+     * Synchronously copies `src` to `dest`. By default, `dest` is overwritten if it
+     * already exists. Returns `undefined`. Node.js makes no guarantees about the
+     * atomicity of the copy operation. If an error occurs after the destination file
+     * has been opened for writing, Node.js will attempt to remove the destination.
+     *
+     * `mode` is an optional integer that specifies the behavior
+     * of the copy operation. It is possible to create a mask consisting of the bitwise
+     * OR of two or more values (e.g.`fs.constants.COPYFILE_EXCL | fs.constants.COPYFILE_FICLONE`).
+     *
+     * * `fs.constants.COPYFILE_EXCL`: The copy operation will fail if `dest` already
+     * exists.
+     * * `fs.constants.COPYFILE_FICLONE`: The copy operation will attempt to create a
+     * copy-on-write reflink. If the platform does not support copy-on-write, then a
+     * fallback copy mechanism is used.
+     * * `fs.constants.COPYFILE_FICLONE_FORCE`: The copy operation will attempt to
+     * create a copy-on-write reflink. If the platform does not support
+     * copy-on-write, then the operation will fail.
+     *
+     * ```js
+     * import { copyFileSync, constants } from 'node:fs';
+     *
+     * // destination.txt will be created or overwritten by default.
+     * copyFileSync('source.txt', 'destination.txt');
+     * console.log('source.txt was copied to destination.txt');
+     *
+     * // By using COPYFILE_EXCL, the operation will fail if destination.txt exists.
+     * copyFileSync('source.txt', 'destination.txt', constants.COPYFILE_EXCL);
+     * ```
+     * @since v8.5.0
+     * @param src source filename to copy
+     * @param dest destination filename of the copy operation
+     * @param [mode=0] modifiers for copy operation.
+     */
+    function copyFileSync(src: PathLike, dest: PathLike, mode?: number): void;
+    /**
+     * Write an array of `ArrayBufferView`s to the file specified by `fd` using `writev()`.
+     *
+     * `position` is the offset from the beginning of the file where this data
+     * should be written. If `typeof position !== 'number'`, the data will be written
+     * at the current position.
+     *
+     * The callback will be given three arguments: `err`, `bytesWritten`, and `buffers`. `bytesWritten` is how many bytes were written from `buffers`.
+     *
+     * If this method is `util.promisify()` ed, it returns a promise for an `Object` with `bytesWritten` and `buffers` properties.
+     *
+     * It is unsafe to use `fs.writev()` multiple times on the same file without
+     * waiting for the callback. For this scenario, use {@link createWriteStream}.
+     *
+     * On Linux, positional writes don't work when the file is opened in append mode.
+     * The kernel ignores the position argument and always appends the data to
+     * the end of the file.
+     * @since v12.9.0
+     * @param [position='null']
+     */
+    function writev<TBuffers extends readonly NodeJS.ArrayBufferView[]>(
+        fd: number,
+        buffers: TBuffers,
+        cb: (err: NodeJS.ErrnoException | null, bytesWritten: number, buffers: TBuffers) => void,
+    ): void;
+    function writev<TBuffers extends readonly NodeJS.ArrayBufferView[]>(
+        fd: number,
+        buffers: TBuffers,
+        position: number | null,
+        cb: (err: NodeJS.ErrnoException | null, bytesWritten: number, buffers: TBuffers) => void,
+    ): void;
+    // Providing a default type parameter doesn't provide true BC for userland consumers, but at least suppresses TS2314
+    // TODO: remove default in future major version
+    interface WriteVResult<T extends readonly NodeJS.ArrayBufferView[] = NodeJS.ArrayBufferView[]> {
+        bytesWritten: number;
+        buffers: T;
+    }
+    namespace writev {
+        function __promisify__<TBuffers extends readonly NodeJS.ArrayBufferView[]>(
+            fd: number,
+            buffers: TBuffers,
+            position?: number,
+        ): Promise<WriteVResult<TBuffers>>;
+    }
+    /**
+     * For detailed information, see the documentation of the asynchronous version of
+     * this API: {@link writev}.
+     * @since v12.9.0
+     * @param [position='null']
+     * @return The number of bytes written.
+     */
+    function writevSync(fd: number, buffers: readonly NodeJS.ArrayBufferView[], position?: number): number;
+    /**
+     * Read from a file specified by `fd` and write to an array of `ArrayBufferView`s
+     * using `readv()`.
+     *
+     * `position` is the offset from the beginning of the file from where data
+     * should be read. If `typeof position !== 'number'`, the data will be read
+     * from the current position.
+     *
+     * The callback will be given three arguments: `err`, `bytesRead`, and `buffers`. `bytesRead` is how many bytes were read from the file.
+     *
+     * If this method is invoked as its `util.promisify()` ed version, it returns
+     * a promise for an `Object` with `bytesRead` and `buffers` properties.
+     * @since v13.13.0, v12.17.0
+     * @param [position='null']
+     */
+    function readv<TBuffers extends readonly NodeJS.ArrayBufferView[]>(
+        fd: number,
+        buffers: TBuffers,
+        cb: (err: NodeJS.ErrnoException | null, bytesRead: number, buffers: TBuffers) => void,
+    ): void;
+    function readv<TBuffers extends readonly NodeJS.ArrayBufferView[]>(
+        fd: number,
+        buffers: TBuffers,
+        position: number | null,
+        cb: (err: NodeJS.ErrnoException | null, bytesRead: number, buffers: TBuffers) => void,
+    ): void;
+    // Providing a default type parameter doesn't provide true BC for userland consumers, but at least suppresses TS2314
+    // TODO: remove default in future major version
+    interface ReadVResult<T extends readonly NodeJS.ArrayBufferView[] = NodeJS.ArrayBufferView[]> {
+        bytesRead: number;
+        buffers: T;
+    }
+    namespace readv {
+        function __promisify__<TBuffers extends readonly NodeJS.ArrayBufferView[]>(
+            fd: number,
+            buffers: TBuffers,
+            position?: number,
+        ): Promise<ReadVResult<TBuffers>>;
+    }
+    /**
+     * For detailed information, see the documentation of the asynchronous version of
+     * this API: {@link readv}.
+     * @since v13.13.0, v12.17.0
+     * @param [position='null']
+     * @return The number of bytes read.
+     */
+    function readvSync(fd: number, buffers: readonly NodeJS.ArrayBufferView[], position?: number): number;
+
+    interface OpenAsBlobOptions {
+        /**
+         * An optional mime type for the blob.
+         *
+         * @default 'undefined'
+         */
+        type?: string | undefined;
+    }
+
+    /**
+     * Returns a `Blob` whose data is backed by the given file.
+     *
+     * The file must not be modified after the `Blob` is created. Any modifications
+     * will cause reading the `Blob` data to fail with a `DOMException` error.
+     * Synchronous stat operations on the file when the `Blob` is created, and before
+     * each read in order to detect whether the file data has been modified on disk.
+     *
+     * ```js
+     * import { openAsBlob } from 'node:fs';
+     *
+     * const blob = await openAsBlob('the.file.txt');
+     * const ab = await blob.arrayBuffer();
+     * blob.stream();
+     * ```
+     * @since v19.8.0
+     */
+    function openAsBlob(path: PathLike, options?: OpenAsBlobOptions): Promise<Blob>;
+
+    interface OpenDirOptions {
+        /**
+         * @default 'utf8'
+         */
+        encoding?: BufferEncoding | undefined;
+        /**
+         * Number of directory entries that are buffered
+         * internally when reading from the directory. Higher values lead to better
+         * performance but higher memory usage.
+         * @default 32
+         */
+        bufferSize?: number | undefined;
+        /**
+         * @default false
+         */
+        recursive?: boolean | undefined;
+    }
+    /**
+     * Synchronously open a directory. See [`opendir(3)`](http://man7.org/linux/man-pages/man3/opendir.3.html).
+     *
+     * Creates an `fs.Dir`, which contains all further functions for reading from
+     * and cleaning up the directory.
+     *
+     * The `encoding` option sets the encoding for the `path` while opening the
+     * directory and subsequent read operations.
+     * @since v12.12.0
+     */
+    function opendirSync(path: PathLike, options?: OpenDirOptions): Dir;
+    /**
+     * Asynchronously open a directory. See the POSIX [`opendir(3)`](http://man7.org/linux/man-pages/man3/opendir.3.html) documentation for
+     * more details.
+     *
+     * Creates an `fs.Dir`, which contains all further functions for reading from
+     * and cleaning up the directory.
+     *
+     * The `encoding` option sets the encoding for the `path` while opening the
+     * directory and subsequent read operations.
+     * @since v12.12.0
+     */
+    function opendir(path: PathLike, cb: (err: NodeJS.ErrnoException | null, dir: Dir) => void): void;
+    function opendir(
+        path: PathLike,
+        options: OpenDirOptions,
+        cb: (err: NodeJS.ErrnoException | null, dir: Dir) => void,
+    ): void;
+    namespace opendir {
+        function __promisify__(path: PathLike, options?: OpenDirOptions): Promise<Dir>;
+    }
+    interface BigIntStats extends StatsBase<bigint> {
+        atimeNs: bigint;
+        mtimeNs: bigint;
+        ctimeNs: bigint;
+        birthtimeNs: bigint;
+    }
+    interface BigIntOptions {
+        bigint: true;
+    }
+    interface StatOptions {
+        bigint?: boolean | undefined;
+    }
+    interface StatSyncOptions extends StatOptions {
+        throwIfNoEntry?: boolean | undefined;
+    }
+    interface CopyOptionsBase {
+        /**
+         * Dereference symlinks
+         * @default false
+         */
+        dereference?: boolean | undefined;
+        /**
+         * When `force` is `false`, and the destination
+         * exists, throw an error.
+         * @default false
+         */
+        errorOnExist?: boolean | undefined;
+        /**
+         * Overwrite existing file or directory. _The copy
+         * operation will ignore errors if you set this to false and the destination
+         * exists. Use the `errorOnExist` option to change this behavior.
+         * @default true
+         */
+        force?: boolean | undefined;
+        /**
+         * Modifiers for copy operation. See `mode` flag of {@link copyFileSync()}
+         */
+        mode?: number | undefined;
+        /**
+         * When `true` timestamps from `src` will
+         * be preserved.
+         * @default false
+         */
+        preserveTimestamps?: boolean | undefined;
+        /**
+         * Copy directories recursively.
+         * @default false
+         */
+        recursive?: boolean | undefined;
+        /**
+         * When true, path resolution for symlinks will be skipped
+         * @default false
+         */
+        verbatimSymlinks?: boolean | undefined;
+    }
+    interface CopyOptions extends CopyOptionsBase {
+        /**
+         * Function to filter copied files/directories. Return
+         * `true` to copy the item, `false` to ignore it.
+         */
+        filter?: ((source: string, destination: string) => boolean | Promise<boolean>) | undefined;
+    }
+    interface CopySyncOptions extends CopyOptionsBase {
+        /**
+         * Function to filter copied files/directories. Return
+         * `true` to copy the item, `false` to ignore it.
+         */
+        filter?: ((source: string, destination: string) => boolean) | undefined;
+    }
+    /**
+     * Asynchronously copies the entire directory structure from `src` to `dest`,
+     * including subdirectories and files.
+     *
+     * When copying a directory to another directory, globs are not supported and
+     * behavior is similar to `cp dir1/ dir2/`.
+     * @since v16.7.0
+     * @experimental
+     * @param src source path to copy.
+     * @param dest destination path to copy to.
+     */
+    function cp(
+        source: string | URL,
+        destination: string | URL,
+        callback: (err: NodeJS.ErrnoException | null) => void,
+    ): void;
+    function cp(
+        source: string | URL,
+        destination: string | URL,
+        opts: CopyOptions,
+        callback: (err: NodeJS.ErrnoException | null) => void,
+    ): void;
+    /**
+     * Synchronously copies the entire directory structure from `src` to `dest`,
+     * including subdirectories and files.
+     *
+     * When copying a directory to another directory, globs are not supported and
+     * behavior is similar to `cp dir1/ dir2/`.
+     * @since v16.7.0
+     * @experimental
+     * @param src source path to copy.
+     * @param dest destination path to copy to.
+     */
+    function cpSync(source: string | URL, destination: string | URL, opts?: CopySyncOptions): void;
+
+    // TODO: collapse
+    interface _GlobOptions<T extends Dirent | string> {
+        /**
+         * Current working directory.
+         * @default process.cwd()
+         */
+        cwd?: string | URL | undefined;
+        /**
+         * `true` if the glob should return paths as `Dirent`s, `false` otherwise.
+         * @default false
+         * @since v22.2.0
+         */
+        withFileTypes?: boolean | undefined;
+        /**
+         * Function to filter out files/directories or a
+         * list of glob patterns to be excluded. If a function is provided, return
+         * `true` to exclude the item, `false` to include it.
+         * If a string array is provided, each string should be a glob pattern that
+         * specifies paths to exclude. Note: Negation patterns (e.g., '!foo.js') are
+         * not supported.
+         * @default undefined
+         */
+        exclude?: ((fileName: T) => boolean) | readonly string[] | undefined;
+    }
+    interface GlobOptions extends _GlobOptions<Dirent | string> {}
+    interface GlobOptionsWithFileTypes extends _GlobOptions<Dirent> {
+        withFileTypes: true;
+    }
+    interface GlobOptionsWithoutFileTypes extends _GlobOptions<string> {
+        withFileTypes?: false | undefined;
+    }
+
+    /**
+     * Retrieves the files matching the specified pattern.
+     *
+     * ```js
+     * import { glob } from 'node:fs';
+     *
+     * glob('*.js', (err, matches) => {
+     *   if (err) throw err;
+     *   console.log(matches);
+     * });
+     * ```
+     * @since v22.0.0
+     */
+    function glob(
+        pattern: string | readonly string[],
+        callback: (err: NodeJS.ErrnoException | null, matches: string[]) => void,
+    ): void;
+    function glob(
+        pattern: string | readonly string[],
+        options: GlobOptionsWithFileTypes,
+        callback: (
+            err: NodeJS.ErrnoException | null,
+            matches: Dirent[],
+        ) => void,
+    ): void;
+    function glob(
+        pattern: string | readonly string[],
+        options: GlobOptionsWithoutFileTypes,
+        callback: (
+            err: NodeJS.ErrnoException | null,
+            matches: string[],
+        ) => void,
+    ): void;
+    function glob(
+        pattern: string | readonly string[],
+        options: GlobOptions,
+        callback: (
+            err: NodeJS.ErrnoException | null,
+            matches: Dirent[] | string[],
+        ) => void,
+    ): void;
+    /**
+     * ```js
+     * import { globSync } from 'node:fs';
+     *
+     * console.log(globSync('*.js'));
+     * ```
+     * @since v22.0.0
+     * @returns paths of files that match the pattern.
+     */
+    function globSync(pattern: string | readonly string[]): string[];
+    function globSync(
+        pattern: string | readonly string[],
+        options: GlobOptionsWithFileTypes,
+    ): Dirent[];
+    function globSync(
+        pattern: string | readonly string[],
+        options: GlobOptionsWithoutFileTypes,
+    ): string[];
+    function globSync(
+        pattern: string | readonly string[],
+        options: GlobOptions,
+    ): Dirent[] | string[];
+}
+declare module "node:fs" {
+    export * as promises from "node:fs/promises";
+}
+declare module "fs" {
+    export * from "node:fs";
+}
+===== ./aurelius/node_modules/@types/node/sea.d.ts =====
+declare module "node:sea" {
+    type AssetKey = string;
+    /**
+     * @since v20.12.0
+     * @return Whether this script is running inside a single-executable application.
+     */
+    function isSea(): boolean;
+    /**
+     * This method can be used to retrieve the assets configured to be bundled into the
+     * single-executable application at build time.
+     * An error is thrown when no matching asset can be found.
+     * @since v20.12.0
+     */
+    function getAsset(key: AssetKey): ArrayBuffer;
+    function getAsset(key: AssetKey, encoding: string): string;
+    /**
+     * Similar to `sea.getAsset()`, but returns the result in a [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob).
+     * An error is thrown when no matching asset can be found.
+     * @since v20.12.0
+     */
+    function getAssetAsBlob(key: AssetKey, options?: {
+        type: string;
+    }): Blob;
+    /**
+     * This method can be used to retrieve the assets configured to be bundled into the
+     * single-executable application at build time.
+     * An error is thrown when no matching asset can be found.
+     *
+     * Unlike `sea.getRawAsset()` or `sea.getAssetAsBlob()`, this method does not
+     * return a copy. Instead, it returns the raw asset bundled inside the executable.
+     *
+     * For now, users should avoid writing to the returned array buffer. If the
+     * injected section is not marked as writable or not aligned properly,
+     * writes to the returned array buffer is likely to result in a crash.
+     * @since v20.12.0
+     */
+    function getRawAsset(key: AssetKey): ArrayBuffer;
+    /**
+     * This method can be used to retrieve an array of all the keys of assets
+     * embedded into the single-executable application.
+     * An error is thrown when not running inside a single-executable application.
+     * @since v24.8.0
+     * @returns An array containing all the keys of the assets
+     * embedded in the executable. If no assets are embedded, returns an empty array.
+     */
+    function getAssetKeys(): string[];
+}
+===== ./aurelius/node_modules/@types/node/LICENSE =====
+    MIT License
+
+    Copyright (c) Microsoft Corporation.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE
+===== ./aurelius/node_modules/@types/node/querystring.d.ts =====
+declare module "node:querystring" {
+    interface StringifyOptions {
+        /**
+         * The function to use when converting URL-unsafe characters to percent-encoding in the query string.
+         * @default `querystring.escape()`
+         */
+        encodeURIComponent?: ((str: string) => string) | undefined;
+    }
+    interface ParseOptions {
+        /**
+         * Specifies the maximum number of keys to parse. Specify `0` to remove key counting limitations.
+         * @default 1000
+         */
+        maxKeys?: number | undefined;
+        /**
+         * The function to use when decoding percent-encoded characters in the query string.
+         * @default `querystring.unescape()`
+         */
+        decodeURIComponent?: ((str: string) => string) | undefined;
+    }
+    interface ParsedUrlQuery extends NodeJS.Dict<string | string[]> {}
+    interface ParsedUrlQueryInput extends
+        NodeJS.Dict<
+            | string
+            | number
+            | boolean
+            | bigint
+            | ReadonlyArray<string | number | boolean | bigint>
+            | null
+        >
+    {}
+    /**
+     * The `querystring.stringify()` method produces a URL query string from a
+     * given `obj` by iterating through the object's "own properties".
+     *
+     * It serializes the following types of values passed in `obj`: [string](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type) |
+     * [number](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#Number_type) |
+     * [bigint](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt) |
+     * [boolean](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#Boolean_type) |
+     * [string\[\]](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type) |
+     * [number\[\]](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#Number_type) |
+     * [bigint\[\]](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt) |
+     * [boolean\[\]](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#Boolean_type) The numeric values must be finite. Any other input values will be coerced to
+     * empty strings.
+     *
+     * ```js
+     * querystring.stringify({ foo: 'bar', baz: ['qux', 'quux'], corge: '' });
+     * // Returns 'foo=bar&#x26;baz=qux&#x26;baz=quux&#x26;corge='
+     *
+     * querystring.stringify({ foo: 'bar', baz: 'qux' }, ';', ':');
+     * // Returns 'foo:bar;baz:qux'
+     * ```
+     *
+     * By default, characters requiring percent-encoding within the query string will
+     * be encoded as UTF-8\. If an alternative encoding is required, then an alternative `encodeURIComponent` option will need to be specified:
+     *
+     * ```js
+     * // Assuming gbkEncodeURIComponent function already exists,
+     *
+     * querystring.stringify({ w: '中文', foo: 'bar' }, null, null,
+     *                       { encodeURIComponent: gbkEncodeURIComponent });
+     * ```
+     * @since v0.1.25
+     * @param obj The object to serialize into a URL query string
+     * @param [sep='&'] The substring used to delimit key and value pairs in the query string.
+     * @param [eq='='] . The substring used to delimit keys and values in the query string.
+     */
+    function stringify(obj?: ParsedUrlQueryInput, sep?: string, eq?: string, options?: StringifyOptions): string;
+    /**
+     * The `querystring.parse()` method parses a URL query string (`str`) into a
+     * collection of key and value pairs.
+     *
+     * For example, the query string `'foo=bar&#x26;abc=xyz&#x26;abc=123'` is parsed into:
+     *
+     * ```json
+     * {
+     *   "foo": "bar",
+     *   "abc": ["xyz", "123"]
+     * }
+     * ```
+     *
+     * The object returned by the `querystring.parse()` method _does not_ prototypically inherit from the JavaScript `Object`. This means that typical `Object` methods such as `obj.toString()`,
+     * `obj.hasOwnProperty()`, and others
+     * are not defined and _will not work_.
+     *
+     * By default, percent-encoded characters within the query string will be assumed
+     * to use UTF-8 encoding. If an alternative character encoding is used, then an
+     * alternative `decodeURIComponent` option will need to be specified:
+     *
+     * ```js
+     * // Assuming gbkDecodeURIComponent function already exists...
+     *
+     * querystring.parse('w=%D6%D0%CE%C4&#x26;foo=bar', null, null,
+     *                   { decodeURIComponent: gbkDecodeURIComponent });
+     * ```
+     * @since v0.1.25
+     * @param str The URL query string to parse
+     * @param [sep='&'] The substring used to delimit key and value pairs in the query string.
+     * @param [eq='='] The substring used to delimit keys and values in the query string.
+     */
+    function parse(str: string, sep?: string, eq?: string, options?: ParseOptions): ParsedUrlQuery;
+    /**
+     * The querystring.encode() function is an alias for querystring.stringify().
+     */
+    const encode: typeof stringify;
+    /**
+     * The querystring.decode() function is an alias for querystring.parse().
+     */
+    const decode: typeof parse;
+    /**
+     * The `querystring.escape()` method performs URL percent-encoding on the given `str` in a manner that is optimized for the specific requirements of URL
+     * query strings.
+     *
+     * The `querystring.escape()` method is used by `querystring.stringify()` and is
+     * generally not expected to be used directly. It is exported primarily to allow
+     * application code to provide a replacement percent-encoding implementation if
+     * necessary by assigning `querystring.escape` to an alternative function.
+     * @since v0.1.25
+     */
+    function escape(str: string): string;
+    /**
+     * The `querystring.unescape()` method performs decoding of URL percent-encoded
+     * characters on the given `str`.
+     *
+     * The `querystring.unescape()` method is used by `querystring.parse()` and is
+     * generally not expected to be used directly. It is exported primarily to allow
+     * application code to provide a replacement decoding implementation if
+     * necessary by assigning `querystring.unescape` to an alternative function.
+     *
+     * By default, the `querystring.unescape()` method will attempt to use the
+     * JavaScript built-in `decodeURIComponent()` method to decode. If that fails,
+     * a safer equivalent that does not throw on malformed URLs will be used.
+     * @since v0.1.25
+     */
+    function unescape(str: string): string;
+}
+declare module "querystring" {
+    export * from "node:querystring";
+}
+===== ./aurelius/node_modules/@types/node/constants.d.ts =====
+declare module "node:constants" {
+    const constants:
+        & typeof import("node:os").constants.dlopen
+        & typeof import("node:os").constants.errno
+        & typeof import("node:os").constants.priority
+        & typeof import("node:os").constants.signals
+        & typeof import("node:fs").constants
+        & typeof import("node:crypto").constants;
+    export = constants;
+}
+declare module "constants" {
+    import constants = require("node:constants");
+    export = constants;
+}
+===== ./aurelius/node_modules/router/index.js =====
+/*!
+ * router
+ * Copyright(c) 2013 Roman Shtylman
+ * Copyright(c) 2014-2022 Douglas Christopher Wilson
+ * MIT Licensed
+ */
+
+'use strict'
+
+/**
+ * Module dependencies.
+ * @private
+ */
+
+const isPromise = require('is-promise')
+const Layer = require('./lib/layer')
+const { METHODS } = require('node:http')
+const parseUrl = require('parseurl')
+const Route = require('./lib/route')
+const debug = require('debug')('router')
+const deprecate = require('depd')('router')
+
+/**
+ * Module variables.
+ * @private
+ */
+
+const slice = Array.prototype.slice
+const flatten = Array.prototype.flat
+const methods = METHODS.map((method) => method.toLowerCase())
+
+/**
+ * Expose `Router`.
+ */
+
+module.exports = Router
+
+/**
+ * Expose `Route`.
+ */
+
+module.exports.Route = Route
+
+/**
+ * Initialize a new `Router` with the given `options`.
+ *
+ * @param {object} [options]
+ * @return {Router} which is a callable function
+ * @public
+ */
+
+function Router (options) {
+  if (!(this instanceof Router)) {
+    return new Router(options)
+  }
+
+  const opts = options || {}
+
+  function router (req, res, next) {
+    router.handle(req, res, next)
+  }
+
+  // inherit from the correct prototype
+  Object.setPrototypeOf(router, this)
+
+  router.caseSensitive = opts.caseSensitive
+  router.mergeParams = opts.mergeParams
+  router.params = {}
+  router.strict = opts.strict
+  router.stack = []
+
+  return router
+}
+
+/**
+ * Router prototype inherits from a Function.
+ */
+
+/* istanbul ignore next */
+Router.prototype = function () {}
+
+/**
+ * Map the given param placeholder `name`(s) to the given callback.
+ *
+ * Parameter mapping is used to provide pre-conditions to routes
+ * which use normalized placeholders. For example a _:user_id_ parameter
+ * could automatically load a user's information from the database without
+ * any additional code.
+ *
+ * The callback uses the same signature as middleware, the only difference
+ * being that the value of the placeholder is passed, in this case the _id_
+ * of the user. Once the `next()` function is invoked, just like middleware
+ * it will continue on to execute the route, or subsequent parameter functions.
+ *
+ * Just like in middleware, you must either respond to the request or call next
+ * to avoid stalling the request.
+ *
+ *  router.param('user_id', function(req, res, next, id){
+ *    User.find(id, function(err, user){
+ *      if (err) {
+ *        return next(err)
+ *      } else if (!user) {
+ *        return next(new Error('failed to load user'))
+ *      }
+ *      req.user = user
+ *      next()
+ *    })
+ *  })
+ *
+ * @param {string} name
+ * @param {function} fn
+ * @public
+ */
+
+Router.prototype.param = function param (name, fn) {
+  if (!name) {
+    throw new TypeError('argument name is required')
+  }
+
+  if (typeof name !== 'string') {
+    throw new TypeError('argument name must be a string')
+  }
+
+  if (!fn) {
+    throw new TypeError('argument fn is required')
+  }
+
+  if (typeof fn !== 'function') {
+    throw new TypeError('argument fn must be a function')
+  }
+
+  let params = this.params[name]
+
+  if (!params) {
+    params = this.params[name] = []
+  }
+
+  params.push(fn)
+
+  return this
+}
+
+/**
+ * Dispatch a req, res into the router.
+ *
+ * @private
+ */
+
+Router.prototype.handle = function handle (req, res, callback) {
+  if (!callback) {
+    throw new TypeError('argument callback is required')
+  }
+
+  debug('dispatching %s %s', req.method, req.url)
+
+  let idx = 0
+  let methods
+  const protohost = getProtohost(req.url) || ''
+  let removed = ''
+  const self = this
+  let slashAdded = false
+  let sync = 0
+  const paramcalled = {}
+
+  // middleware and routes
+  const stack = this.stack
+
+  // manage inter-router variables
+  const parentParams = req.params
+  const parentUrl = req.baseUrl || ''
+  let done = restore(callback, req, 'baseUrl', 'next', 'params')
+
+  // setup next layer
+  req.next = next
+
+  // for options requests, respond with a default if nothing else responds
+  if (req.method === 'OPTIONS') {
+    methods = []
+    done = wrap(done, generateOptionsResponder(res, methods))
+  }
+
+  // setup basic req values
+  req.baseUrl = parentUrl
+  req.originalUrl = req.originalUrl || req.url
+
+  next()
+
+  function next (err) {
+    let layerError = err === 'route'
+      ? null
+      : err
+
+    // remove added slash
+    if (slashAdded) {
+      req.url = req.url.slice(1)
+      slashAdded = false
+    }
+
+    // restore altered req.url
+    if (removed.length !== 0) {
+      req.baseUrl = parentUrl
+      req.url = protohost + removed + req.url.slice(protohost.length)
+      removed = ''
+    }
+
+    // signal to exit router
+    if (layerError === 'router') {
+      setImmediate(done, null)
+      return
+    }
+
+    // no more matching layers
+    if (idx >= stack.length) {
+      setImmediate(done, layerError)
+      return
+    }
+
+    // max sync stack
+    if (++sync > 100) {
+      return setImmediate(next, err)
+    }
+
+    // get pathname of request
+    const path = getPathname(req)
+
+    if (path == null) {
+      return done(layerError)
+    }
+
+    // find next matching layer
+    let layer
+    let match
+    let route
+
+    while (match !== true && idx < stack.length) {
+      layer = stack[idx++]
+      match = matchLayer(layer, path)
+      route = layer.route
+
+      if (typeof match !== 'boolean') {
+        // hold on to layerError
+        layerError = layerError || match
+      }
+
+      if (match !== true) {
+        continue
+      }
+
+      if (!route) {
+        // process non-route handlers normally
+        continue
+      }
+
+      if (layerError) {
+        // routes do not match with a pending error
+        match = false
+        continue
+      }
+
+      const method = req.method
+      const hasMethod = route._handlesMethod(method)
+
+      // build up automatic options response
+      if (!hasMethod && method === 'OPTIONS' && methods) {
+        methods.push.apply(methods, route._methods())
+      }
+
+      // don't even bother matching route
+      if (!hasMethod && method !== 'HEAD') {
+        match = false
+      }
+    }
+
+    // no match
+    if (match !== true) {
+      return done(layerError)
+    }
+
+    // store route for dispatch on change
+    if (route) {
+      req.route = route
+    }
+
+    // Capture one-time layer values
+    req.params = self.mergeParams
+      ? mergeParams(layer.params, parentParams)
+      : layer.params
+    const layerPath = layer.path
+
+    // this should be done for the layer
+    processParams(self.params, layer, paramcalled, req, res, function (err) {
+      if (err) {
+        next(layerError || err)
+      } else if (route) {
+        layer.handleRequest(req, res, next)
+      } else {
+        trimPrefix(layer, layerError, layerPath, path)
+      }
+
+      sync = 0
+    })
+  }
+
+  function trimPrefix (layer, layerError, layerPath, path) {
+    if (layerPath.length !== 0) {
+      // Validate path is a prefix match
+      if (layerPath !== path.substring(0, layerPath.length)) {
+        next(layerError)
+        return
+      }
+
+      // Validate path breaks on a path separator
+      const c = path[layerPath.length]
+      if (c && c !== '/') {
+        next(layerError)
+        return
+      }
+
+      // Trim off the part of the url that matches the route
+      // middleware (.use stuff) needs to have the path stripped
+      debug('trim prefix (%s) from url %s', layerPath, req.url)
+      removed = layerPath
+      req.url = protohost + req.url.slice(protohost.length + removed.length)
+
+      // Ensure leading slash
+      if (!protohost && req.url[0] !== '/') {
+        req.url = '/' + req.url
+        slashAdded = true
+      }
+
+      // Setup base URL (no trailing slash)
+      req.baseUrl = parentUrl + (removed[removed.length - 1] === '/'
+        ? removed.substring(0, removed.length - 1)
+        : removed)
+    }
+
+    debug('%s %s : %s', layer.name, layerPath, req.originalUrl)
+
+    if (layerError) {
+      layer.handleError(layerError, req, res, next)
+    } else {
+      layer.handleRequest(req, res, next)
+    }
+  }
+}
+
+/**
+ * Use the given middleware function, with optional path, defaulting to "/".
+ *
+ * Use (like `.all`) will run for any http METHOD, but it will not add
+ * handlers for those methods so OPTIONS requests will not consider `.use`
+ * functions even if they could respond.
+ *
+ * The other difference is that _route_ path is stripped and not visible
+ * to the handler function. The main effect of this feature is that mounted
+ * handlers can operate without any code changes regardless of the "prefix"
+ * pathname.
+ *
+ * @public
+ */
+
+Router.prototype.use = function use (handler) {
+  let offset = 0
+  let path = '/'
+
+  // default path to '/'
+  // disambiguate router.use([handler])
+  if (typeof handler !== 'function') {
+    let arg = handler
+
+    while (Array.isArray(arg) && arg.length !== 0) {
+      arg = arg[0]
+    }
+
+    // first arg is the path
+    if (typeof arg !== 'function') {
+      offset = 1
+      path = handler
+    }
+  }
+
+  const callbacks = flatten.call(slice.call(arguments, offset), Infinity)
+
+  if (callbacks.length === 0) {
+    throw new TypeError('argument handler is required')
+  }
+
+  for (let i = 0; i < callbacks.length; i++) {
+    const fn = callbacks[i]
+
+    if (typeof fn !== 'function') {
+      throw new TypeError('argument handler must be a function')
+    }
+
+    // add the middleware
+    debug('use %o %s', path, fn.name || '<anonymous>')
+
+    const layer = new Layer(path, {
+      sensitive: this.caseSensitive,
+      strict: false,
+      end: false
+    }, fn)
+
+    layer.route = undefined
+
+    this.stack.push(layer)
+  }
+
+  return this
+}
+
+/**
+ * Create a new Route for the given path.
+ *
+ * Each route contains a separate middleware stack and VERB handlers.
+ *
+ * See the Route api documentation for details on adding handlers
+ * and middleware to routes.
+ *
+ * @param {string} path
+ * @return {Route}
+ * @public
+ */
+
+Router.prototype.route = function route (path) {
+  const route = new Route(path)
+
+  const layer = new Layer(path, {
+    sensitive: this.caseSensitive,
+    strict: this.strict,
+    end: true
+  }, handle)
+
+  function handle (req, res, next) {
+    route.dispatch(req, res, next)
+  }
+
+  layer.route = route
+
+  this.stack.push(layer)
+  return route
+}
+
+// create Router#VERB functions
+methods.concat('all').forEach(function (method) {
+  Router.prototype[method] = function (path) {
+    const route = this.route(path)
+    route[method].apply(route, slice.call(arguments, 1))
+    return this
+  }
+})
+
+/**
+ * Generate a callback that will make an OPTIONS response.
+ *
+ * @param {OutgoingMessage} res
+ * @param {array} methods
+ * @private
+ */
+
+function generateOptionsResponder (res, methods) {
+  return function onDone (fn, err) {
+    if (err || methods.length === 0) {
+      return fn(err)
+    }
+
+    trySendOptionsResponse(res, methods, fn)
+  }
+}
+
+/**
+ * Get pathname of request.
+ *
+ * @param {IncomingMessage} req
+ * @private
+ */
+
+function getPathname (req) {
+  try {
+    return parseUrl(req).pathname
+  } catch (err) {
+    return undefined
+  }
+}
+
+/**
+ * Get get protocol + host for a URL.
+ *
+ * @param {string} url
+ * @private
+ */
+
+function getProtohost (url) {
+  if (typeof url !== 'string' || url.length === 0 || url[0] === '/') {
+    return undefined
+  }
+
+  const searchIndex = url.indexOf('?')
+  const pathLength = searchIndex !== -1
+    ? searchIndex
+    : url.length
+  const fqdnIndex = url.substring(0, pathLength).indexOf('://')
+
+  return fqdnIndex !== -1
+    ? url.substring(0, url.indexOf('/', 3 + fqdnIndex))
+    : undefined
+}
+
+/**
+ * Match path to a layer.
+ *
+ * @param {Layer} layer
+ * @param {string} path
+ * @private
+ */
+
+function matchLayer (layer, path) {
+  try {
+    return layer.match(path)
+  } catch (err) {
+    return err
+  }
+}
+
+/**
+ * Merge params with parent params
+ *
+ * @private
+ */
+
+function mergeParams (params, parent) {
+  if (typeof parent !== 'object' || !parent) {
+    return params
+  }
+
+  // make copy of parent for base
+  const obj = Object.assign({}, parent)
+
+  // simple non-numeric merging
+  if (!(0 in params) || !(0 in parent)) {
+    return Object.assign(obj, params)
+  }
+
+  let i = 0
+  let o = 0
+
+  // determine numeric gap in params
+  while (i in params) {
+    i++
+  }
+
+  // determine numeric gap in parent
+  while (o in parent) {
+    o++
+  }
+
+  // offset numeric indices in params before merge
+  for (i--; i >= 0; i--) {
+    params[i + o] = params[i]
+
+    // create holes for the merge when necessary
+    if (i < o) {
+      delete params[i]
+    }
+  }
+
+  return Object.assign(obj, params)
+}
+
+/**
+ * Process any parameters for the layer.
+ *
+ * @private
+ */
+
+function processParams (params, layer, called, req, res, done) {
+  // captured parameters from the layer, keys and values
+  const keys = layer.keys
+
+  // fast track
+  if (!keys || keys.length === 0) {
+    return done()
+  }
+
+  let i = 0
+  let paramIndex = 0
+  let key
+  let paramVal
+  let paramCallbacks
+  let paramCalled
+
+  // process params in order
+  // param callbacks can be async
+  function param (err) {
+    if (err) {
+      return done(err)
+    }
+
+    if (i >= keys.length) {
+      return done()
+    }
+
+    paramIndex = 0
+    key = keys[i++]
+    paramVal = req.params[key]
+    paramCallbacks = params[key]
+    paramCalled = called[key]
+
+    if (paramVal === undefined || !paramCallbacks) {
+      return param()
+    }
+
+    // param previously called with same value or error occurred
+    if (paramCalled && (paramCalled.match === paramVal ||
+      (paramCalled.error && paramCalled.error !== 'route'))) {
+      // restore value
+      req.params[key] = paramCalled.value
+
+      // next param
+      return param(paramCalled.error)
+    }
+
+    called[key] = paramCalled = {
+      error: null,
+      match: paramVal,
+      value: paramVal
+    }
+
+    paramCallback()
+  }
+
+  // single param callbacks
+  function paramCallback (err) {
+    const fn = paramCallbacks[paramIndex++]
+
+    // store updated value
+    paramCalled.value = req.params[key]
+
+    if (err) {
+      // store error
+      paramCalled.error = err
+      param(err)
+      return
+    }
+
+    if (!fn) return param()
+
+    try {
+      const ret = fn(req, res, paramCallback, paramVal, key)
+      if (isPromise(ret)) {
+        if (!(ret instanceof Promise)) {
+          deprecate('parameters that are Promise-like are deprecated, use a native Promise instead')
+        }
+
+        ret.then(null, function (error) {
+          paramCallback(error || new Error('Rejected promise'))
+        })
+      }
+    } catch (e) {
+      paramCallback(e)
+    }
+  }
+
+  param()
+}
+
+/**
+ * Restore obj props after function
+ *
+ * @private
+ */
+
+function restore (fn, obj) {
+  const props = new Array(arguments.length - 2)
+  const vals = new Array(arguments.length - 2)
+
+  for (let i = 0; i < props.length; i++) {
+    props[i] = arguments[i + 2]
+    vals[i] = obj[props[i]]
+  }
+
+  return function () {
+    // restore vals
+    for (let i = 0; i < props.length; i++) {
+      obj[props[i]] = vals[i]
+    }
+
+    return fn.apply(this, arguments)
+  }
+}
+
+/**
+ * Send an OPTIONS response.
+ *
+ * @private
+ */
+
+function sendOptionsResponse (res, methods) {
+  const options = Object.create(null)
+
+  // build unique method map
+  for (let i = 0; i < methods.length; i++) {
+    options[methods[i]] = true
+  }
+
+  // construct the allow list
+  const allow = Object.keys(options).sort().join(', ')
+
+  // send response
+  res.setHeader('Allow', allow)
+  res.setHeader('Content-Length', Buffer.byteLength(allow))
+  res.setHeader('Content-Type', 'text/plain')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.end(allow)
+}
+
+/**
+ * Try to send an OPTIONS response.
+ *
+ * @private
+ */
+
+function trySendOptionsResponse (res, methods, next) {
+  try {
+    sendOptionsResponse(res, methods)
+  } catch (err) {
+    next(err)
+  }
+}
+
+/**
+ * Wrap a function
+ *
+ * @private
+ */
+
+function wrap (old, fn) {
+  return function proxy () {
+    const args = new Array(arguments.length + 1)
+
+    args[0] = old
+    for (let i = 0, len = arguments.length; i < len; i++) {
+      args[i + 1] = arguments[i]
+    }
+
+    fn.apply(this, args)
+  }
+}
+===== ./aurelius/node_modules/router/lib/route.js =====
+/*!
+ * router
+ * Copyright(c) 2013 Roman Shtylman
+ * Copyright(c) 2014-2022 Douglas Christopher Wilson
+ * MIT Licensed
+ */
+
+'use strict'
+
+/**
+ * Module dependencies.
+ * @private
+ */
+
+const debug = require('debug')('router:route')
+const Layer = require('./layer')
+const { METHODS } = require('node:http')
+
+/**
+ * Module variables.
+ * @private
+ */
+
+const slice = Array.prototype.slice
+const flatten = Array.prototype.flat
+const methods = METHODS.map((method) => method.toLowerCase())
+
+/**
+ * Expose `Route`.
+ */
+
+module.exports = Route
+
+/**
+ * Initialize `Route` with the given `path`,
+ *
+ * @param {String} path
+ * @api private
+ */
+
+function Route (path) {
+  debug('new %o', path)
+  this.path = path
+  this.stack = []
+
+  // route handlers for various http methods
+  this.methods = Object.create(null)
+}
+
+/**
+ * @private
+ */
+
+Route.prototype._handlesMethod = function _handlesMethod (method) {
+  if (this.methods._all) {
+    return true
+  }
+
+  // normalize name
+  let name = typeof method === 'string'
+    ? method.toLowerCase()
+    : method
+
+  if (name === 'head' && !this.methods.head) {
+    name = 'get'
+  }
+
+  return Boolean(this.methods[name])
+}
+
+/**
+ * @return {array} supported HTTP methods
+ * @private
+ */
+
+Route.prototype._methods = function _methods () {
+  const methods = Object.keys(this.methods)
+
+  // append automatic head
+  if (this.methods.get && !this.methods.head) {
+    methods.push('head')
+  }
+
+  for (let i = 0; i < methods.length; i++) {
+    // make upper case
+    methods[i] = methods[i].toUpperCase()
+  }
+
+  return methods
+}
+
+/**
+ * dispatch req, res into this route
+ *
+ * @private
+ */
+
+Route.prototype.dispatch = function dispatch (req, res, done) {
+  let idx = 0
+  const stack = this.stack
+  let sync = 0
+
+  if (stack.length === 0) {
+    return done()
+  }
+
+  let method = typeof req.method === 'string'
+    ? req.method.toLowerCase()
+    : req.method
+
+  if (method === 'head' && !this.methods.head) {
+    method = 'get'
+  }
+
+  req.route = this
+
+  next()
+
+  function next (err) {
+    // signal to exit route
+    if (err && err === 'route') {
+      return done()
+    }
+
+    // signal to exit router
+    if (err && err === 'router') {
+      return done(err)
+    }
+
+    // no more matching layers
+    if (idx >= stack.length) {
+      return done(err)
+    }
+
+    // max sync stack
+    if (++sync > 100) {
+      return setImmediate(next, err)
+    }
+
+    let layer
+    let match
+
+    // find next matching layer
+    while (match !== true && idx < stack.length) {
+      layer = stack[idx++]
+      match = !layer.method || layer.method === method
+    }
+
+    // no match
+    if (match !== true) {
+      return done(err)
+    }
+
+    if (err) {
+      layer.handleError(err, req, res, next)
+    } else {
+      layer.handleRequest(req, res, next)
+    }
+
+    sync = 0
+  }
+}
+
+/**
+ * Add a handler for all HTTP verbs to this route.
+ *
+ * Behaves just like middleware and can respond or call `next`
+ * to continue processing.
+ *
+ * You can use multiple `.all` call to add multiple handlers.
+ *
+ *   function check_something(req, res, next){
+ *     next()
+ *   }
+ *
+ *   function validate_user(req, res, next){
+ *     next()
+ *   }
+ *
+ *   route
+ *   .all(validate_user)
+ *   .all(check_something)
+ *   .get(function(req, res, next){
+ *     res.send('hello world')
+ *   })
+ *
+ * @param {array|function} handler
+ * @return {Route} for chaining
+ * @api public
+ */
+
+Route.prototype.all = function all (handler) {
+  const callbacks = flatten.call(slice.call(arguments), Infinity)
+
+  if (callbacks.length === 0) {
+    throw new TypeError('argument handler is required')
+  }
+
+  for (let i = 0; i < callbacks.length; i++) {
+    const fn = callbacks[i]
+
+    if (typeof fn !== 'function') {
+      throw new TypeError('argument handler must be a function')
+    }
+
+    const layer = Layer('/', {}, fn)
+    layer.method = undefined
+
+    this.methods._all = true
+    this.stack.push(layer)
+  }
+
+  return this
+}
+
+methods.forEach(function (method) {
+  Route.prototype[method] = function (handler) {
+    const callbacks = flatten.call(slice.call(arguments), Infinity)
+
+    if (callbacks.length === 0) {
+      throw new TypeError('argument handler is required')
+    }
+
+    for (let i = 0; i < callbacks.length; i++) {
+      const fn = callbacks[i]
+
+      if (typeof fn !== 'function') {
+        throw new TypeError('argument handler must be a function')
+      }
+
+      debug('%s %s', method, this.path)
+
+      const layer = Layer('/', {}, fn)
+      layer.method = method
+
+      this.methods[method] = true
+      this.stack.push(layer)
+    }
+
+    return this
+  }
+})
+===== ./aurelius/node_modules/router/lib/layer.js =====
+/*!
+ * router
+ * Copyright(c) 2013 Roman Shtylman
+ * Copyright(c) 2014-2022 Douglas Christopher Wilson
+ * MIT Licensed
+ */
+
+'use strict'
+
+/**
+ * Module dependencies.
+ * @private
+ */
+
+const isPromise = require('is-promise')
+const pathRegexp = require('path-to-regexp')
+const debug = require('debug')('router:layer')
+const deprecate = require('depd')('router')
+
+/**
+ * Module variables.
+ * @private
+ */
+
+const TRAILING_SLASH_REGEXP = /\/+$/
+const MATCHING_GROUP_REGEXP = /\((?:\?<(.*?)>)?(?!\?)/g
+
+/**
+ * Expose `Layer`.
+ */
+
+module.exports = Layer
+
+function Layer (path, options, fn) {
+  if (!(this instanceof Layer)) {
+    return new Layer(path, options, fn)
+  }
+
+  debug('new %o', path)
+  const opts = options || {}
+
+  this.handle = fn
+  this.keys = []
+  this.name = fn.name || '<anonymous>'
+  this.params = undefined
+  this.path = undefined
+  this.slash = path === '/' && opts.end === false
+
+  function matcher (_path) {
+    if (_path instanceof RegExp) {
+      const keys = []
+      let name = 0
+      let m
+      // eslint-disable-next-line no-cond-assign
+      while (m = MATCHING_GROUP_REGEXP.exec(_path.source)) {
+        keys.push({
+          name: m[1] || name++,
+          offset: m.index
+        })
+      }
+
+      return function regexpMatcher (p) {
+        const match = _path.exec(p)
+        if (!match) {
+          return false
+        }
+
+        const params = {}
+        for (let i = 1; i < match.length; i++) {
+          const key = keys[i - 1]
+          const prop = key.name
+          const val = decodeParam(match[i])
+
+          if (val !== undefined) {
+            params[prop] = val
+          }
+        }
+
+        return {
+          params,
+          path: match[0]
+        }
+      }
+    }
+
+    return pathRegexp.match((opts.strict ? _path : loosen(_path)), {
+      sensitive: opts.sensitive,
+      end: opts.end,
+      trailing: !opts.strict,
+      decode: decodeParam
+    })
+  }
+  this.matchers = Array.isArray(path) ? path.map(matcher) : [matcher(path)]
+}
+
+/**
+ * Handle the error for the layer.
+ *
+ * @param {Error} error
+ * @param {Request} req
+ * @param {Response} res
+ * @param {function} next
+ * @api private
+ */
+
+Layer.prototype.handleError = function handleError (error, req, res, next) {
+  const fn = this.handle
+
+  if (fn.length !== 4) {
+    // not a standard error handler
+    return next(error)
+  }
+
+  try {
+    // invoke function
+    const ret = fn(error, req, res, next)
+
+    // wait for returned promise
+    if (isPromise(ret)) {
+      if (!(ret instanceof Promise)) {
+        deprecate('handlers that are Promise-like are deprecated, use a native Promise instead')
+      }
+
+      ret.then(null, function (error) {
+        next(error || new Error('Rejected promise'))
+      })
+    }
+  } catch (err) {
+    next(err)
+  }
+}
+
+/**
+ * Handle the request for the layer.
+ *
+ * @param {Request} req
+ * @param {Response} res
+ * @param {function} next
+ * @api private
+ */
+
+Layer.prototype.handleRequest = function handleRequest (req, res, next) {
+  const fn = this.handle
+
+  if (fn.length > 3) {
+    // not a standard request handler
+    return next()
+  }
+
+  try {
+    // invoke function
+    const ret = fn(req, res, next)
+
+    // wait for returned promise
+    if (isPromise(ret)) {
+      if (!(ret instanceof Promise)) {
+        deprecate('handlers that are Promise-like are deprecated, use a native Promise instead')
+      }
+
+      ret.then(null, function (error) {
+        next(error || new Error('Rejected promise'))
+      })
+    }
+  } catch (err) {
+    next(err)
+  }
+}
+
+/**
+ * Check if this route matches `path`, if so
+ * populate `.params`.
+ *
+ * @param {String} path
+ * @return {Boolean}
+ * @api private
+ */
+
+Layer.prototype.match = function match (path) {
+  let match
+
+  if (path != null) {
+    // fast path non-ending match for / (any path matches)
+    if (this.slash) {
+      this.params = {}
+      this.path = ''
+      return true
+    }
+
+    let i = 0
+    while (!match && i < this.matchers.length) {
+      // match the path
+      match = this.matchers[i](path)
+      i++
+    }
+  }
+
+  if (!match) {
+    this.params = undefined
+    this.path = undefined
+    return false
+  }
+
+  // store values
+  this.params = match.params
+  this.path = match.path
+  this.keys = Object.keys(match.params)
+
+  return true
+}
+
+/**
+ * Decode param value.
+ *
+ * @param {string} val
+ * @return {string}
+ * @private
+ */
+
+function decodeParam (val) {
+  if (typeof val !== 'string' || val.length === 0) {
+    return val
+  }
+
+  try {
+    return decodeURIComponent(val)
+  } catch (err) {
+    if (err instanceof URIError) {
+      err.message = 'Failed to decode param \'' + val + '\''
+      err.status = 400
+    }
+
+    throw err
+  }
+}
+
+/**
+ * Loosens the given path for path-to-regexp matching.
+ */
+function loosen (path) {
+  if (path instanceof RegExp || path === '/') {
+    return path
+  }
+
+  return Array.isArray(path)
+    ? path.map(function (p) { return loosen(p) })
+    : String(path).replace(TRAILING_SLASH_REGEXP, '')
+}
+===== ./aurelius/node_modules/router/package.json =====
+{
+  "name": "router",
+  "description": "Simple middleware-style router",
+  "version": "2.2.0",
+  "author": "Douglas Christopher Wilson <doug@somethingdoug.com>",
+  "contributors": [
+    "Blake Embrey <hello@blakeembrey.com>"
+  ],
+  "license": "MIT",
+  "repository": "pillarjs/router",
+  "dependencies": {
+    "debug": "^4.4.0",
+    "depd": "^2.0.0",
+    "is-promise": "^4.0.0",
+    "parseurl": "^1.3.3",
+    "path-to-regexp": "^8.0.0"
+  },
+  "devDependencies": {
+    "finalhandler": "^2.1.0",
+    "mocha": "10.2.0",
+    "nyc": "15.1.0",
+    "run-series": "^1.1.9",
+    "standard": "^17.1.0",
+    "supertest": "6.3.3"
+  },
+  "files": [
+    "lib/",
+    "LICENSE",
+    "HISTORY.md",
+    "README.md",
+    "index.js"
+  ],
+  "engines": {
+    "node": ">= 18"
+  },
+  "scripts": {
+    "lint": "standard",
+    "test": "mocha --reporter spec --bail --check-leaks test/",
+    "test:debug": "mocha --reporter spec --bail --check-leaks test/ --inspect --inspect-brk",
+    "test-ci": "nyc --reporter=lcov --reporter=text npm test",
+    "test-cov": "nyc --reporter=text npm test",
+    "version": "node scripts/version-history.js && git add HISTORY.md"
+  }
+}
+===== ./aurelius/node_modules/router/README.md =====
+# router
+
+[![NPM Version][npm-image]][npm-url]
+[![NPM Downloads][downloads-image]][downloads-url]
+[![Node.js Version][node-version-image]][node-version-url]
+[![Build Status][ci-image]][ci-url]
+[![Test Coverage][coveralls-image]][coveralls-url]
+
+Simple middleware-style router
+
+## Installation
+
+This is a [Node.js](https://nodejs.org/en/) module available through the
+[npm registry](https://www.npmjs.com/). Installation is done using the
+[`npm install` command](https://docs.npmjs.com/getting-started/installing-npm-packages-locally):
+
+```bash
+$ npm install router
+```
+
+## API
+
+```js
+var finalhandler = require('finalhandler')
+var http = require('http')
+var Router = require('router')
+
+var router = Router()
+router.get('/', function (req, res) {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+  res.end('Hello World!')
+})
+
+var server = http.createServer(function (req, res) {
+  router(req, res, finalhandler(req, res))
+})
+
+server.listen(3000)
+```
+
+This module is currently an extracted version from the Express project,
+but with the main change being it can be used with a plain `http.createServer`
+object or other web frameworks by removing Express-specific API calls.
+
+## Router(options)
+
+Options
+
+- `strict`        - When `false` trailing slashes are optional (default: `false`)
+- `caseSensitive` - When `true` the routing will be case sensitive. (default: `false`)
+- `mergeParams`   - When `true` any `req.params` passed to the router will be
+  merged into the router's `req.params`. (default: `false`) ([example](#example-using-mergeparams))
+
+Returns a function with the signature `router(req, res, callback)` where
+`callback([err])` must be provided to handle errors and fall-through from
+not handling requests.
+
+### router.use([path], ...middleware)
+
+Use the given [middleware function](#middleware) for all http methods on the
+given `path`, defaulting to the root path.
+
+`router` does not automatically see `use` as a handler. As such, it will not
+consider it one for handling `OPTIONS` requests.
+
+* Note: If a `path` is specified, that `path` is stripped from the start of
+  `req.url`.
+
+<!-- eslint-disable no-undef -->
+
+```js
+router.use(function (req, res, next) {
+  // do your things
+
+  // continue to the next middleware
+  // the request will stall if this is not called
+  next()
+
+  // note: you should NOT call `next` if you have begun writing to the response
+})
+```
+
+[Middleware](#middleware) can themselves use `next('router')` at any time to
+exit the current router instance completely, invoking the top-level callback.
+
+### router\[method](path, ...[middleware], handler)
+
+The [http methods](https://github.com/jshttp/methods/blob/master/index.js) provide
+the routing functionality in `router`.
+
+Method middleware and handlers follow usual [middleware](#middleware) behavior,
+except they will only be called when the method and path match the request.
+
+<!-- eslint-disable no-undef -->
+
+```js
+// handle a `GET` request
+router.get('/', function (req, res) {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+  res.end('Hello World!')
+})
+```
+
+[Middleware](#middleware) given before the handler have one additional trick,
+they may invoke `next('route')`. Calling `next('route')` bypasses the remaining
+middleware and the handler mounted for this route, passing the request to the
+next route suitable for handling this request.
+
+Route handlers and middleware can themselves use `next('router')` at any time
+to exit the current router instance completely, invoking the top-level callback.
+
+### router.param(name, param_middleware)
+
+Maps the specified path parameter `name` to a specialized param-capturing middleware.
+
+This function positions the middleware in the same stack as `.use`.
+
+The function can optionally return a `Promise` object. If a `Promise` object
+is returned from the function, the router will attach an `onRejected` callback
+using `.then`. If the promise is rejected, `next` will be called with the
+rejected value, or an error if the value is falsy.
+
+Parameter mapping is used to provide pre-conditions to routes
+which use normalized placeholders. For example a _:user_id_ parameter
+could automatically load a user's information from the database without
+any additional code:
+
+<!-- eslint-disable no-undef -->
+
+```js
+router.param('user_id', function (req, res, next, id) {
+  User.find(id, function (err, user) {
+    if (err) {
+      return next(err)
+    } else if (!user) {
+      return next(new Error('failed to load user'))
+    }
+    req.user = user
+
+    // continue processing the request
+    next()
+  })
+})
+```
+
+### router.route(path)
+
+Creates an instance of a single `Route` for the given `path`.
+(See `Router.Route` below)
+
+Routes can be used to handle http `methods` with their own, optional middleware.
+
+Using `router.route(path)` is a recommended approach to avoiding duplicate
+route naming and thus typo errors.
+
+<!-- eslint-disable no-undef, no-unused-vars -->
+
+```js
+var api = router.route('/api/')
+```
+
+## Router.Route(path)
+
+Represents a single route as an instance that can be used to handle http
+`methods` with it's own, optional middleware.
+
+### route\[method](handler)
+
+These are functions which you can directly call on a route to register a new
+`handler` for the `method` on the route.
+
+<!-- eslint-disable no-undef -->
+
+```js
+// handle a `GET` request
+var status = router.route('/status')
+
+status.get(function (req, res) {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+  res.end('All Systems Green!')
+})
+```
+
+### route.all(handler)
+
+Adds a handler for all HTTP methods to this route.
+
+The handler can behave like middleware and call `next` to continue processing
+rather than responding.
+
+<!-- eslint-disable no-undef -->
+
+```js
+router.route('/')
+  .all(function (req, res, next) {
+    next()
+  })
+  .all(checkSomething)
+  .get(function (req, res) {
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+    res.end('Hello World!')
+  })
+```
+
+## Middleware
+
+Middleware (and method handlers) are functions that follow specific function
+parameters and have defined behavior when used with `router`. The most common
+format is with three parameters - "req", "res" and "next".
+
+- `req`  - This is a [HTTP incoming message](https://nodejs.org/api/http.html#http_http_incomingmessage) instance.
+- `res`  - This is a [HTTP server response](https://nodejs.org/api/http.html#http_class_http_serverresponse) instance.
+- `next` - Calling this function that tells `router` to proceed to the next matching middleware or method handler. It accepts an error as the first argument.
+
+The function can optionally return a `Promise` object. If a `Promise` object
+is returned from the function, the router will attach an `onRejected` callback
+using `.then`. If the promise is rejected, `next` will be called with the
+rejected value, or an error if the value is falsy.
+
+Middleware and method handlers can also be defined with four arguments. When
+the function has four parameters defined, the first argument is an error and
+subsequent arguments remain, becoming - "err", "req", "res", "next". These
+functions are "error handling middleware", and can be used for handling
+errors that occurred in previous handlers (E.g. from calling `next(err)`).
+This is most used when you want to define arbitrary rendering of errors.
+
+<!-- eslint-disable no-undef -->
+
+```js
+router.get('/error_route', function (req, res, next) {
+  return next(new Error('Bad Request'))
+})
+
+router.use(function (err, req, res, next) {
+  res.end(err.message) //= > "Bad Request"
+})
+```
+
+Error handling middleware will **only** be invoked when an error was given. As
+long as the error is in the pipeline, normal middleware and handlers will be
+bypassed - only error handling middleware will be invoked with an error.
+
+## Examples
+
+```js
+// import our modules
+var http = require('http')
+var Router = require('router')
+var finalhandler = require('finalhandler')
+var compression = require('compression')
+var bodyParser = require('body-parser')
+
+// store our message to display
+var message = 'Hello World!'
+
+// initialize the router & server and add a final callback.
+var router = Router()
+var server = http.createServer(function onRequest (req, res) {
+  router(req, res, finalhandler(req, res))
+})
+
+// use some middleware and compress all outgoing responses
+router.use(compression())
+
+// handle `GET` requests to `/message`
+router.get('/message', function (req, res) {
+  res.statusCode = 200
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+  res.end(message + '\n')
+})
+
+// create and mount a new router for our API
+var api = Router()
+router.use('/api/', api)
+
+// add a body parsing middleware to our API
+api.use(bodyParser.json())
+
+// handle `PATCH` requests to `/api/set-message`
+api.patch('/set-message', function (req, res) {
+  if (req.body.value) {
+    message = req.body.value
+
+    res.statusCode = 200
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+    res.end(message + '\n')
+  } else {
+    res.statusCode = 400
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+    res.end('Invalid API Syntax\n')
+  }
+})
+
+// make our http server listen to connections
+server.listen(8080)
+```
+
+You can get the message by running this command in your terminal,
+ or navigating to `127.0.0.1:8080` in a web browser.
+```bash
+curl http://127.0.0.1:8080
+```
+
+You can set the message by sending it a `PATCH` request via this command:
+```bash
+curl http://127.0.0.1:8080/api/set-message -X PATCH -H "Content-Type: application/json" -d '{"value":"Cats!"}'
+```
+
+### Example using mergeParams
+
+```js
+var http = require('http')
+var Router = require('router')
+var finalhandler = require('finalhandler')
+
+// this example is about the mergeParams option
+var opts = { mergeParams: true }
+
+// make a router with out special options
+var router = Router(opts)
+var server = http.createServer(function onRequest (req, res) {
+  // set something to be passed into the router
+  req.params = { type: 'kitten' }
+
+  router(req, res, finalhandler(req, res))
+})
+
+router.get('/', function (req, res) {
+  res.statusCode = 200
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+
+  // with respond with the the params that were passed in
+  res.end(req.params.type + '\n')
+})
+
+// make another router with our options
+var handler = Router(opts)
+
+// mount our new router to a route that accepts a param
+router.use('/:path', handler)
+
+handler.get('/', function (req, res) {
+  res.statusCode = 200
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+
+  // will respond with the param of the router's parent route
+  res.end(req.params.path + '\n')
+})
+
+// make our http server listen to connections
+server.listen(8080)
+```
+
+Now you can get the type, or what path you are requesting:
+```bash
+curl http://127.0.0.1:8080
+> kitten
+curl http://127.0.0.1:8080/such_path
+> such_path
+```
+
+### Example of advanced `.route()` usage
+
+This example shows how to implement routes where there is a custom
+handler to execute when the path matched, but no methods matched.
+Without any special handling, this would be treated as just a
+generic non-match by `router` (which typically results in a 404),
+but with a custom handler, a `405 Method Not Allowed` can be sent.
+
+```js
+var http = require('http')
+var finalhandler = require('finalhandler')
+var Router = require('router')
+
+// create the router and server
+var router = new Router()
+var server = http.createServer(function onRequest (req, res) {
+  router(req, res, finalhandler(req, res))
+})
+
+// register a route and add all methods
+router.route('/pet/:id')
+  .get(function (req, res) {
+    // this is GET /pet/:id
+    res.setHeader('Content-Type', 'application/json')
+    res.end(JSON.stringify({ name: 'tobi' }))
+  })
+  .delete(function (req, res) {
+    // this is DELETE /pet/:id
+    res.end()
+  })
+  .all(function (req, res) {
+    // this is called for all other methods not
+    // defined above for /pet/:id
+    res.statusCode = 405
+    res.end()
+  })
+
+// make our http server listen to connections
+server.listen(8080)
+```
+
+## License
+
+[MIT](LICENSE)
+
+[ci-image]: https://badgen.net/github/checks/pillarjs/router/master?label=ci
+[ci-url]: https://github.com/pillarjs/router/actions/workflows/ci.yml
+[npm-image]: https://img.shields.io/npm/v/router.svg
+[npm-url]: https://npmjs.org/package/router
+[node-version-image]: https://img.shields.io/node/v/router.svg
+[node-version-url]: http://nodejs.org/download/
+[coveralls-image]: https://img.shields.io/coveralls/pillarjs/router/master.svg
+[coveralls-url]: https://coveralls.io/r/pillarjs/router?branch=master
+[downloads-image]: https://img.shields.io/npm/dm/router.svg
+[downloads-url]: https://npmjs.org/package/router
+===== ./aurelius/node_modules/router/LICENSE =====
+(The MIT License)
+
+Copyright (c) 2013 Roman Shtylman
+Copyright (c) 2014-2022 Douglas Christopher Wilson
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+'Software'), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+===== ./aurelius/node_modules/router/HISTORY.md =====
+2.2.0 / 2025-03-26
+==================
+
+* Remove `setImmediate` support check
+* Restore `debug` dependency
+
+2.1.0 / 2025-02-10
+==================
+
+* Updated `engines` field to Node@18 or higher
+* Remove `Object.setPrototypeOf` polyfill
+* Use `Array.flat` instead of `array-flatten` package
+* Replace `methods` dependency with standard library
+* deps: parseurl@^1.3.3
+* deps: is-promise@^4.0.0
+* Replace `utils-merge` dependency with `Object.assign`
+* deps: Remove unused dep `after`
+
+2.0.0 / 2024-09-09
+==================
+
+* Drop support for node <18
+* deps: path-to-regexp@^8.0.0
+  - Drop support for partial capture group `router.route('/user(s?)/:user/:op')` but still have optional non-capture `/user{s}/:user/:op`
+  - `:name?` becomes `{:name}`
+  - `:name*` becomes `*name`.
+  - The splat change also changes splat from strings to an array of strings
+  - Optional splats become `{*name}`
+  - `:name+` becomes `*name` and thus equivalent to `*name` so I dropped those tests
+  - Strings as regular expressions are fully removed, need to be converted to native regular expressions
+
+2.0.0-beta.2 / 2024-03-20
+=========================
+
+This incorporates all changes after 1.3.5 up to 1.3.8.
+
+  * Add support for returned, rejected Promises to `router.param`
+
+2.0.0-beta.1 / 2020-03-29
+=========================
+
+This incorporates all changes after 1.3.3 up to 1.3.5.
+
+  * Internalize private `router.process_params` method
+  * Remove `debug` dependency
+  * deps: array-flatten@3.0.0
+  * deps: parseurl@~1.3.3
+  * deps: path-to-regexp@3.2.0
+    - Add new `?`, `*`, and `+` parameter modifiers.
+    - Matching group expressions are only RegExp syntax.
+      `(*)` is no longer valid and must be written as `(.*)`, for example.
+    - Named matching groups no longer available by position in `req.params`.
+      `/:foo(.*)` only captures as `req.params.foo` and not available as
+      `req.params[0]`.
+    - Regular expressions can only be used in a matching group.
+      `/\\d+` is no longer valid and must be written as `/(\\d+)`.
+    - Matching groups are now literal regular expressions.
+      `:foo` named captures can no longer be included inside a capture group.
+    - Special `*` path segment behavior removed.
+      `/foo/*/bar` will match a literal `*` as the middle segment.
+  * deps: setprototypeof@1.2.0
+
+2.0.0-alpha.1 / 2018-07-27
+==========================
+
+  * Add basic support for returned, rejected Promises
+    - Rejected Promises from middleware functions `next(error)`
+  * Drop support for Node.js below 0.10
+  * deps: debug@3.1.0
+    - Add `DEBUG_HIDE_DATE` environment variable
+    - Change timer to per-namespace instead of global
+    - Change non-TTY date format
+    - Remove `DEBUG_FD` environment variable support
+    - Support 256 namespace colors
+
+1.3.8 / 2023-02-24
+==================
+
+  * Fix routing requests without method
+
+1.3.7 / 2022-04-28
+==================
+
+  * Fix hanging on large stack of sync routes
+
+1.3.6 / 2021-11-15
+==================
+
+  * Fix handling very large stacks of sync middleware
+  * deps: safe-buffer@5.2.1
+
+1.3.5 / 2020-03-24
+==================
+
+  * Fix incorrect middleware execution with unanchored `RegExp`s
+  * perf: use plain object for internal method map
+
+1.3.4 / 2020-01-24
+==================
+
+  * deps: array-flatten@3.0.0
+  * deps: parseurl@~1.3.3
+  * deps: setprototypeof@1.2.0
+
+1.3.3 / 2018-07-06
+==================
+
+  * Fix JSDoc for `Router` constructor
+
+1.3.2 / 2017-09-24
+==================
+
+  * deps: debug@2.6.9
+  * deps: parseurl@~1.3.2
+    - perf: reduce overhead for full URLs
+    - perf: unroll the "fast-path" `RegExp`
+  * deps: setprototypeof@1.1.0
+  * deps: utils-merge@1.0.1
+
+1.3.1 / 2017-05-19
+==================
+
+  * deps: debug@2.6.8
+    - Fix `DEBUG_MAX_ARRAY_LENGTH`
+    - deps: ms@2.0.0
+
+1.3.0 / 2017-02-25
+==================
+
+  * Add `next("router")` to exit from router
+  * Fix case where `router.use` skipped requests routes did not
+  * Use `%o` in path debug to tell types apart
+  * deps: setprototypeof@1.0.3
+  * perf: add fast match path for `*` route
+
+1.2.0 / 2017-02-17
+==================
+
+  * Skip routing when `req.url` is not set
+  * deps: debug@2.6.1
+    - Allow colors in workers
+    - Deprecated `DEBUG_FD` environment variable set to `3` or higher
+    - Fix error when running under React Native
+    - Use same color for same namespace
+    - deps: ms@0.7.2
+
+1.1.5 / 2017-01-28
+==================
+
+  * deps: array-flatten@2.1.1
+  * deps: setprototypeof@1.0.2
+    - Fix using fallback even when native method exists
+
+1.1.4 / 2016-01-21
+==================
+
+  * deps: array-flatten@2.0.0
+  * deps: methods@~1.1.2
+    - perf: enable strict mode
+  * deps: parseurl@~1.3.1
+    - perf: enable strict mode
+
+1.1.3 / 2015-08-02
+==================
+
+  * Fix infinite loop condition using `mergeParams: true`
+  * Fix inner numeric indices incorrectly altering parent `req.params`
+  * deps: array-flatten@1.1.1
+    - perf: enable strict mode
+  * deps: path-to-regexp@0.1.7
+    - Fix regression with escaped round brackets and matching groups
+
+1.1.2 / 2015-07-06
+==================
+
+  * Fix hiding platform issues with `decodeURIComponent`
+    - Only `URIError`s are a 400
+  * Fix using `*` before params in routes
+  * Fix using capture groups before params in routes
+  * deps: path-to-regexp@0.1.6
+  * perf: enable strict mode
+  * perf: remove argument reassignments in routing
+  * perf: skip attempting to decode zero length string
+  * perf: use plain for loops
+
+1.1.1 / 2015-05-25
+==================
+
+  * Fix issue where `next('route')` in `router.param` would incorrectly skip values
+  * deps: array-flatten@1.1.0
+  * deps: debug@~2.2.0
+    - deps: ms@0.7.1
+
+1.1.0 / 2015-04-22
+==================
+
+  * Use `setprototypeof` instead of `__proto__`
+  * deps: debug@~2.1.3
+    - Fix high intensity foreground color for bold
+    - deps: ms@0.7.0
+
+1.0.0 / 2015-01-13
+==================
+
+  * Fix crash from error within `OPTIONS` response handler
+  * deps: array-flatten@1.0.2
+    - Remove redundant code path
+
+1.0.0-beta.3 / 2015-01-11
+=========================
+
+  * Fix duplicate methods appearing in OPTIONS responses
+  * Fix OPTIONS responses to include the HEAD method properly
+  * Remove support for leading colon in `router.param(name, fn)`
+  * Use `array-flatten` for flattening arrays
+  * deps: debug@~2.1.1
+  * deps: methods@~1.1.1
+
+1.0.0-beta.2 / 2014-11-19
+=========================
+
+  * Match routes iteratively to prevent stack overflows
+
+1.0.0-beta.1 / 2014-11-16
+=========================
+
+  * Initial release ported from Express 4.x
+    - Altered to work without Express
+===== ./aurelius/node_modules/pstree.remy/.travis.yml =====
+language: node_js
+cache:
+  directories:
+    - ~/.npm
+notifications:
+  email: false
+node_js:
+  - '8'
+===== ./aurelius/node_modules/pstree.remy/tests/fixtures/out1 =====
+1 (npm) S 0 1 1 34816 1 4210944 11112 0 0 0 45 8 0 0 20 0 10 0 330296 1089871872 11809 18446744073709551615 4194304 29343848 140726436642896 0 0 0 0 4096 2072112895 0 0 0 17 0 0 0 0 0 0 31441000 31537208 37314560 140726436650815 140726436650847 140726436650847 140726436650986 0
+15 (sh) S 1 1 1 34816 1 4210688 115 0 0 0 0 0 0 0 20 0 1 0 330372 4399104 187 18446744073709551615 94374393548800 94374393655428 140722913272992 0 0 0 0 0 65538 0 0 0 17 0 0 0 0 0 0 94374395756424 94374395761184 94374404673536 140722913278928 140722913278959 140722913278959 140722913284080 0
+16 (node) S 15 1 1 34816 1 4210688 6930 103 0 0 32 2 0 0 20 0 10 0 330373 1068478464 8412 18446744073709551615 4194304 29343848 140727228046064 0 0 0 0 4096 134300162 0 0 0 17 1 0 0 1 0 0 31441000 31537208 52584448 140727228050313 140727228050383 140727228050383 140727228055530 0
+27 (sh) S 16 1 1 34816 1 4210688 111 0 0 0 0 0 0 0 20 0 1 0 330410 4399104 193 18446744073709551615 94848235986944 94848236093572 140727019991184 0 0 0 0 0 65538 0 0 0 17 1 0 0 0 0 0 94848238194568 94848238199328 94848261660672 140727019998122 140727019998165 140727019998165 140727020003312 0
+28 (node) S 27 1 1 34816 1 4210688 3576 268 0 0 12 2 0 0 20 0 10 0 330411 930213888 6760 18446744073709551615 4194304 29343848 140726559664992 0 0 0 0 4096 134300162 0 0 0 17 1 0 0 0 0 0 31441000 31537208 32591872 140726559669117 140726559669199 140726559669199 140726559674346 0
+39 (node) S 28 1 1 34816 1 4210688 47517 0 0 0 151 9 0 0 20 0 6 0 330427 985739264 31859 18446744073709551615 4194304 29343848 140737324503920 0 0 0 0 4096 134234626 0 0 0 17 0 0 0 0 0 0 31441000 31537208 51585024 140737324510060 140737324510159 140737324510159 140737324515306 0
+45 (bash) S 0 45 45 34817 50 4210944 752 256 0 0 2 0 0 0 20 0 1 0 331039 18628608 789 18446744073709551615 4194304 5242124 140724425887696 0 0 0 65536 3670020 1266777851 0 0 0 17 1 0 0 0 0 0 7341384 7388228 30310400 140724425891678 140724425891683 140724425891683 140724425891822 0
+cat: /proc/50/stat: No such file or directory
+cat: /proc/51/stat: No such file or directory
+52 (xargs) S 45 50 45 34817 50 4210688 179 661 0 0 0 0 0 0 20 0 1 0 331544 4608000 346 18446744073709551615 94587588550656 94587588614028 140735223856048 0 0 0 0 0 2560 0 0 0 17 1 0 0 0 0 0 94587590711464 94587590713504 94587603169280 140735223861006 140735223861035 140735223861035 140735223861225 0
+===== ./aurelius/node_modules/pstree.remy/tests/fixtures/index.js =====
+const spawn = require('child_process').spawn;
+function run() {
+  spawn(
+    'sh',
+    ['-c', 'node -e "setInterval(() => console.log(`running`), 200)"'],
+    {
+      stdio: 'pipe',
+    }
+  );
+}
+
+var runCallCount = process.argv[2] || 1;
+for (var i = 0; i < runCallCount; i++) run();

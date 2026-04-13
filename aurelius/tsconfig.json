@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    /* Core ESM settings */
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2020",
+
+    /* Required for .ts imports */
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+
+    /* Node + TS interop */
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+
+    /* Stability */
+    "strict": false,
+    "skipLibCheck": true,
+    "isolatedModules": false,
+    "verbatimModuleSyntax": false,
+
+    /* Output (ignored because noEmit=true) */
+    "sourceMap": true,
+
+    /* Types */
+    "types": ["node"]
+  },
+
+  "include": ["./**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
