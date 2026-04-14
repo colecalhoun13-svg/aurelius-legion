@@ -1,57 +1,36 @@
+// aurelius/router/operatorRouter.ts
 /**
  * operatorRouter.ts
  * Aurelius OS v3.4 — Operator Selection Layer
  *
  * Scores the incoming message and selects the correct operator.
- * Matches your operator naming convention: operator_<name>
  */
 
 import type { OperatorType } from "../types.ts";
 
-// Import operators — MUST include .ts for ts-node ESM
-import { operator_athlete } from "../operators/athlete.ts";
-import { operator_business } from "../operators/business.ts";
-import { operator_identity } from "../operators/identity.ts";
-import { operator_research } from "../operators/research.ts";
-import { operator_content } from "../operators/content.ts";
-import { operator_accountability } from "../operators/accountability.ts";
-import { operator_goal } from "../operators/goal.ts";
-import { operator_tasks } from "../operators/tasks.ts";
-import { operator_dailyPlanning } from "../operators/dailyPlanning.ts";
-import { operator_weeklyPlanning } from "../operators/weeklyPlanning.ts";
-import { operator_scheduling } from "../operators/scheduling.ts";
-import { operator_reflection } from "../operators/reflection.ts";
-import { operator_training } from "../operators/training.ts";
-import { operator_finance } from "../operators/finance.ts";
-import { operator_wealth } from "../operators/wealth.ts";
-import { strategyOperator } from "../operators/strategy.ts";
-
-/**
- * Operator Pack — aligned to your actual exports
- */
 export const operatorPack: Record<OperatorType, any> = {
-  athlete: operator_athlete,
-  training: operator_training,
-  business: operator_business,
-  finance: operator_finance,
-  wealth: operator_wealth,
-  identity: operator_identity,
-  research: operator_research,
-  content: operator_content,
-  accountability: operator_accountability,
-  goal: operator_goal,
-  tasks: operator_tasks,
-  dailyPlanning: operator_dailyPlanning,
-  weeklyPlanning: operator_weeklyPlanning,
-  scheduling: operator_scheduling,
-  reflection: operator_reflection,
-  strategy: strategyOperator
+  athlete: null,
+  training: null,
+  business: null,
+  finance: null,
+  wealth: null,
+  identity: null,
+  research: null,
+  content: null,
+  accountability: null,
+  goal: null,
+  tasks: null,
+  dailyPlanning: null,
+  weeklyPlanning: null,
+  scheduling: null,
+  reflection: null,
+  strategy: null
 };
 
 /**
  * Scoring Logic — determines which operator should handle the message
  */
-function scoreOperator(message: string, operatorName: string): number {
+function scoreOperator(message: string, operatorName: OperatorType): number {
   const lower = message.toLowerCase();
 
   switch (operatorName) {
@@ -163,7 +142,7 @@ function scoreOperator(message: string, operatorName: string): number {
 /**
  * Main Router — selects the highest scoring operator
  */
-export function routeOperator(message: string) {
+export function routeOperator(message: string): OperatorType {
   let bestOperator: OperatorType = "identity";
   let bestScore = 0;
 
@@ -176,5 +155,5 @@ export function routeOperator(message: string) {
     }
   }
 
-  return operatorPack[bestOperator];
+  return bestOperator;
 }

@@ -1,0 +1,30 @@
+{
+  "operator": "accountability",
+  "version": "1.0",
+  "principles": [
+    "Accountability is about alignment and follow-through, not shame.",
+    "Commitments must be specific, time-bound, and realistic.",
+    "Tracking should be simple enough to sustain."
+  ],
+  "playbooks": [
+    {
+      "name": "Commitment framing",
+      "steps": [
+        "Clarify the exact action.",
+        "Clarify the deadline.",
+        "Clarify the consequence of not doing it.",
+        "Clarify the check-in mechanism."
+      ]
+    }
+  ],
+  "constraints": [
+    "Avoid vague commitments like 'try harder'.",
+    "Do not encourage self-punishment."
+  ],
+  "examples": [
+    {
+      "situation": "User repeatedly breaks commitments.",
+      "response": "Shrink the commitment and increase the check-in frequency."
+    }
+  ]
+}

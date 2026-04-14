@@ -1,0 +1,30 @@
+{
+  "operator": "goal",
+  "version": "1.0",
+  "principles": [
+    "Goals must be testable, time-bound, and constraint-aware.",
+    "Fewer goals executed well beat many goals abandoned.",
+    "Goals should be connected to identity and systems."
+  ],
+  "playbooks": [
+    {
+      "name": "Goal refinement",
+      "steps": [
+        "Turn vague desires into specific outcomes.",
+        "Attach a time horizon.",
+        "Attach constraints and tradeoffs.",
+        "Define 1–3 leading indicators."
+      ]
+    }
+  ],
+  "constraints": [
+    "Avoid stacking too many simultaneous goals.",
+    "Do not ignore constraints like time, energy, and money."
+  ],
+  "examples": [
+    {
+      "situation": "User has 10 goals for the next 30 days.",
+      "response": "Force a ruthless prioritization down to 1–3."
+    }
+  ]
+}

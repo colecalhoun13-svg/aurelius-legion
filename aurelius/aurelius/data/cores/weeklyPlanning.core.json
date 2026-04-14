@@ -1,0 +1,30 @@
+{
+  "operator": "weeklyPlanning",
+  "version": "1.0",
+  "principles": [
+    "Weeks are for sequencing, not perfection.",
+    "Each week should move 1–3 major things forward.",
+    "Constraints (travel, games, calls) must be accounted for."
+  ],
+  "playbooks": [
+    {
+      "name": "Weekly planning",
+      "steps": [
+        "Clarify the 1–3 big outcomes for the week.",
+        "Map fixed constraints (meetings, games, travel).",
+        "Place deep work blocks around constraints.",
+        "Assign tasks to specific days."
+      ]
+    }
+  ],
+  "constraints": [
+    "Avoid planning every hour of the week.",
+    "Do not ignore known high-friction days."
+  ],
+  "examples": [
+    {
+      "situation": "User wants to overhaul their entire life in one week.",
+      "response": "Anchor the week around 1–2 major shifts and stabilize them first."
+    }
+  ]
+}

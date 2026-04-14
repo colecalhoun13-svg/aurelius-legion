@@ -27,6 +27,9 @@ import { engineRouter } from "./core/engineRouter.ts";
 // Weekly loop orchestrator
 import { runWeeklyLoop } from "./research/weeklyLoop.ts";
 
+// Daily autonomy loop orchestrator
+import { runDailyLoop } from "./autonomy/dailyLoop.ts";
+
 const app = express();
 app.use(express.json());
 
@@ -71,16 +74,16 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
   }
 
   try {
-    // 1. Determine operator
+    // 1. Determine operator (now returns OperatorType string)
     const operator = routeOperator(message);
 
     // 2. Build system prompt
-    const systemPrompt = `You are Aurelius OS v3.4. Operator: ${operator}. Respond with precision.`;
+    const systemPrompt = `You are Aurelius OS v3.4. Active operator: ${operator}. Respond with precision.`;
 
     // 3. Route to correct engine (Claude, Groq, DeepSeek, Gemini, OpenAI, XAI)
     const reply = await engineRouter(operator, systemPrompt, message);
 
-    return res.json({ reply });
+    return res.json({ reply, operator });
   } catch (err) {
     console.error("Aurelius error:", err);
     return res.status(500).json({ error: "Aurelius encountered an issue." });
@@ -102,12 +105,54 @@ app.post("/run-weekly", async (req: Request, res: Response) => {
 });
 
 // ======================================================
+// MANUAL DAILY LOOP TRIGGER  (Upgrade #7)
+// ======================================================
+app.post("/run-daily", async (req: Request, res: Response) => {
+  const { plan, reflection, researchTopic, tasks } = req.body;
+
+  if (!plan || !reflection || !researchTopic || !tasks) {
+    return res.status(400).json({
+      error: "Missing fields. Required: plan, reflection, researchTopic, tasks"
+    });
+  }
+
+  try {
+    const result = await runDailyLoop({
+      plan,
+      reflection,
+      researchTopic,
+      tasks
+    });
+
+    return res.json(result);
+  } catch (err) {
+    console.error("Daily loop error:", err);
+    return res.status(500).json({ error: "Daily loop failed." });
+  }
+});
+
+// ======================================================
 // SCHEDULED WEEKLY INTELLIGENCE LOOP
 // Runs every Monday at 9:00 AM
 // ======================================================
 schedule.scheduleJob("0 9 * * 1", () => {
   console.log("Scheduled weekly intelligence loop triggered...");
   runWeeklyLoop("weekly autonomous research");
+});
+
+// ======================================================
+// SCHEDULED DAILY AUTONOMY LOOP (Upgrade #8)
+// Runs every day at 7:00 AM
+// ======================================================
+schedule.scheduleJob("0 7 * * *", () => {
+  console.log("Scheduled daily loop triggered...");
+
+  runDailyLoop({
+    plan: "Plan my day.",
+    reflection: "Reflect on yesterday.",
+    researchTopic: "emerging trends in performance science",
+    tasks: "Sync my tasks for today."
+  });
 });
 
 // ======================================================

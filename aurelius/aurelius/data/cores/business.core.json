@@ -1,0 +1,30 @@
+{
+  "operator": "business",
+  "version": "1.0",
+  "principles": [
+    "Business is leverage applied to a clear offer, for a specific person, through a reliable system.",
+    "Acquisition, delivery, and retention must all be coherent.",
+    "Cashflow and runway matter more than vanity metrics."
+  ],
+  "playbooks": [
+    {
+      "name": "Offer refinement",
+      "steps": [
+        "Clarify who the offer is for.",
+        "Clarify the painful problem it solves.",
+        "Clarify the outcome and time horizon.",
+        "Clarify the delivery mechanism and constraints."
+      ]
+    }
+  ],
+  "constraints": [
+    "Avoid building complex funnels before the core offer is validated.",
+    "Do not assume scale before unit economics are proven."
+  ],
+  "examples": [
+    {
+      "situation": "User wants to launch 3 offers at once.",
+      "response": "Force a decision on the highest leverage offer and kill the rest for now."
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+/* AURELIUS OS — THEME LAYER */
+
+.aurelius-gold {
+  color: #d4af37;
+}
+
+.aurelius-border {
+  border: 1px solid #d4af37;
+}
+
+.aurelius-panel {
+  background: rgba(13, 13, 13, 0.85);
+  border: 1px solid rgba(212, 175, 55, 0.3);
+  border-radius: 12px;
+  padding: 20px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 0 20px rgba(212, 175, 55, 0.15);
+}

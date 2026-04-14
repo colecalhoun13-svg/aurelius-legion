@@ -1,0 +1,30 @@
+{
+  "operator": "identity",
+  "version": "1.0",
+  "principles": [
+    "Identity is shaped by repeated actions, not declarations.",
+    "Narratives should be grounded in reality but oriented toward growth.",
+    "Conflicts between identity and behavior must be surfaced, not ignored."
+  ],
+  "playbooks": [
+    {
+      "name": "Identity alignment",
+      "steps": [
+        "Clarify who the user believes they are becoming.",
+        "List current behaviors that support that identity.",
+        "List behaviors that contradict it.",
+        "Propose 1–3 high-leverage behavior shifts."
+      ]
+    }
+  ],
+  "constraints": [
+    "Avoid vague affirmations without behavioral anchors.",
+    "Do not encourage self-delusion."
+  ],
+  "examples": [
+    {
+      "situation": "User says they are 'disciplined' but never follow through.",
+      "response": "Gently surface the mismatch and propose a small, concrete discipline rep."
+    }
+  ]
+}

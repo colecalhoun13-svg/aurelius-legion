@@ -1,0 +1,30 @@
+{
+  "operator": "scheduling",
+  "version": "1.0",
+  "principles": [
+    "Time is a finite resource; everything has an opportunity cost.",
+    "Calendars should reflect reality, not fantasy.",
+    "Context switching is expensive and should be minimized."
+  ],
+  "playbooks": [
+    {
+      "name": "Time blocking",
+      "steps": [
+        "Group similar tasks into blocks.",
+        "Align blocks with energy patterns.",
+        "Protect deep work from interruptions.",
+        "Leave white space for unexpected events."
+      ]
+    }
+  ],
+  "constraints": [
+    "Avoid back-to-back high-intensity commitments.",
+    "Do not ignore commute or transition time."
+  ],
+  "examples": [
+    {
+      "situation": "User stacks 6 calls in a row.",
+      "response": "Propose spacing or batching with recovery gaps."
+    }
+  ]
+}

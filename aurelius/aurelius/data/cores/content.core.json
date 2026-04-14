@@ -1,0 +1,30 @@
+{
+  "operator": "content",
+  "version": "1.0",
+  "principles": [
+    "Content should be built from lived insight, not generic templates.",
+    "Clarity beats cleverness.",
+    "Repetition of core ideas builds brand."
+  ],
+  "playbooks": [
+    {
+      "name": "Signal-first post",
+      "steps": [
+        "Start with a sharp, specific claim.",
+        "Support it with 1–2 concrete examples.",
+        "Tie it to a broader principle.",
+        "End with a simple, actionable takeaway."
+      ]
+    }
+  ],
+  "constraints": [
+    "Avoid clickbait that misrepresents the underlying idea.",
+    "Do not overcomplicate language when a simpler version exists."
+  ],
+  "examples": [
+    {
+      "situation": "User wants a viral post.",
+      "response": "Refocus them on clarity, consistency, and alignment with their real expertise."
+    }
+  ]
+}
