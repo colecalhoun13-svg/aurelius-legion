@@ -1,0 +1,505 @@
+.
+├── README.md
+├── aurelius
+│   ├── analytics
+│   │   ├── engineAnalytics.ts
+│   │   ├── operatorAnalytics.ts
+│   │   ├── optimizationEngine.ts
+│   │   └── usageTracker.ts
+│   ├── aurelius
+│   │   ├── aurelius
+│   │   │   └── research
+│   │   ├── data
+│   │   │   └── cores
+│   │   │       ├── accountability.core.json
+│   │   │       ├── athlete.core.json
+│   │   │       ├── business.core.json
+│   │   │       ├── content.core.json
+│   │   │       ├── dailyPlanning.core.json
+│   │   │       ├── finance.core.json
+│   │   │       ├── goal.core.json
+│   │   │       ├── identity.core.json
+│   │   │       ├── reflection.core.json
+│   │   │       ├── research.core.json
+│   │   │       ├── scheduling.core.json
+│   │   │       ├── strategy.core.json
+│   │   │       ├── tasks.core.json
+│   │   │       ├── training.core.json
+│   │   │       ├── wealth.core.json
+│   │   │       └── weeklyPlanning.core.json
+│   │   ├── operators
+│   │   │   ├── coreLoader.ts
+│   │   │   ├── coreTypes.ts
+│   │   │   ├── coreUpdater.ts
+│   │   │   └── cores
+│   │   └── self
+│   │       └── upgrades
+│   ├── aurelius_tree.txt
+│   ├── autonomy
+│   │   ├── autonomyConfig.ts
+│   │   ├── autonomyEngine.ts
+│   │   ├── autonomyEngineDB.ts
+│   │   ├── autonomyRouter.ts
+│   │   ├── autonomyTypes.ts
+│   │   ├── decisionEngine.ts
+│   │   ├── loop.ts
+│   │   ├── reflectionEngine.ts
+│   │   ├── stateStore.ts
+│   │   ├── taskPlanner.ts
+│   │   └── types.ts
+│   ├── core
+│   │   ├── db
+│   │   │   └── prisma.ts
+│   │   ├── engineRegistry.ts
+│   │   ├── engineTypes.ts
+│   │   ├── engines
+│   │   │   ├── autonomyEngine.ts
+│   │   │   ├── memoryEngine.ts
+│   │   │   ├── operatorEngine.ts
+│   │   │   ├── researchEngine.ts
+│   │   │   ├── systemEngine.ts
+│   │   │   ├── taskEngine.ts
+│   │   │   └── toolEngine.ts
+│   │   ├── memoryEngine.ts
+│   │   ├── nervousSystem.ts
+│   │   ├── operatorHelpers.ts
+│   │   ├── operatorModes.ts
+│   │   ├── operatorProfiles.ts
+│   │   ├── operatorRegistry.ts
+│   │   └── registerEngines.ts
+│   ├── data
+│   │   ├── autonomy
+│   │   ├── cores
+│   │   ├── daily_logs
+│   │   └── memory
+│   │       ├── system.memory.json
+│   │       ├── user.constraints.json
+│   │       ├── user.goals.json
+│   │       ├── user.history.json
+│   │       ├── user.preferences.json
+│   │       └── user.profile.json
+│   ├── engines
+│   │   ├── anthropicEngine.ts
+│   │   ├── deepseekClient.ts
+│   │   ├── deepseekEngine.ts
+│   │   ├── engineAdapter.ts
+│   │   ├── geminiEngine.ts
+│   │   ├── gptEngine.ts
+│   │   ├── grokEngine.ts
+│   │   ├── groqEngine.ts
+│   │   └── xaiClient.ts
+│   ├── index.ts
+│   ├── memory
+│   │   ├── memoryLoader.ts
+│   │   ├── memoryStore.ts
+│   │   ├── memoryTypes.ts
+│   │   └── memoryWriter.ts
+│   ├── memoryEvolution
+│   │   ├── memoryCompressor.ts
+│   │   ├── memoryEvolutionConfig.ts
+│   │   ├── memoryEvolutionEngine.ts
+│   │   ├── memoryEvolutionTypes.ts
+│   │   ├── memoryRouter.ts
+│   │   └── memorySynthesizer.ts
+│   ├── operators
+│   │   ├── accountability.ts
+│   │   ├── athlete.ts
+│   │   ├── business.ts
+│   │   ├── content.ts
+│   │   ├── coreLoader.ts
+│   │   ├── coreTypes.ts
+│   │   ├── coreUpdater.ts
+│   │   ├── cores
+│   │   ├── dailyPlanning.ts
+│   │   ├── finance.ts
+│   │   ├── financeCore.ts
+│   │   ├── goal.ts
+│   │   ├── identity.ts
+│   │   ├── identityCore.ts
+│   │   ├── operatorCores.ts
+│   │   ├── performanceCore.ts
+│   │   ├── reflection.ts
+│   │   ├── research.ts
+│   │   ├── scheduling.ts
+│   │   ├── strategy.ts
+│   │   ├── strategyCore.ts
+│   │   ├── tasks.ts
+│   │   ├── training.ts
+│   │   ├── trainingCore.ts
+│   │   ├── wealth.ts
+│   │   └── weeklyPlanning.ts
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── persona
+│   │   └── aureliusPersona.ts
+│   ├── prisma
+│   │   ├── migrations
+│   │   │   ├── 20260416172649_init_aurelius_core
+│   │   │   │   └── migration.sql
+│   │   │   ├── 20260416222011_add_unique_operator_name
+│   │   │   │   └── migration.sql
+│   │   │   └── migration_lock.toml
+│   │   └── schema.prisma
+│   ├── repositories
+│   │   ├── autonomyGoalRepository.ts
+│   │   ├── autonomyRepository.ts
+│   │   ├── logRepository.ts
+│   │   ├── memoryRepository.ts
+│   │   ├── operatorRepository.ts
+│   │   └── taskRepository.ts
+│   ├── research
+│   │   ├── researchAdapters
+│   │   │   ├── embeddingResearchAdapter.ts
+│   │   │   ├── llmResearchAdapter.ts
+│   │   │   ├── serpSearchAdapter.ts
+│   │   │   └── webSearchAdapter.ts
+│   │   ├── researchConfig.ts
+│   │   ├── researchEngine.ts
+│   │   ├── researchFusion.ts
+│   │   ├── researchRouter.ts
+│   │   └── researchTypes.ts
+│   ├── router
+│   │   ├── autonomyRouter.ts
+│   │   ├── engineTest.ts
+│   │   ├── index.ts
+│   │   ├── operatorRouter.ts
+│   │   ├── types_router_backup.ts
+│   │   └── typography.ts
+│   ├── scripts
+│   │   ├── runNervousSystemLoop.ts
+│   │   ├── runNervousSystemTick.ts
+│   │   ├── runOperatorModeRecalibration.ts
+│   │   ├── seedOperators.ts
+│   │   └── smokePhase4.ts
+│   ├── self
+│   │   ├── selfUpgradeEngine.ts
+│   │   └── upgrades
+│   │       ├── coreEvolution.ts
+│   │       └── index.ts
+│   ├── tsconfig.json
+│   ├── typeDefs
+│   │   ├── deepseek-sdk.d.ts
+│   │   └── xai-sdk.d.ts
+│   └── types.ts
+├── aurelius-ui
+│   ├── AGENTS.md
+│   ├── CLAUDE.md
+│   ├── README.md
+│   ├── app
+│   │   ├── api
+│   │   │   ├── daily
+│   │   │   │   └── route.ts
+│   │   │   ├── memory
+│   │   │   │   └── route.ts
+│   │   │   ├── system
+│   │   │   │   └── route.ts
+│   │   │   └── weekly
+│   │   │       └── route.ts
+│   │   ├── favicon.ico
+│   │   ├── globals.css
+│   │   ├── layout.tsx
+│   │   ├── page.tsx
+│   │   └── theme.css
+│   ├── components
+│   │   ├── CommandBar.tsx
+│   │   ├── Sidebar.tsx
+│   │   ├── layout
+│   │   │   └── BackgroundWreath.tsx
+│   │   └── ui
+│   │       ├── Card.tsx
+│   │       └── Panel.tsx
+│   ├── eslint.config.mjs
+│   ├── lib
+│   │   ├── readers.ts
+│   │   └── utils.ts
+│   ├── next-env.d.ts
+│   ├── next.config.ts
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── postcss.config.mjs
+│   ├── public
+│   │   ├── file.svg
+│   │   ├── globe.svg
+│   │   ├── next.svg
+│   │   ├── vercel.svg
+│   │   ├── window.svg
+│   │   └── wreath
+│   │       └── aurelius-wreath.svg
+│   ├── tailwind.config.ts
+│   └── tsconfig.json
+├── aurelius-ui_backup
+│   ├── README.md
+│   ├── app
+│   │   ├── api
+│   │   │   ├── daily
+│   │   │   │   └── route.ts
+│   │   │   ├── memory
+│   │   │   │   └── route.ts
+│   │   │   ├── system
+│   │   │   │   └── route.ts
+│   │   │   └── weekly
+│   │   │       └── route.ts
+│   │   ├── favicon.ico
+│   │   ├── globals.css
+│   │   ├── layout.tsx
+│   │   ├── page.tsx
+│   │   └── theme.css
+│   ├── eslint.config.mjs
+│   ├── next-env.d.ts
+│   ├── next.config.ts
+│   ├── package.json
+│   ├── postcss.config.mjs
+│   ├── public
+│   │   ├── file.svg
+│   │   ├── globe.svg
+│   │   ├── next.svg
+│   │   ├── vercel.svg
+│   │   ├── window.svg
+│   │   └── wreath
+│   │       └── aurelius-wreath.svg
+│   └── tsconfig.json
+├── aurelius_tree.txt
+├── backend-tree.txt
+├── frontend
+│   ├── AGENTS.md
+│   ├── CLAUDE.md
+│   ├── README.md
+│   ├── app
+│   │   ├── api
+│   │   │   ├── cockpit
+│   │   │   │   ├── api-throughput
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── attention
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── autonomy
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── autonomy-timeline
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── cognitive-load
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── context-window
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── engine-load
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── error-heatmap
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── event-stream
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── knowledge-graph
+│   │   │   │   │   ├── edges
+│   │   │   │   │   │   └── routes.ts
+│   │   │   │   │   └── nodes
+│   │   │   │   │       └── route.ts
+│   │   │   │   ├── memory
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── memory-embeddings
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── memory-timeline
+│   │   │   │   │   └── router.ts
+│   │   │   │   ├── mission
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── model-latency
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── models
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── operator
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── research
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── router
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── system
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── tasks
+│   │   │   │   │   └── route.ts
+│   │   │   │   └── token-flow
+│   │   │   │       └── route.ts
+│   │   │   ├── corpus
+│   │   │   │   ├── actions
+│   │   │   │   │   └── route.ts
+│   │   │   │   └── index
+│   │   │   │       └── route.ts
+│   │   │   ├── daily
+│   │   │   │   └── route.ts
+│   │   │   ├── memory
+│   │   │   │   └── route.ts
+│   │   │   ├── system
+│   │   │   │   └── route.ts
+│   │   │   └── weekly
+│   │   │       └── route.ts
+│   │   ├── cockpit
+│   │   │   └── page.tsx
+│   │   ├── components
+│   │   │   ├── AureliusChrome.tsx
+│   │   │   ├── AureliusTheme.tsx
+│   │   │   ├── Sidebar.tsx
+│   │   │   ├── TopBar.tsx
+│   │   │   ├── layout
+│   │   │   └── theme
+│   │   ├── corpus
+│   │   │   ├── CorpusActions.tsx
+│   │   │   ├── CorpusPreview.tsx
+│   │   │   ├── CorpusSidebar.tsx
+│   │   │   ├── CorpusTable.tsx
+│   │   │   └── page.tsx
+│   │   ├── daily
+│   │   │   └── page.tsx
+│   │   ├── favicon.ico
+│   │   ├── globals.css
+│   │   ├── layout.tsx
+│   │   ├── page.tsx
+│   │   ├── settings
+│   │   │   └── page.tsx
+│   │   └── theme.aurelius-ui.css
+│   ├── components
+│   │   ├── AureliusChat.tsx
+│   │   ├── CommandBar.tsx
+│   │   ├── Sidebar.cockpit.tsx
+│   │   ├── identity
+│   │   │   ├── AureliusCrest.tsx
+│   │   │   └── AureliusStartup.tsx
+│   │   ├── layout
+│   │   │   └── BackgroundWreath.tsx
+│   │   └── ui
+│   │       ├── Card.tsx
+│   │       └── Panel.tsx
+│   ├── eslint.config.mjs
+│   ├── global.d.ts
+│   ├── lib
+│   │   ├── llm
+│   │   │   ├── modelRegistry.ts
+│   │   │   ├── providers
+│   │   │   │   ├── anthropic.ts
+│   │   │   │   ├── base.ts
+│   │   │   │   ├── deepseek.ts
+│   │   │   │   ├── gemini.ts
+│   │   │   │   ├── grok.ts
+│   │   │   │   ├── groq.ts
+│   │   │   │   └── openai.ts
+│   │   │   ├── router.ts
+│   │   │   └── runLLM.ts
+│   │   ├── operators
+│   │   │   ├── operatorLoader.ts
+│   │   │   └── operatorRegistry.ts
+│   │   └── placeholder
+│   ├── next-env.d.ts
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── postcss.config.mjs
+│   ├── public
+│   │   ├── crest
+│   │   │   └── aurelius-crest.png
+│   │   ├── file.svg
+│   │   ├── globe.svg
+│   │   ├── next.svg
+│   │   ├── vercel.svg
+│   │   └── window.svg
+│   ├── src
+│   │   ├── cockpit
+│   │   │   ├── hooks
+│   │   │   │   └── useCockpitData.ts
+│   │   │   ├── layout
+│   │   │   │   └── CockpitLayout.tsx
+│   │   │   ├── pages
+│   │   │   ├── types.ts
+│   │   │   └── widgets
+│   │   │       ├── ApiThroughputWidget.tsx
+│   │   │       ├── AttentionWidget.tsx
+│   │   │       ├── AutonomyTimelineWidget.tsx
+│   │   │       ├── AutonomyWidget.tsx
+│   │   │       ├── CognitiveLoadWidget.tsx
+│   │   │       ├── ContextWindowWidget.tsx
+│   │   │       ├── EngineLoadWidget.tsx
+│   │   │       ├── ErrorHeatmapWidget.tsx
+│   │   │       ├── EventStreamWidget.tsx
+│   │   │       ├── KnowledgeGraphWidget.tsx
+│   │   │       ├── MemoryEmbeddingsWidget.tsx
+│   │   │       ├── MemoryTimelineWidget.tsx
+│   │   │       ├── MemoryWidget.tsx
+│   │   │       ├── MissionLogWidget.tsx
+│   │   │       ├── ModelLatencyWidget.tsx
+│   │   │       ├── ModelRegistryWidget.tsx
+│   │   │       ├── OperatorWidget.tsx
+│   │   │       ├── ResearchWidget.tsx
+│   │   │       ├── RouterWidget.tsx
+│   │   │       ├── SystemWidget.tsx
+│   │   │       ├── TaskEngineWidget.tsx
+│   │   │       └── TokenFlowWidget.tsx
+│   │   └── nothing
+│   ├── tailwind.config.js
+│   ├── tsconfig.json
+│   └── tsconfig.tsbuildinfo
+├── frontend-tree.txt
+├── frontend_backup
+│   ├── AGENTS.md
+│   ├── CLAUDE.md
+│   ├── README.md
+│   ├── app
+│   │   ├── api
+│   │   │   └── corpus
+│   │   │       ├── actions
+│   │   │       │   └── route.ts
+│   │   │       └── index
+│   │   │           └── route.ts
+│   │   ├── components
+│   │   │   ├── AureliusChrome.tsx
+│   │   │   ├── AureliusTheme.tsx
+│   │   │   ├── Sidebar.tsx
+│   │   │   ├── TopBar.tsx
+│   │   │   ├── layout
+│   │   │   └── theme
+│   │   ├── corpus
+│   │   │   ├── CorpusActions.tsx
+│   │   │   ├── CorpusPreview.tsx
+│   │   │   ├── CorpusSidebar.tsx
+│   │   │   ├── CorpusTable.tsx
+│   │   │   └── page.tsx
+│   │   ├── favicon.ico
+│   │   ├── globals.css
+│   │   ├── layout.tsx
+│   │   ├── page.tsx
+│   │   └── settings
+│   │       └── page.tsx
+│   ├── components
+│   │   ├── AureliusChat.tsx
+│   │   └── identity
+│   │       ├── AureliusCrest.tsx
+│   │       └── AureliusStartup.tsx
+│   ├── eslint.config.mjs
+│   ├── global.d.ts
+│   ├── lib
+│   │   ├── llm
+│   │   │   ├── modelRegistry.ts
+│   │   │   ├── providers
+│   │   │   │   ├── anthropic.ts
+│   │   │   │   ├── base.ts
+│   │   │   │   ├── deepseek.ts
+│   │   │   │   ├── gemini.ts
+│   │   │   │   ├── grok.ts
+│   │   │   │   ├── groq.ts
+│   │   │   │   └── openai.ts
+│   │   │   ├── router.ts
+│   │   │   └── runLLM.ts
+│   │   ├── operators
+│   │   │   ├── operatorLoader.ts
+│   │   │   └── operatorRegistry.ts
+│   │   └── placeholder
+│   ├── next-env.d.ts
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── postcss.config.mjs
+│   ├── public
+│   │   ├── crest
+│   │   │   └── aurelius-crest.png
+│   │   ├── file.svg
+│   │   ├── globe.svg
+│   │   ├── next.svg
+│   │   ├── vercel.svg
+│   │   └── window.svg
+│   ├── tailwind.config.js
+│   └── tsconfig.json
+├── next.config.js
+├── project-tree.txt
+└── ui-tree.txt
+
+138 directories, 365 files

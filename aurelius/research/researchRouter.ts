@@ -1,14 +1,8 @@
-// research/researchRouter.ts
-/**
- * Research Router — Aurelius OS v3.4
- * Cost-aware entrypoint for research fusion.
- */
+// aurelius/research/researchRouter.ts
 
-import { runResearchFusion } from "./researchFusion.ts";
+import { runResearch } from "./researchEngine";
+import { ResearchTask } from "./researchTypes";
 
-export async function routeResearch(
-  query: string,
-  opts?: { usePerplexity?: boolean; reason?: string }
-) {
-  return await runResearchFusion(query, opts);
+export async function researchRouter(task: ResearchTask) {
+  return await runResearch(task);
 }

@@ -1,40 +1,33 @@
 // aurelius/self/upgrades/coreEvolution.ts
-/**
- * Operator Core Evolution — Aurelius OS v3.4
- * Adjusts operator principles + constraints based on usage patterns.
- */
 
-import { loadCore, saveCore } from "../../operators/coreLoader.ts";
-import { OperatorType } from "../../types.ts";
+export type OperatorCore = {
+  name: string;
+  insights: string[];
+  lastUpdated?: string;
+  // Allow richer core structure (domain, mission, principles, etc.)
+  [key: string]: any;
+};
 
-export function evolveOperatorCores(memory: any): string {
-  const usage = memory.system?.operatorUsage || {};
-  const upgrades: string[] = [];
+export function evolveCore(
+  core: OperatorCore,
+  newInsights: string[]
+): OperatorCore {
+  if (!newInsights.length) return core;
 
-  for (const operator of Object.keys(usage)) {
-    if (!operator || operator.startsWith("engine:")) continue;
+  const existing = new Set(core.insights);
+  const merged: string[] = [...core.insights];
 
-    const core = loadCore(operator as OperatorType);
-    if (!core) continue;
-
-    const count = usage[operator];
-
-    // If operator is heavily used → strengthen principles
-    if (count > 20) {
-      core.principles.push("Reinforce clarity and precision under high usage load.");
-      upgrades.push(`Strengthened principles for ${operator}`);
-    }
-
-    // If operator is rarely used → simplify constraints
-    if (count < 3) {
-      core.constraints.push("Avoid unnecessary complexity when invoked infrequently.");
-      upgrades.push(`Simplified constraints for ${operator}`);
-    }
-
-    saveCore(operator as OperatorType, core);
+  for (const insight of newInsights) {
+    const trimmed = String(insight).trim();
+    if (!trimmed) continue;
+    if (existing.has(trimmed)) continue;
+    existing.add(trimmed);
+    merged.push(trimmed);
   }
 
-  return upgrades.length
-    ? upgrades.join("\n")
-    : "No operator core changes required.";
+  return {
+    ...core,
+    insights: merged,
+    lastUpdated: new Date().toISOString(),
+  };
 }

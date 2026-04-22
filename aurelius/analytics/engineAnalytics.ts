@@ -1,22 +1,31 @@
-// analytics/engineAnalytics.ts
-/**
- * Engine Analytics — Aurelius OS v3.4
- * Tracks which engines are used most.
- */
+// aurelius/analytics/engineAnalytics.ts
 
-import { loadAllMemory } from "../memory/memoryLoader.ts";
+import { appendMemoryWrite } from "../memory/memoryWriter";
 
-export function analyzeEngineUsage() {
-  const memory = loadAllMemory();
-  const usage = memory.system?.operatorUsage || {};
+export type EngineUsageEvent = {
+  operator?: string;
+  domain?: string;
+  durationMs: number;
+  tokensUsed: number;
+};
 
-  const engines = Object.entries(usage)
-    .filter(([key]) => key.startsWith("engine:"))
-    .sort((a, b) => b[1] - a[1])
-    .map(([engine, count]) => `${engine.replace("engine:", "")}: ${count}`);
+export async function trackEngineUsage(
+  engineName: string,
+  event: EngineUsageEvent
+): Promise<void> {
+  const summary = [
+    `Engine: ${engineName}`,
+    event.operator ? `Operator: ${event.operator}` : null,
+    event.domain ? `Domain: ${event.domain}` : null,
+    `Duration: ${event.durationMs}ms`,
+    `Tokens: ${event.tokensUsed}`,
+  ]
+    .filter(Boolean)
+    .join(" | ");
 
-  return `
-Engine Usage Analysis:
-${engines.join("\n")}
-`.trim();
+  appendMemoryWrite({
+    domain: "analytics",
+    source: "engineAnalytics",
+    summary,
+  });
 }

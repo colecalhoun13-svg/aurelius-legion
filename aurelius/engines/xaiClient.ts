@@ -1,40 +1,70 @@
-/**
- * xaiClient.ts
- * Aurelius OS v3.4 — Grok (xAI) Engine
- *
- * Correct payload format for xAI Chat Completions API.
- */
+// aurelius/engines/xaiClient.ts
 
 import axios from "axios";
+import {
+  EngineAdapter,
+  EngineRequest,
+  EngineResponse,
+} from "./engineAdapter";
 
-export async function xaiChat(systemPrompt: string, userMessage: string) {
-  try {
-    const apiKey = process.env.XAI_API_KEY;
+const XAI_API_KEY = process.env.XAI_API_KEY || "";
+const XAI_ENDPOINT =
+  "https://api.x.ai/v1/chat/completions";
 
-    const response = await axios.post(
-      "https://api.x.ai/v1/chat/completions",
-      {
-        model: "grok-3",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage }
-        ],
-        stream: false
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`
-        }
+export const xaiAdapter: EngineAdapter = {
+  name: "xai",
+
+  async run(req: EngineRequest): Promise<EngineResponse> {
+    if (!XAI_API_KEY) {
+      return {
+        text: "XAI_API_KEY is not configured.",
+        tokensUsed: 0,
+      };
+    }
+
+    try {
+      const messages: any[] = [];
+
+      if (req.systemPrompt) {
+        messages.push({
+          role: "system",
+          content: req.systemPrompt,
+        });
       }
-    );
 
-    return (
-      response.data?.choices?.[0]?.message?.content ||
-      "Grok returned no content."
-    );
-  } catch (err: any) {
-    console.error("Grok (xAI) Error:", err.response?.data || err.message);
-    return "Grok engine encountered an error.";
-  }
-}
+      messages.push({
+        role: "user",
+        content: req.userPrompt,
+      });
+
+      const response = await axios.post(
+        XAI_ENDPOINT,
+        {
+          model: req.model || "grok-beta",
+          messages,
+        },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${XAI_API_KEY}`,
+          },
+        }
+      );
+
+      const data = response.data;
+      const choice = data.choices?.[0];
+      const text = choice?.message?.content ?? "";
+
+      return {
+        text,
+        tokensUsed: data.usage?.total_tokens ?? 0,
+        raw: data,
+      };
+    } catch (err: any) {
+      return {
+        text: `xAI/Grok error: ${err?.message ?? "Unknown error"}`,
+        tokensUsed: 0,
+      };
+    }
+  },
+};

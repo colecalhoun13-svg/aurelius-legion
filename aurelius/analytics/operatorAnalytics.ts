@@ -1,21 +1,29 @@
-// analytics/operatorAnalytics.ts
-/**
- * Operator Analytics — Aurelius OS v3.4
- * Detects patterns in operator usage.
- */
+// aurelius/analytics/operatorAnalytics.ts
 
-import { loadAllMemory } from "../memory/memoryLoader.ts";
+import { appendMemoryWrite } from "../memory/memoryWriter";
 
-export function analyzeOperatorUsage() {
-  const memory = loadAllMemory();
-  const usage = memory.system?.operatorUsage || {};
+export type OperatorUsageEvent = {
+  engine: string;
+  domain?: string;
+  durationMs: number;
+};
 
-  const sorted = Object.entries(usage)
-    .sort((a, b) => b[1] - a[1])
-    .map(([op, count]) => `${op}: ${count}`);
+export async function trackOperatorUsage(
+  operatorName: string,
+  event: OperatorUsageEvent
+): Promise<void> {
+  const summary = [
+    `Operator: ${operatorName}`,
+    `Engine: ${event.engine}`,
+    event.domain ? `Domain: ${event.domain}` : null,
+    `Duration: ${event.durationMs}ms`,
+  ]
+    .filter(Boolean)
+    .join(" | ");
 
-  return `
-Operator Usage Analysis:
-${sorted.join("\n")}
-`.trim();
+  appendMemoryWrite({
+    domain: "analytics",
+    source: "operatorAnalytics",
+    summary,
+  });
 }

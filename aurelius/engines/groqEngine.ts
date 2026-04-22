@@ -1,38 +1,61 @@
-/**
- * groqEngine.ts
- * Aurelius OS v3.4 — Groq Llama‑3.3 Engine Wiring
- */
+// aurelius/engines/groqEngine.ts
 
-export async function runGroq({ message, systemPrompt }) {
-  const apiKey = process.env.GROQ_API_KEY;
+import {
+  EngineAdapter,
+  EngineRequest,
+  EngineResponse,
+} from "./engineAdapter";
 
-  if (!apiKey) {
-    console.error("Groq API key missing (GROQ_API_KEY).");
-    return "Groq engine is not configured. Missing API key.";
-  }
+const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
+const GROQ_ENDPOINT =
+  "https://api.groq.com/openai/v1/chat/completions";
 
-  const body = {
-    model: "llama-3.3-70b-versatile",
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: message }
-    ]
-  };
+export const groqAdapter: EngineAdapter = {
+  name: "groq",
 
-  try {
-    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+  async run(req: EngineRequest): Promise<EngineResponse> {
+    if (!GROQ_API_KEY) {
+      return {
+        text: "GROQ_API_KEY is not configured.",
+        tokensUsed: 0,
+      };
+    }
+
+    const body = {
+      model: req.model || "llama-3.1-70b-versatile",
+      messages: [
+        req.systemPrompt
+          ? { role: "system", content: req.systemPrompt }
+          : null,
+        { role: "user", content: req.userPrompt },
+      ].filter(Boolean),
+    };
+
+    const res = await fetch(GROQ_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
+        Authorization: `Bearer ${GROQ_API_KEY}`,
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
     });
 
-    const json = await res.json();
-    return json.choices?.[0]?.message?.content ?? "";
-  } catch (err) {
-    console.error("Groq engine error:", err);
-    return "Groq engine encountered an error while processing the request.";
-  }
-}
+    if (!res.ok) {
+      const text = await res.text();
+      return {
+        text: `Groq error: ${res.status} ${text}`,
+        tokensUsed: 0,
+      };
+    }
+
+    const json: any = await res.json();
+    const choice = json.choices?.[0];
+    const text = choice?.message?.content ?? "";
+
+    return {
+      text,
+      tokensUsed: json.usage?.total_tokens ?? 0,
+      raw: json,
+    };
+  },
+};

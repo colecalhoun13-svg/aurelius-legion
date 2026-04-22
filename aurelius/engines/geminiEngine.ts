@@ -1,42 +1,62 @@
-/**
- * geminiEngine.ts
- * Aurelius OS v3.4 — Gemini 2.0 Engine Wiring
- */
+// aurelius/engines/geminiEngine.ts
 
-export async function runGemini({ message, systemPrompt }) {
-  const apiKey = process.env.GEMINI_API_KEY;
+import {
+  EngineAdapter,
+  EngineRequest,
+  EngineResponse,
+} from "./engineAdapter";
 
-  if (!apiKey) {
-    console.error("Gemini API key missing (GEMINI_API_KEY).");
-    return "Gemini engine is not configured. Missing API key.";
-  }
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const GEMINI_ENDPOINT =
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
 
-  const body = {
-    contents: [
-      {
-        role: "user",
-        parts: [
-          { text: systemPrompt },
-          { text: message }
-        ]
-      }
-    ]
-  };
+export const geminiAdapter: EngineAdapter = {
+  name: "gemini",
 
-  try {
+  async run(req: EngineRequest): Promise<EngineResponse> {
+    if (!GEMINI_API_KEY) {
+      return {
+        text: "GEMINI_API_KEY is not configured.",
+        tokensUsed: 0,
+      };
+    }
+
+    const system = req.systemPrompt ? `${req.systemPrompt}\n\n` : "";
+    const prompt = `${system}${req.userPrompt}`;
+
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-pro:generateContent?key=${apiKey}`,
+      `${GEMINI_ENDPOINT}?key=${encodeURIComponent(GEMINI_API_KEY)}`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [{ text: prompt }],
+            },
+          ],
+        }),
       }
     );
 
-    const json = await res.json();
-    return json.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  } catch (err) {
-    console.error("Gemini engine error:", err);
-    return "Gemini engine encountered an error while processing the request.";
-  }
-}
+    if (!res.ok) {
+      const text = await res.text();
+      return {
+        text: `Gemini error: ${res.status} ${text}`,
+        tokensUsed: 0,
+      };
+    }
+
+    const json: any = await res.json();
+    const text =
+      json.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+
+    return {
+      text,
+      tokensUsed: 0,
+      raw: json,
+    };
+  },
+};

@@ -1,31 +1,57 @@
 // aurelius/memory/memoryStore.ts
-/**
- * Centralized memory store for Aurelius OS v3.4
- */
 
 import fs from "fs";
 import path from "path";
 
-const MEMORY_DIR = path.resolve(process.cwd(), "data", "memory");
+const MEMORY_DIR = path.resolve(
+  __dirname,
+  "../data/memory"
+);
 
-export function readMemoryFile<T>(fileName: string): T | null {
+function ensureMemoryDir() {
+  if (!fs.existsSync(MEMORY_DIR)) {
+    fs.mkdirSync(MEMORY_DIR, { recursive: true });
+  }
+}
+
+export function readMemoryFile(
+  filename: string
+): any | null {
   try {
-    const filePath = path.join(MEMORY_DIR, fileName);
-    if (!fs.existsSync(filePath)) return null;
-
+    ensureMemoryDir();
+    const filePath = path.join(MEMORY_DIR, filename);
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
     const raw = fs.readFileSync(filePath, "utf-8");
-    return JSON.parse(raw) as T;
+    return JSON.parse(raw);
   } catch (err) {
-    console.error(`Error reading memory file ${fileName}:`, err);
+    console.error(
+      "[memoryStore] Failed to read memory file",
+      filename,
+      err
+    );
     return null;
   }
 }
 
-export function writeMemoryFile<T>(fileName: string, data: T) {
+export function writeMemoryFile(
+  filename: string,
+  data: any
+): void {
   try {
-    const filePath = path.join(MEMORY_DIR, fileName);
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+    ensureMemoryDir();
+    const filePath = path.join(MEMORY_DIR, filename);
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify(data, null, 2),
+      "utf-8"
+    );
   } catch (err) {
-    console.error(`Error writing memory file ${fileName}:`, err);
+    console.error(
+      "[memoryStore] Failed to write memory file",
+      filename,
+      err
+    );
   }
 }

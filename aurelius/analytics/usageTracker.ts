@@ -1,56 +1,14 @@
-// analytics/usageTracker.ts
-/**
- * Usage Tracker — Aurelius OS v3.4
- * Tracks operator usage, engine usage, and topic frequency.
- */
+// aurelius/analytics/usageTracker.ts
+// Minimal placeholder to avoid legacy references breaking.
 
-import { loadAllMemory } from "../memory/memoryLoader.ts";
-import { MemoryWriter } from "../memory/memoryWriter.ts";
-
-export function trackOperatorUsage(operator: string) {
-  const memory = loadAllMemory();
-  const system = memory.system || {
-    lastDailyRun: null,
-    lastWeeklyRun: null,
-    operatorUsage: {},
-    updatedAt: new Date().toISOString()
-  };
-
-  system.operatorUsage[operator] =
-    (system.operatorUsage[operator] || 0) + 1;
-
-  system.updatedAt = new Date().toISOString();
-  MemoryWriter.saveSystem(system);
+export async function trackResearchTopic(_topic: string): Promise<void> {
+  // No-op for now; can be wired into memory later if needed.
 }
 
-export function trackEngineUsage(engine: string) {
-  const memory = loadAllMemory();
-  const system = memory.system || {
-    lastDailyRun: null,
-    lastWeeklyRun: null,
-    operatorUsage: {},
-    updatedAt: new Date().toISOString()
-  };
-
-  system.operatorUsage[`engine:${engine}`] =
-    (system.operatorUsage[`engine:${engine}`] || 0) + 1;
-
-  system.updatedAt = new Date().toISOString();
-  MemoryWriter.saveSystem(system);
+export async function trackDailyRun(): Promise<void> {
+  // No-op placeholder.
 }
 
-export function trackTopic(topic: string) {
-  const memory = loadAllMemory();
-  const history = memory.history || {
-    daily: [],
-    weekly: [],
-    research: [],
-    tasks: [],
-    updatedAt: new Date().toISOString()
-  };
-
-  history.research.push(`Topic: ${topic}`);
-  history.updatedAt = new Date().toISOString();
-
-  MemoryWriter.saveHistory(history);
+export async function trackWeeklyRun(): Promise<void> {
+  // No-op placeholder.
 }

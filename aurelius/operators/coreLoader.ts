@@ -1,23 +1,45 @@
 // aurelius/operators/coreLoader.ts
-// Loads operator cores from /data/cores
 
 import fs from "fs";
 import path from "path";
-import type { OperatorType } from "../types.ts";
-import type { OperatorCore } from "./coreTypes.ts";
 
-const CORES_DIR = path.resolve(process.cwd(), "data", "cores");
+const CORES_DIR = path.resolve(
+  __dirname,
+  "../data/cores"
+);
 
-export function loadCore(operator: OperatorType): OperatorCore | null {
-  try {
-    const filePath = path.join(CORES_DIR, `${operator}.core.json`);
-    if (!fs.existsSync(filePath)) return null;
-
-    const raw = fs.readFileSync(filePath, "utf-8");
-    const parsed = JSON.parse(raw) as OperatorCore;
-    return parsed;
-  } catch (err) {
-    console.error(`Error loading core for operator ${operator}:`, err);
-    return null;
+function ensureCoresDir() {
+  if (!fs.existsSync(CORES_DIR)) {
+    fs.mkdirSync(CORES_DIR, { recursive: true });
   }
+}
+
+export async function loadCore(
+  coreName: string
+): Promise<any> {
+  ensureCoresDir();
+  const filePath = path.join(CORES_DIR, `${coreName}.json`);
+  if (!fs.existsSync(filePath)) {
+    return {
+      version: "0.1",
+      principles: [],
+      constraints: [],
+      insights: [],
+    };
+  }
+  const raw = fs.readFileSync(filePath, "utf-8");
+  return JSON.parse(raw);
+}
+
+export async function saveCore(
+  coreName: string,
+  data: any
+): Promise<void> {
+  ensureCoresDir();
+  const filePath = path.join(CORES_DIR, `${coreName}.json`);
+  fs.writeFileSync(
+    filePath,
+    JSON.stringify(data, null, 2),
+    "utf-8"
+  );
 }

@@ -3,6 +3,8 @@
  * Aurelius OS v3.4 — DeepSeek R1 Engine Wiring
  */
 
+import type { EngineAdapter } from "./engineAdapter";
+
 export async function runDeepSeek({ message, systemPrompt }) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
 
@@ -26,3 +28,17 @@ export async function runDeepSeek({ message, systemPrompt }) {
   const json = await res.json();
   return json.choices?.[0]?.message?.content ?? "";
 }
+
+export const deepseekAdapter: EngineAdapter = {
+  name: "deepseek",
+  async run(request) {
+    const text = await runDeepSeek({
+      message: request.userPrompt,
+      systemPrompt: request.systemPrompt,
+    });
+    return {
+      text,
+      tokensUsed: 0,
+    };
+  },
+};

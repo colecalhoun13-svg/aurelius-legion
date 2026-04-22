@@ -3,6 +3,8 @@
  * Aurelius OS v3.4 — Claude 3.5 Sonnet Engine Wiring
  */
 
+import type { EngineAdapter, EngineResponse } from "./engineAdapter";
+
 export async function runAnthropic({
   message,
   systemPrompt,
@@ -42,3 +44,17 @@ export async function runAnthropic({
     return "Anthropic engine encountered an error while processing the request.";
   }
 }
+
+export const anthropicAdapter: EngineAdapter = {
+  name: "anthropic",
+  async run(request) {
+    const text = await runAnthropic({
+      message: request.userPrompt,
+      systemPrompt: request.systemPrompt,
+    });
+    return {
+      text,
+      tokensUsed: 0,
+    };
+  },
+};

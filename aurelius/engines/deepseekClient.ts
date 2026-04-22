@@ -1,48 +1,70 @@
 // aurelius/engines/deepseekClient.ts
 
 import axios from "axios";
+import {
+  EngineAdapter,
+  EngineRequest,
+  EngineResponse,
+} from "./engineAdapter";
 
-/**
- * DeepSeek chat client
- * Uses OpenAI-compatible chat completions endpoint.
- */
-export async function deepseekChat(
-  systemPrompt: string,
-  userMessage: string
-): Promise<string> {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
+const DEEPSEEK_ENDPOINT =
+  "https://api.deepseek.com/chat/completions";
 
-  if (!apiKey) {
-    console.error("DeepSeek API key missing (DEEPSEEK_API_KEY).");
-    return "DeepSeek engine is not configured. Missing API key.";
-  }
+export const deepseekAdapter: EngineAdapter = {
+  name: "deepseek",
 
-  try {
-    const response = await axios.post(
-      "https://api.deepseek.com/v1/chat/completions",
-      {
-        model: "deepseek-chat",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage }
-        ]
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`
-        }
+  async run(req: EngineRequest): Promise<EngineResponse> {
+    if (!DEEPSEEK_API_KEY) {
+      return {
+        text: "DEEPSEEK_API_KEY is not configured.",
+        tokensUsed: 0,
+      };
+    }
+
+    try {
+      const messages: any[] = [];
+
+      if (req.systemPrompt) {
+        messages.push({
+          role: "system",
+          content: req.systemPrompt,
+        });
       }
-    );
 
-    // Defensive return — DeepSeek sometimes returns null message blocks
-    return (
-      response?.data?.choices?.[0]?.message?.content?.trim() ??
-      "DeepSeek returned no content."
-    );
-  } catch (error: any) {
-    console.error("DeepSeek client error:", error?.message || error);
-    return "DeepSeek engine encountered an error while processing the request.";
-  }
-}
+      messages.push({
+        role: "user",
+        content: req.userPrompt,
+      });
 
+      const response = await axios.post(
+        DEEPSEEK_ENDPOINT,
+        {
+          model: req.model || "deepseek-chat",
+          messages,
+        },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+          },
+        }
+      );
+
+      const data = response.data;
+      const choice = data.choices?.[0];
+      const text = choice?.message?.content ?? "";
+
+      return {
+        text,
+        tokensUsed: data.usage?.total_tokens ?? 0,
+        raw: data,
+      };
+    } catch (err: any) {
+      return {
+        text: `DeepSeek error: ${err?.message ?? "Unknown error"}`,
+        tokensUsed: 0,
+      };
+    }
+  },
+};

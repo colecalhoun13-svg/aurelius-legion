@@ -1,51 +1,53 @@
 // aurelius/memory/memoryTypes.ts
-/**
- * Memory schema for Aurelius OS v3.4
- */
 
 export type UserProfile = {
-  name: string;
-  identity: string[];
-  roles: string[];
-  createdAt: string;
-  updatedAt: string;
+  name?: string;
+  roles?: string[];
+  bio?: string;
 };
 
 export type UserGoals = {
-  shortTerm: string[];
-  mediumTerm: string[];
-  longTerm: string[];
-  updatedAt: string;
-};
-
-export type UserPreferences = {
-  communicationStyle: string;
-  trainingStyle: string;
-  businessStyle: string;
-  constraints: string[];
-  updatedAt: string;
+  life?: string[];
+  business?: string[];
+  training?: string[];
+  wealth?: string[];
 };
 
 export type UserConstraints = {
-  time: string[];
-  energy: string[];
-  schedule: string[];
-  physical: string[];
-  financial: string[];
-  updatedAt: string;
+  time?: string[];
+  energy?: string[];
+  money?: string[];
+  ethics?: string[];
+};
+
+export type UserPreferences = {
+  style?: string[];
+  tools?: string[];
+  communication?: string[];
 };
 
 export type UserHistory = {
-  daily: string[];
-  weekly: string[];
-  research: string[];
-  tasks: string[];
-  updatedAt: string;
+  events?: string[];
 };
 
 export type SystemMemory = {
-  lastDailyRun: string | null;
-  lastWeeklyRun: string | null;
-  operatorUsage: Record<string, number>;
-  updatedAt: string;
+  insights?: string[];
+  recentWrites?: MemoryWrite[];
+};
+
+export type MemoryWrite = {
+  id: string;
+  timestamp: string;
+  domain: string;
+  source: string;
+  summary: string;
+};
+
+export type FullMemory = {
+  profile: UserProfile;
+  goals: UserGoals;
+  constraints: UserConstraints;
+  preferences: UserPreferences;
+  history: UserHistory;
+  system: SystemMemory;
 };

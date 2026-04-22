@@ -1,37 +1,93 @@
 // aurelius/self/selfUpgradeEngine.ts
-/**
- * Self‑Upgrade Engine — Aurelius OS v3.4 → v3.5
- * Uses analytics + memory to evolve operator cores, identity, planning, and research depth.
- */
 
-import { loadAllMemory } from "../memory/memoryLoader.ts";
-import { evolveOperatorCores } from "./upgrades/coreEvolution.ts";
-import { evolveIdentity } from "./upgrades/identityEvolution.ts";
-import { evolvePlanning } from "./upgrades/planningEvolution.ts";
-import { evolveResearchConfig } from "./upgrades/researchEvolution.ts";
+import { appendMemoryWrite } from "../memory/memoryWriter";
+import { OperatorCore, evolveCore } from "./upgrades/coreEvolution";
+import { runResearch } from "../research/researchEngine";
+import { getOperatorProfile } from "../core/operatorProfiles"; // adjust path if needed
 
-export async function runSelfUpgrade(): Promise<string> {
-  const memory = loadAllMemory();
+export type SelfUpgradeInput = {
+  operatorCores: OperatorCore[];
+  researchTopics?: string[];
+  operator?: string; // NEW: which operator is evolving
+};
 
-  const coreUpgrade = evolveOperatorCores(memory);
-  const identityUpgrade = evolveIdentity(memory);
-  const planningUpgrade = evolvePlanning(memory);
-  const researchUpgrade = evolveResearchConfig(memory);
+export type SelfUpgradeResult = {
+  updatedCores: OperatorCore[];
+  researchInsights: string[];
+};
 
-  return `
-AURELIUS OS — SELF‑UPGRADE REPORT
-=================================
+export async function runSelfUpgrade(
+  input: SelfUpgradeInput
+): Promise<SelfUpgradeResult> {
+  const {
+    operatorCores,
+    researchTopics = [],
+    operator = "strategy",
+  } = input;
 
-OPERATOR CORE EVOLUTION:
-${coreUpgrade}
+  const profile = getOperatorProfile(operator);
+  const decision = profile?.decisionProfile;
+  const memory = profile?.memoryPolicy;
 
-IDENTITY MODEL EVOLUTION:
-${identityUpgrade}
+  const allResearchInsights: string[] = [];
 
-PLANNING LOGIC EVOLUTION:
-${planningUpgrade}
+  // --- 1) Run research with operator-aware depth -----------------------------
+  const depth =
+    decision?.depthBias === "deep"
+      ? "deep"
+      : decision?.depthBias === "medium"
+      ? "medium"
+      : "shallow";
 
-RESEARCH DEPTH EVOLUTION:
-${researchUpgrade}
-`.trim();
+  for (const topic of researchTopics) {
+    const fused = await runResearch({
+      query: topic,
+      operator,
+      depth,
+    });
+
+    const insights = fused.map((f) => f.insight);
+    allResearchInsights.push(...insights);
+  }
+
+  // --- 2) Filter insights based on memory policy -----------------------------
+  const filteredInsights = filterInsights(allResearchInsights, memory);
+
+  // --- 3) Evolve only the relevant operator core -----------------------------
+  const updatedCores: OperatorCore[] = operatorCores.map((core) => {
+    if (core.name !== operator) return core;
+    return evolveCore(core, filteredInsights);
+  });
+
+  // --- 4) Log the upgrade ----------------------------------------------------
+  await appendMemoryWrite({
+    domain: "self-upgrade",
+    source: "selfUpgradeEngine",
+    summary: `Self-upgrade completed for operator '${operator}'. Insights added: ${filteredInsights.length}.`,
+  });
+
+  return {
+    updatedCores,
+    researchInsights: filteredInsights,
+  };
+}
+
+// --- Helper: filter insights based on memory policy --------------------------
+
+function filterInsights(insights: string[], memory: any): string[] {
+  if (!memory) return insights;
+
+  if (memory.retentionBias === "patterns") {
+    return insights.filter((i) => i.length > 40);
+  }
+
+  if (memory.retentionBias === "tactics") {
+    return insights.filter((i) => i.length <= 80);
+  }
+
+  if (memory.retentionBias === "decisions") {
+    return insights.filter((i) => /should|must|decide|choose/i.test(i));
+  }
+
+  return insights;
 }

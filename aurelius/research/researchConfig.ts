@@ -1,39 +1,33 @@
-// research/researchConfig.ts
-/**
- * Research Config — Aurelius OS v3.4
- * Controls cost-aware research behavior.
- */
+// aurelius/research/researchConfig.ts
 
-export const ResearchConfig = {
-  // Turn Perplexity on/off globally
-  enablePerplexity: true,
+export const researchConfig = {
+  depthLevels: {
+    shallow: 3,
+    medium: 6,
+    deep: 10,
+  },
 
-  // Topics where Perplexity is worth the cost
-  highValueTopics: [
-    "business",
-    "strategy",
-    "finance",
-    "wealth",
-    "investment",
-    "ai",
-    "artificial intelligence",
-    "machine learning",
-    "performance science",
-    "athlete performance",
-    "training",
-    "strength",
-    "speed",
-    "power"
-  ],
+  operatorDepthBias: {
+    strategy: "deep",
+    business: "deep",
+    wealth: "deep",
+    athlete: "medium",
+    training: "medium",
+    content: "medium",
+    identity: "shallow",
+  },
 
-  // Whether weekly loop should always use Perplexity
-  weeklyUsesPerplexity: true,
+  uncertaintyThreshold: 0.35,
+  contradictionThreshold: 0.4,
 
-  // Whether daily loop should use Perplexity by default
-  dailyUsesPerplexity: false
+  providers: {
+    bing: {
+      enabled: true,
+      apiKey: process.env.BING_API_KEY || "",
+    },
+    serpapi: {
+      enabled: true,
+      apiKey: process.env.SERP_API_KEY || "",
+    },
+  },
 };
-
-export function isHighValueTopic(topic: string): boolean {
-  const lower = topic.toLowerCase();
-  return ResearchConfig.highValueTopics.some((t) => lower.includes(t));
-}

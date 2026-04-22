@@ -1,90 +1,42 @@
-/**
- * memoryEngine.ts
- * Aurelius OS v3.4 — Persistent Memory Engine
- *
- * Handles long‑term memory storage and retrieval.
- * Uses JSON files under /data/memory for persistence.
- */
+// core/memoryEngine.ts
+// Aurelius OS v3.4 — Memory helpers (DB-backed)
 
-import fs from "fs";
-import path from "path";
+import { db } from "./db/prisma.ts";
+import type { Memory } from "@prisma/client";
 
-const MEMORY_DIR = path.join(process.cwd(), "data", "memory");
-
-/* ---------------------------------------------------------
-   READ MEMORY (Safe, ESM‑Ready)
---------------------------------------------------------- */
-
-export async function readMemory(userId: string) {
-  try {
-    const filePath = path.join(MEMORY_DIR, `${userId}.json`);
-
-    if (!fs.existsSync(filePath)) {
-      return createEmptyMemory();
-    }
-
-    const raw = await fs.promises.readFile(filePath, "utf-8");
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error("Error reading memory:", err);
-    return createEmptyMemory();
-  }
+export async function readMemory(operatorId: string): Promise<Memory[]> {
+  return db.memory.findMany({
+    where: { operatorId },
+    orderBy: { createdAt: "asc" },
+  });
 }
 
-/* ---------------------------------------------------------
-   WRITE MEMORY (Safe Merge + Atomic Write)
---------------------------------------------------------- */
+export async function writeMemory(
+  operatorId: string,
+  updates: Record<string, any>
+): Promise<Memory[]> {
+  const entries: { category: string; value: string; metadata?: any }[] = [];
 
-export async function writeMemory(userId: string, updates: any) {
-  try {
-    const filePath = path.join(MEMORY_DIR, `${userId}.json`);
-
-    // Ensure directory exists
-    await fs.promises.mkdir(MEMORY_DIR, { recursive: true });
-
-    const existing = fs.existsSync(filePath)
-      ? JSON.parse(await fs.promises.readFile(filePath, "utf-8"))
-      : createEmptyMemory();
-
-    const merged = {
-      ...existing,
-      ...updates,
-      updatedAt: new Date().toISOString()
-    };
-
-    // Atomic write: write to temp file then replace
-    const tempPath = `${filePath}.tmp`;
-    await fs.promises.writeFile(tempPath, JSON.stringify(merged, null, 2));
-    await fs.promises.rename(tempPath, filePath);
-
-    return merged;
-  } catch (err) {
-    console.error("Error writing memory:", err);
-    return null;
+  for (const [category, value] of Object.entries(updates)) {
+    entries.push({
+      category,
+      value: typeof value === "string" ? value : JSON.stringify(value),
+      metadata: typeof value === "object" ? value : undefined,
+    });
   }
-}
 
-/* ---------------------------------------------------------
-   EMPTY MEMORY TEMPLATE
---------------------------------------------------------- */
+  await db.$transaction(
+    entries.map((e) =>
+      db.memory.create({
+        data: {
+          operatorId,
+          category: e.category,
+          value: e.value,
+          metadata: e.metadata,
+        },
+      })
+    )
+  );
 
-function createEmptyMemory() {
-  const now = new Date().toISOString();
-
-  return {
-    identity: null,
-    preferences: {},
-    goals: [],
-    tasks: [],
-    training: [],
-    business: [],
-    calendar: [],
-    knowledge: [],
-    lastMessage: null,
-    lastOperator: null,
-    lastEngine: null,
-    insights: [],
-    createdAt: now,
-    updatedAt: now
-  };
+  return readMemory(operatorId);
 }
