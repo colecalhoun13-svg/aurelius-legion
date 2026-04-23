@@ -1,0 +1,85 @@
+# ============================================
+# Environment variables / Secrets
+# ============================================
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# ============================================
+# Dependencies
+# ============================================
+node_modules/
+**/node_modules/
+
+# ============================================
+# Build outputs
+# ============================================
+.next/
+**/.next/
+dist/
+**/dist/
+build/
+**/build/
+out/
+**/out/
+*.tsbuildinfo
+
+# ============================================
+# Logs
+# ============================================
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+**/logs/
+
+# ============================================
+# IDE / Editor
+# ============================================
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+
+# ============================================
+# OS files
+# ============================================
+.DS_Store
+Thumbs.db
+
+# ============================================
+# Testing / Coverage
+# ============================================
+coverage/
+.nyc_output/
+
+# ============================================
+# Prisma
+# ============================================
+# Keep schema.prisma and migrations — ignore generated client only
+**/prisma/generated/
+
+# ============================================
+# Temp / dump files
+# ============================================
+*.tmp
+*.bak
+repo-dump/
+
+# ============================================
+# Large tree dump files (can regenerate)
+# ============================================
+project-tree.txt
+backend-tree.txt
+frontend-tree.txt
+ui-tree.txt
+folder_tree.txt
+aurelius_tree.txt
