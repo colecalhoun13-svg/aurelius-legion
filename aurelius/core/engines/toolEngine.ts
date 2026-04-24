@@ -3,7 +3,7 @@
  * Aurelius OS v3.4 — Tool Engine (Stub)
  */
 
-import type { Engine, EngineInput, EngineContext, EngineResult } from "../engineTypes";
+import type { Engine, EngineInput, EngineContext, EngineResult } from "../engineTypes.ts";
 
 export const toolEngine: Engine = {
   name: "toolEngine",

@@ -5,7 +5,10 @@
 
 import fs from "fs";
 import path from "path";
-import { AutonomyState } from "./types";
+import { fileURLToPath } from "url";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+import { AutonomyState } from "./types.ts";
 
 const AUTONOMY_DIR = path.resolve(__dirname, "../data/autonomy");
 const STATE_PATH = path.join(AUTONOMY_DIR, "state.json");

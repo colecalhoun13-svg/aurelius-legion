@@ -1,9 +1,9 @@
 // aurelius/autonomy/reflectionEngine.ts
 
 
-import { Reflection } from "./autonomyTypes";
-import { getOperatorProfile } from "../core/operatorProfiles"; // adjust path if needed
-import { autonomyConfig } from "./autonomyConfig";
+import { Reflection } from "./autonomyTypes.ts";
+import { getOperatorProfile } from "../core/operatorProfiles.ts"; // adjust path if needed
+import { autonomyConfig } from "./autonomyConfig.ts";
 
 export function reflectOnOutcome(history: any[], operator: string = "strategy"): Reflection {
   const profile = getOperatorProfile(operator);
@@ -78,7 +78,7 @@ function extractNarrative(detail: string): string {
 }
 
 // Export as Engine adapter
-import type { Engine, EngineInput, EngineContext, EngineResult } from "../core/engineTypes";
+import type { Engine, EngineInput, EngineContext, EngineResult } from "../core/engineTypes.ts";
 
 export const reflectionEngineAdapter: Engine = {
   name: "reflection",

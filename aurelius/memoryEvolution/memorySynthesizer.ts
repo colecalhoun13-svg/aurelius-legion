@@ -1,7 +1,7 @@
 // aurelius/memoryEvolution/memorySynthesizer.ts
 
-import { CompressedMemory, SynthesizedMemory } from "./memoryEvolutionTypes";
-import { memoryEvolutionConfig } from "./memoryEvolutionConfig";
+import { CompressedMemory, SynthesizedMemory } from "./memoryEvolutionTypes.ts";
+import { memoryEvolutionConfig } from "./memoryEvolutionConfig.ts";
 
 export function synthesizeMemory(
   compressed: CompressedMemory

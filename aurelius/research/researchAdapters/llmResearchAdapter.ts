@@ -1,7 +1,7 @@
 // aurelius/research/researchAdapters/llmResearchAdapter.ts
 
-import { ResearchResult } from "../researchTypes";
-import { getOperatorProfile } from "../../core/operatorProfiles"; // adjust path if needed
+import { ResearchResult } from "../researchTypes.ts";
+import { getOperatorProfile } from "../../core/operatorProfiles.ts"; // adjust path if needed
 import OpenAI from "openai";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || "" });

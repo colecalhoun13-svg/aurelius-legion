@@ -4,7 +4,7 @@ import {
   EngineAdapter,
   EngineRequest,
   EngineResponse,
-} from "./engineAdapter";
+} from "./engineAdapter.ts";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GEMINI_ENDPOINT =

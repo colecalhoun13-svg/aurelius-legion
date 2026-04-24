@@ -3,7 +3,7 @@
  */
 
 import { Router, type Request, type Response } from "express";
-import { routeTask } from "../core/engineRouter";
+import { routeTask } from "../core/engineRouter.ts";
 import type {
   EngineContext,
   Logger,
@@ -11,7 +11,7 @@ import type {
   ToolRegistry,
   Config,
   RoutedTask,
-} from "../core/engineTypes";
+} from "../core/engineTypes.ts";
 
 const router = Router();
 

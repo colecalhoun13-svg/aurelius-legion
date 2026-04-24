@@ -1,10 +1,10 @@
 // scripts/smokePhase4.ts
 // Aurelius OS v3.4 — Phase 4 smoke test
 
-import { db } from "../core/db/prisma";
-import { writeMemory, readMemory } from "../core/memoryEngine";
-import { createTask } from "../repositories/taskRepository";
-import { writeLog } from "../repositories/logRepository";
+import { db } from "../core/db/prisma.ts";
+import { writeMemory, readMemory } from "../core/memoryEngine.ts";
+import { createTask } from "../repositories/taskRepository.ts";
+import { writeLog } from "../repositories/logRepository.ts";
 
 async function main() {
   // Use any existing operator name or ID; adjust as needed

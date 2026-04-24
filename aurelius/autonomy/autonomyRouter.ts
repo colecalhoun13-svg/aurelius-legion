@@ -4,8 +4,8 @@
  */
 
 import express, { Request, Response } from "express";
-import { loadAutonomyState, saveAutonomyState } from "../autonomy/stateStore";
-import { runAutonomyLoop } from "../autonomy/loop";
+import { loadAutonomyState, saveAutonomyState } from "../autonomy/stateStore.ts";
+import { runAutonomyLoop } from "../autonomy/loop.ts";
 
 export const autonomyRouter = express.Router();
 

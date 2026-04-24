@@ -1,7 +1,7 @@
 // aurelius/research/researchAdapters/embeddingResearchAdapter.ts
 
-import { ResearchResult } from "../researchTypes";
-import { getOperatorProfile } from "../../core/operatorProfiles"; // adjust path if needed
+import { ResearchResult } from "../researchTypes.ts";
+import { getOperatorProfile } from "../../core/operatorProfiles.ts"; // adjust path if needed
 
 export async function embeddingResearch(
   query: string,

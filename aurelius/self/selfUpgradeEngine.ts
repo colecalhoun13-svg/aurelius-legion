@@ -1,9 +1,9 @@
 // aurelius/self/selfUpgradeEngine.ts
 
-import { appendMemoryWrite } from "../memory/memoryWriter";
-import { OperatorCore, evolveCore } from "./upgrades/coreEvolution";
-import { runResearch } from "../research/researchEngine";
-import { getOperatorProfile } from "../core/operatorProfiles"; // adjust path if needed
+import { appendMemoryWrite } from "../memory/memoryWriter.ts";
+import { OperatorCore, evolveCore } from "./upgrades/coreEvolution.ts";
+import { runResearch } from "../research/researchEngine.ts";
+import { getOperatorProfile } from "../core/operatorProfiles.ts"; // adjust path if needed
 
 export type SelfUpgradeInput = {
   operatorCores: OperatorCore[];

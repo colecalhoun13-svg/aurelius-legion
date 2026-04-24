@@ -8,8 +8,8 @@ import type {
   EngineInput,
   EngineContext,
   EngineResult
-} from "../engineTypes";
-import { getOperator } from "../operatorRegistry";
+} from "../engineTypes.ts";
+import { getOperator } from "../operatorRegistry.ts";
 
 export const operatorEngine: Engine = {
   name: "operatorEngine",

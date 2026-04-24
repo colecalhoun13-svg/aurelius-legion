@@ -5,7 +5,7 @@ import {
   EngineAdapter,
   EngineRequest,
   EngineResponse,
-} from "./engineAdapter";
+} from "./engineAdapter.ts";
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
 const DEEPSEEK_ENDPOINT =

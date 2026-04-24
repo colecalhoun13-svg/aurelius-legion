@@ -3,22 +3,22 @@
  * This file defines the authoritative engine registry for the entire OS.
  */
 
-import { registerEngine } from "./engineRegistry";
-import type { Engine, EngineInput, EngineContext, EngineResult } from "./engineTypes";
+import { registerEngine } from "./engineRegistry.ts";
+import type { Engine, EngineInput, EngineContext, EngineResult } from "./engineTypes.ts";
 
 // LLM Engines
-import { gptAdapter } from "../engines/gptEngine";
-import { geminiAdapter } from "../engines/geminiEngine";
-import { groqAdapter } from "../engines/groqEngine";
-import { anthropicAdapter } from "../engines/anthropicEngine";
-import { deepseekAdapter } from "../engines/deepseekEngine";
-import { xaiAdapter } from "../engines/xaiClient";
+import { gptAdapter } from "../engines/gptEngine.ts";
+import { geminiAdapter } from "../engines/geminiEngine.ts";
+import { groqAdapter } from "../engines/groqEngine.ts";
+import { anthropicAdapter } from "../engines/anthropicEngine.ts";
+import { deepseekAdapter } from "../engines/deepseekEngine.ts";
+import { xaiAdapter } from "../engines/xaiClient.ts";
 
 // Aurelius Internal Engines (if using EngineAdapter pattern)
-import { researchEngineAdapter } from "../research/researchEngine";
-import { memoryEvolutionEngineAdapter } from "../memory/memoryEvolutionEngine";
-import { autonomyEngineAdapter } from "../autonomy/autonomyEngine";
-import { reflectionEngineAdapter } from "../autonomy/reflectionEngine";
+import { researchEngineAdapter } from "../research/researchEngine.ts";
+import { memoryEvolutionEngineAdapter } from "../memory/memoryEvolutionEngine.ts";
+import { autonomyEngineAdapter } from "../autonomy/autonomyEngine.ts";
+import { reflectionEngineAdapter } from "../autonomy/reflectionEngine.ts";
 
 // Adapter wrapper: converts EngineAdapter to Engine
 function wrapAdapter(adapter: any): Engine {

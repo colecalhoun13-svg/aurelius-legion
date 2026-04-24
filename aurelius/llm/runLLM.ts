@@ -4,7 +4,7 @@
  * Routes through the Hybrid LLM Router and logs usage.
  */
 
-import { routeLLM } from "./router";
+import { routeLLM } from "./router.ts";
 
 export type RunLLMInput = {
   taskType: string;        // "cue", "research", "reflection", "plan", etc.

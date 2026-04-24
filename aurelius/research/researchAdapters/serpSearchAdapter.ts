@@ -1,8 +1,8 @@
 // aurelius/research/researchAdapters/serpSearchAdapter.ts
 
-import { ResearchResult } from "../researchTypes";
-import { researchConfig } from "../researchConfig";
-import { getOperatorProfile } from "../../core/operatorProfiles"; // adjust path if needed
+import { ResearchResult } from "../researchTypes.ts";
+import { researchConfig } from "../researchConfig.ts";
+import { getOperatorProfile } from "../../core/operatorProfiles.ts"; // adjust path if needed
 
 export async function serpSearch(
   query: string,

@@ -1,7 +1,7 @@
 // core/operatorHelpers.ts
 
-import { db } from "./db/prisma";
-import type { EngineContext } from "./engineTypes";
+import { db } from "./db/prisma.ts";
+import type { EngineContext } from "./engineTypes.ts";
 
 export async function getOperatorIdByName(name: string): Promise<string> {
   const op = await db.operator.findUnique({

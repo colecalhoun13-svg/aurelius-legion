@@ -1,7 +1,7 @@
 // aurelius/autonomy/decisionEngine.ts
 
-import { AutonomyContext, Decision } from "./autonomyTypes";
-import { getOperatorProfile } from "../core/operatorProfiles"; // adjust path if needed
+import { AutonomyContext, Decision } from "./autonomyTypes.ts";
+import { getOperatorProfile } from "../core/operatorProfiles.ts"; // adjust path if needed
 
 export function decideNextAction(ctx: AutonomyContext): Decision {
   const { operator, goal, history } = ctx;

@@ -8,10 +8,10 @@ import {
   UserPreferences,
   UserHistory,
   SystemMemory,
-} from "./memoryTypes";
+} from "./memoryTypes.ts";
 
-import { readMemoryFile } from "./memoryStore";
-import { getOperatorProfile } from "../core/operatorProfiles"; // adjust path if needed
+import { readMemoryFile } from "./memoryStore.ts";
+import { getOperatorProfile } from "../core/operatorProfiles.ts"; // adjust path if needed
 
 function loadOrDefault<T>(filename: string, fallback: T): T {
   const data = readMemoryFile(filename);

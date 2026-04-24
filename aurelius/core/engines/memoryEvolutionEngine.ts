@@ -8,10 +8,10 @@ import type {
   EngineInput,
   EngineContext,
   EngineResult,
-} from "../engineTypes";
+} from "../engineTypes.ts";
 
-import { evolveMemory } from "../../memory/memoryEvolutionEngine";
-import { runLLM } from "../../llm/runLLM";
+import { evolveMemory } from "../../memory/memoryEvolutionEngine.ts";
+import { runLLM } from "../../llm/runLLM.ts";
 
 export const memoryEvolutionEngine: Engine = {
   name: "memoryEvolution",

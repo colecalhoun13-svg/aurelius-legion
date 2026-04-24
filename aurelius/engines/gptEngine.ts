@@ -5,7 +5,7 @@ import {
   EngineAdapter,
   EngineRequest,
   EngineResponse,
-} from "./engineAdapter";
+} from "./engineAdapter.ts";
 
 const apiKey = process.env.OPENAI_API_KEY || "";
 const client = apiKey ? new OpenAI({ apiKey }) : null;

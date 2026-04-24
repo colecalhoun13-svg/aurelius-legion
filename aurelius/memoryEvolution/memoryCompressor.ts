@@ -1,7 +1,7 @@
 // aurelius/memoryEvolution/memoryCompressor.ts
 
-import { MemoryPacket, CompressedMemory } from "./memoryEvolutionTypes";
-import { memoryEvolutionConfig } from "./memoryEvolutionConfig";
+import { MemoryPacket, CompressedMemory } from "./memoryEvolutionTypes.ts";
+import { memoryEvolutionConfig } from "./memoryEvolutionConfig.ts";
 
 export function compressMemory(
   packets: MemoryPacket[]

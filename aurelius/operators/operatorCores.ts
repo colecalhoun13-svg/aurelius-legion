@@ -1,6 +1,6 @@
 // aurelius/operators/operatorCores.ts
 
-import { OperatorCore } from "../self/upgrades/coreEvolution";
+import { OperatorCore } from "../self/upgrades/coreEvolution.ts";
 
 export const operatorCores: OperatorCore[] = [
   {

@@ -3,8 +3,8 @@
  * Handles planning, reflection, decision reasoning, and operator-aware thinking.
  */
 
-import type { Engine, EngineInput, EngineContext, EngineResult } from "../engineTypes";
-import { runLLM } from "../../llm/runLLM";
+import type { Engine, EngineInput, EngineContext, EngineResult } from "../engineTypes.ts";
+import { runLLM } from "../../llm/runLLM.ts";
 
 export const autonomyEngine: Engine = {
   name: "autonomyEngine",

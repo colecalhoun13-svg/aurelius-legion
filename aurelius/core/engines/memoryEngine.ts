@@ -3,8 +3,8 @@
  * Aurelius OS v3.4 — Memory Engine (Wrapper)
  */
 
-import type { Engine, EngineInput, EngineContext, EngineResult } from "../engineTypes";
-import { readMemory, writeMemory } from "../memoryEngine";
+import type { Engine, EngineInput, EngineContext, EngineResult } from "../engineTypes.ts";
+import { readMemory, writeMemory } from "../memoryEngine.ts";
 
 export const memoryEngine: Engine = {
   name: "memoryEngine",

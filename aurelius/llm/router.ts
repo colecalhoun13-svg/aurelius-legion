@@ -3,13 +3,13 @@
  * Economical, context-aware, operator-aware, autonomy-aware.
  */
 
-import { gptAdapter } from "../engines/gptEngine";
-import { groqAdapter } from "../engines/groqEngine";
-import { anthropicAdapter } from "../engines/anthropicEngine";
-import { geminiAdapter } from "../engines/geminiEngine";
-import { xaiAdapter } from "../engines/xaiClient";
-import { deepseekAdapter } from "../engines/deepseekEngine";
-import { getOperatorProfile } from "../core/operatorProfiles";
+import { gptAdapter } from "../engines/gptEngine.ts";
+import { groqAdapter } from "../engines/groqEngine.ts";
+import { anthropicAdapter } from "../engines/anthropicEngine.ts";
+import { geminiAdapter } from "../engines/geminiEngine.ts";
+import { xaiAdapter } from "../engines/xaiClient.ts";
+import { deepseekAdapter } from "../engines/deepseekEngine.ts";
+import { getOperatorProfile } from "../core/operatorProfiles.ts";
 
 export type LLMTask = {
   taskType: string;        // "cue", "research", "reflection", "plan", etc.

@@ -1,8 +1,8 @@
 // aurelius/core/engineRouter.ts
 
-import { getEngine } from "./engineRegistry";
-import { EngineContext, EngineResult, RoutedTask } from "./engineTypes";
-import { buildEngineContext } from "./operatorHelpers";
+import { getEngine } from "./engineRegistry.ts";
+import type { EngineContext, EngineResult, RoutedTask } from "./engineTypes.ts";
+import { buildEngineContext } from "./operatorHelpers.ts";
 
 export async function routeTask(
   task: RoutedTask,

@@ -1,19 +1,19 @@
 // aurelius/research/researchEngine.ts
 
-import { researchConfig } from "./researchConfig";
+import { researchConfig } from "./researchConfig.ts";
 import {
   ResearchTask,
   ResearchResult,
   FusedInsight,
-} from "./researchTypes";
+} from "./researchTypes.ts";
 
-import { bingSearch } from "./researchAdapters/webSearchAdapter";
-import { serpSearch } from "./researchAdapters/serpSearchAdapter";
-import { llmResearch } from "./researchAdapters/llmResearchAdapter";
-import { embeddingResearch } from "./researchAdapters/embeddingResearchAdapter";
-import { fuseResearchResults } from "./researchFusion";
+import { bingSearch } from "./researchAdapters/webSearchAdapter.ts";
+import { serpSearch } from "./researchAdapters/serpSearchAdapter.ts";
+import { llmResearch } from "./researchAdapters/llmResearchAdapter.ts";
+import { embeddingResearch } from "./researchAdapters/embeddingResearchAdapter.ts";
+import { fuseResearchResults } from "./researchFusion.ts";
 
-import { getOperatorProfile } from "../core/operatorProfiles"; // adjust path if needed
+import { getOperatorProfile } from "../core/operatorProfiles.ts"; // adjust path if needed
 
 function detectUncertainty(results: ResearchResult[]): number {
   if (!results.length) return 1;
@@ -98,7 +98,7 @@ function applyMemoryPolicy(
 }
 
 // Export as Engine adapter
-import type { Engine, EngineInput, EngineContext, EngineResult } from "../core/engineTypes";
+import type { Engine, EngineInput, EngineContext, EngineResult } from "../core/engineTypes.ts";
 
 export const researchEngineAdapter: Engine = {
   name: "research",

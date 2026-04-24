@@ -1,7 +1,7 @@
 // aurelius/research/researchFusion.ts
 
-import { ResearchResult, FusedInsight } from "./researchTypes";
-import { getOperatorProfile } from "../core/operatorProfiles"; // adjust path if needed
+import { ResearchResult, FusedInsight } from "./researchTypes.ts";
+import { getOperatorProfile } from "../core/operatorProfiles.ts"; // adjust path if needed
 
 export function fuseResearchResults(
   results: ResearchResult[],

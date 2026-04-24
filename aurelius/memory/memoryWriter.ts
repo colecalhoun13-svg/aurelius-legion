@@ -5,10 +5,10 @@ import {
   FullMemory,
   MemoryWrite,
   SystemMemory,
-} from "./memoryTypes";
+} from "./memoryTypes.ts";
 
-import { readMemoryFile, writeMemoryFile } from "./memoryStore";
-import { getOperatorProfile } from "../core/operatorProfiles"; // adjust path if needed
+import { readMemoryFile, writeMemoryFile } from "./memoryStore.ts";
+import { getOperatorProfile } from "../core/operatorProfiles.ts"; // adjust path if needed
 
 const SYSTEM_MEMORY_FILE = "system.memory.json";
 const MAX_RECENT_WRITES = 100;

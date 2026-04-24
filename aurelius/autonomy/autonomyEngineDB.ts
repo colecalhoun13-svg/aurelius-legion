@@ -2,16 +2,16 @@
  * Aurelius OS v3.4 — DB-backed Autonomy (Routed)
  */
 
-import { routeTask } from "../core/engineRouter";
-import type { EngineContext } from "../core/engineTypes";
+import { routeTask } from "../core/engineRouter.ts";
+import type { EngineContext } from "../core/engineTypes.ts";
 
-import { getOperatorIdByName } from "../core/operatorHelpers";
+import { getOperatorIdByName } from "../core/operatorHelpers.ts";
 import {
   createAutonomyGoal,
   listActiveAutonomyGoals,
   updateAutonomyGoalStatus,
-} from "../repositories/autonomyGoalRepository";
-import { createLogEntry } from "../repositories/logRepository";
+} from "../repositories/autonomyGoalRepository.ts";
+import { createLogEntry } from "../repositories/logRepository.ts";
 
 function buildEngineContext(operatorId: string): EngineContext {
   const now = new Date().toISOString();

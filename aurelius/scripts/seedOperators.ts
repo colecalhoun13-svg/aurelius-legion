@@ -1,7 +1,7 @@
 // scripts/seedOperators.ts
 
-import { db } from "../core/db/prisma";
-import { listOperators, getOperator } from "../core/operatorRegistry";
+import { db } from "../core/db/prisma.ts";
+import { listOperators, getOperator } from "../core/operatorRegistry.ts";
 
 async function main() {
   const operatorNames = listOperators();

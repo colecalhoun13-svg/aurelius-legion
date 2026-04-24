@@ -3,9 +3,9 @@
  * Aurelius OS v3.4 — Research Engine (Wrapper, Hybrid LLM Routed)
  */
 
-import type { Engine, EngineInput, EngineContext, EngineResult } from "../engineTypes";
-import { runResearch } from "../../research/researchEngine";
-import { runLLM } from "../../llm/runLLM";
+import type { Engine, EngineInput, EngineContext, EngineResult } from "../engineTypes.ts";
+import { runResearch } from "../../research/researchEngine.ts";
+import { runLLM } from "../../llm/runLLM.ts";
 
 export const researchEngine: Engine = {
   name: "researchEngine",

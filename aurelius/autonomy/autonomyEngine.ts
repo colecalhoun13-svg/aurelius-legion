@@ -1,9 +1,9 @@
-import { AutonomyContext, AutonomyEvent } from "./autonomyTypes";
-import { decideNextAction } from "./decisionEngine";
-import { planTask } from "./taskPlanner";
-import { reflectOnOutcome } from "./reflectionEngine";
-import { runResearch } from "../research/researchEngine";
-import { runSelfUpgrade } from "../self/selfUpgradeEngine";
+import { AutonomyContext, AutonomyEvent } from "./autonomyTypes.ts";
+import { decideNextAction } from "./decisionEngine.ts";
+import { planTask } from "./taskPlanner.ts";
+import { reflectOnOutcome } from "./reflectionEngine.ts";
+import { runResearch } from "../research/researchEngine.ts";
+import { runSelfUpgrade } from "../self/selfUpgradeEngine.ts";
 
 export async function runAutonomyLoop(
   ctx: AutonomyContext
@@ -69,7 +69,7 @@ export async function runAutonomyLoop(
 }
 
 // Export as Engine adapter
-import type { Engine, EngineInput, EngineContext, EngineResult } from "../core/engineTypes";
+import type { Engine, EngineInput, EngineContext, EngineResult } from "../core/engineTypes.ts";
 
 export const autonomyEngineAdapter: Engine = {
   name: "autonomy",

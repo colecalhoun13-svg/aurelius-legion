@@ -1,6 +1,6 @@
 // aurelius/analytics/engineAnalytics.ts
 
-import { appendMemoryWrite } from "../memory/memoryWriter";
+import { appendMemoryWrite } from "../memory/memoryWriter.ts";
 
 export type EngineUsageEvent = {
   operator?: string;

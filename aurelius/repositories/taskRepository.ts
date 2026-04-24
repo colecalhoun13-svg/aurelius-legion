@@ -1,7 +1,7 @@
 // repositories/taskRepository.ts
 // Aurelius OS v3.4 — Task repository (DB-backed)
 
-import { db } from "../core/db/prisma";
+import { db } from "../core/db/prisma.ts";
 import type { Task } from "@prisma/client";
 
 export async function createTask(params: {

@@ -1,7 +1,7 @@
 // aurelius/autonomy/taskPlanner.ts
 
-import { PlannedTask } from "./autonomyTypes";
-import { getOperatorProfile } from "../core/operatorProfiles"; // adjust path if needed
+import { PlannedTask } from "./autonomyTypes.ts";
+import { getOperatorProfile } from "../core/operatorProfiles.ts"; // adjust path if needed
 
 export function planTask(goal: string, operator: string = "strategy"): PlannedTask {
   const profile = getOperatorProfile(operator);

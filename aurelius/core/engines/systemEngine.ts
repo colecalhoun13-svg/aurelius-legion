@@ -3,7 +3,7 @@
  * Aurelius OS v3.4 — System Engine
  */
 
-import type { Engine, EngineInput, EngineContext, EngineResult } from "../engineTypes";
+import type { Engine, EngineInput, EngineContext, EngineResult } from "../engineTypes.ts";
 
 export const systemEngine: Engine = {
   name: "systemEngine",

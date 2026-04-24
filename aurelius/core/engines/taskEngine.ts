@@ -6,11 +6,11 @@ import type {
   EngineInput,
   EngineContext,
   EngineResult
-} from "../engineTypes";
-import { runDeepSeek } from "../../engines/deepseekEngine";
-import { getOperator } from "../operatorRegistry";
-import { createTask } from "../../repositories/taskRepository";
-import { getOperatorIdByName } from "../operatorHelpers";
+} from "../engineTypes.ts";
+import { runDeepSeek } from "../../engines/deepseekEngine.ts";
+import { getOperator } from "../operatorRegistry.ts";
+import { createTask } from "../../repositories/taskRepository.ts";
+import { getOperatorIdByName } from "../operatorHelpers.ts";
 
 export const taskEngine: Engine = {
   name: "taskEngine",

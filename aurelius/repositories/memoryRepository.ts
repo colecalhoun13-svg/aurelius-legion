@@ -3,7 +3,7 @@
  * Aurelius OS v3.4 — Memory repository (Phase 4)
  */
 
-import { prisma } from "../core/db/prisma";
+import { prisma } from "../core/db/prisma.ts";
 
 export async function saveMemory(params: {
   operatorId: string;

@@ -3,11 +3,11 @@
 import {
   MemoryPacket,
   SynthesizedMemory,
-} from "../memoryEvolution/memoryEvolutionTypes";
+} from "../memoryEvolution/memoryEvolutionTypes.ts";
 
-import { compressMemory } from "../memoryEvolution/memoryCompressor";
-import { synthesizeMemory } from "../memoryEvolution/memorySynthesizer";
-import type { Engine, EngineInput, EngineContext, EngineResult } from "../core/engineTypes";
+import { compressMemory } from "../memoryEvolution/memoryCompressor.ts";
+import { synthesizeMemory } from "../memoryEvolution/memorySynthesizer.ts";
+import type { Engine, EngineInput, EngineContext, EngineResult } from "../core/engineTypes.ts";
 
 export async function runMemoryEvolution(
   packets: MemoryPacket[]

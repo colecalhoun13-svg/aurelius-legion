@@ -10,18 +10,18 @@ import express, { type Request, type Response } from "express";
 import cors from "cors";
 
 // Canonical engine routing
-import { routeTask } from "./core/engineRouter";
+import { routeTask } from "./core/engineRouter.ts";
 
 // Operator routing
-import { routeOperator } from "./router/operatorRouter";
+import { routeOperator } from "./router/operatorRouter.ts";
 
 // Register all engines once
-import { registerAllEngines } from "./core/registerEngines";
+import { registerAllEngines } from "./core/registerEngines.ts";
 registerAllEngines();
 
 // Routers
-import { engineTestRouter } from "./router";
-import { autonomyRouter } from "./router/autonomyRouter";
+import { engineTestRouter } from "./router/index.ts";
+import { autonomyRouter } from "./router/autonomyRouter.ts";
 
 const app = express();
 app.use(express.json());

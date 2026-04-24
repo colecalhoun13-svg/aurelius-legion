@@ -3,7 +3,7 @@
  * Aurelius OS v3.4 — Autonomy loop (Hybrid, Phase 3)
  */
 
-import { AutonomyState, AutonomyLoopStep, AutonomyGoal } from "./types";
+import { AutonomyState, AutonomyLoopStep, AutonomyGoal } from "./types.ts";
 import crypto from "crypto";
 
 type MinimalEngineContext = {

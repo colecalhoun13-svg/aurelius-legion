@@ -4,7 +4,7 @@ import {
   EngineAdapter,
   EngineRequest,
   EngineResponse,
-} from "./engineAdapter";
+} from "./engineAdapter.ts";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
 const GROQ_ENDPOINT =

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
-import { routeTask } from "../core/engineRouter";
-import type { RoutedTask } from "../core/engineTypes";
+import { routeTask } from "../core/engineRouter.ts";
+import type { RoutedTask } from "../core/engineTypes.ts";
 
 export const autonomyRouter = Router();
 

@@ -8,22 +8,24 @@ datasource db {
 }
 
 model Operator {
-  id              String   @id @default(cuid())
-  name            String   @unique
+  id              String    @id @default(cuid())
+  name            String    @unique
   domain          String?
-  priority        Int?     @default(1)
-  cooldownSeconds Int?     @default(60)
+  priority        Int?      @default(1)
+  cooldownSeconds Int?      @default(60)
   lastRunAt       DateTime?
-  // ...other fields
+
+  // Reverse relations
+  memories        Memory[]
+  tasks           Task[]
+  autonomyGoals   AutonomyGoal[]
+  logs            LogEntry[]
 }
-
-
 
 model Memory {
   id         String   @id @default(cuid())
   operatorId String
   operator   Operator @relation(fields: [operatorId], references: [id])
-
   category   String
   value      String
   metadata   Json?
@@ -35,7 +37,6 @@ model Task {
   id         String   @id @default(cuid())
   operatorId String
   operator   Operator @relation(fields: [operatorId], references: [id])
-
   title      String
   status     String
   metadata   Json?
@@ -44,10 +45,9 @@ model Task {
 }
 
 model AutonomyGoal {
-  id         String   @id @default(cuid())
-  operatorId String
-  operator   Operator @relation(fields: [operatorId], references: [id])
-
+  id          String   @id @default(cuid())
+  operatorId  String
+  operator    Operator @relation(fields: [operatorId], references: [id])
   description String
   status      String
   priority    String
@@ -59,10 +59,9 @@ model LogEntry {
   id         String   @id @default(cuid())
   operatorId String
   operator   Operator @relation(fields: [operatorId], references: [id])
-
-  type      String
-  level     String
-  message   String
-  context   Json?
-  createdAt DateTime @default(now())
+  type       String
+  level      String
+  message    String
+  context    Json?
+  createdAt  DateTime @default(now())
 }

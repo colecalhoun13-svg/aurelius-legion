@@ -3,7 +3,7 @@
  * Aurelius OS v3.4 — Claude 3.5 Sonnet Engine Wiring
  */
 
-import type { EngineAdapter, EngineResponse } from "./engineAdapter";
+import type { EngineAdapter, EngineResponse } from "./engineAdapter.ts";
 
 export async function runAnthropic({
   message,

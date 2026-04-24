@@ -2,7 +2,7 @@
  * Aurelius OS v3.4 — Engine Registry
  */
 
-import type { Engine } from "./engineTypes";
+import type { Engine } from "./engineTypes.ts";
 
 const engines = new Map<string, Engine>();
 

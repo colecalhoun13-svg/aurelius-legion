@@ -3,7 +3,7 @@
  * Aurelius OS v3.4 — DeepSeek R1 Engine Wiring
  */
 
-import type { EngineAdapter } from "./engineAdapter";
+import type { EngineAdapter } from "./engineAdapter.ts";
 
 export async function runDeepSeek({ message, systemPrompt }) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
