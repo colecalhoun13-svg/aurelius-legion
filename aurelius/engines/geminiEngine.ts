@@ -1,62 +1,53 @@
 // aurelius/engines/geminiEngine.ts
-
-import {
-  EngineAdapter,
-  EngineRequest,
-  EngineResponse,
-} from "./engineAdapter.ts";
-
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-const GEMINI_ENDPOINT =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+import type { EngineAdapter, EngineRequest, EngineResponse } from "./engineAdapter.ts";
 
 export const geminiAdapter: EngineAdapter = {
   name: "gemini",
-
   async run(req: EngineRequest): Promise<EngineResponse> {
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
     if (!GEMINI_API_KEY) {
-      return {
-        text: "GEMINI_API_KEY is not configured.",
-        tokensUsed: 0,
-      };
+      return { text: "GEMINI_API_KEY is not configured.", tokensUsed: 0 };
     }
 
-    const system = req.systemPrompt ? `${req.systemPrompt}\n\n` : "";
-    const prompt = `${system}${req.userPrompt}`;
+    const model = req.model || "gemini-2.5-pro";
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
 
-    const res = await fetch(
-      `${GEMINI_ENDPOINT}?key=${encodeURIComponent(GEMINI_API_KEY)}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+    const body: any = {
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: req.userPrompt }],
         },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [{ text: prompt }],
-            },
-          ],
-        }),
-      }
-    );
+      ],
+    };
 
-    if (!res.ok) {
-      const text = await res.text();
-      return {
-        text: `Gemini error: ${res.status} ${text}`,
-        tokensUsed: 0,
+    if (req.systemPrompt) {
+      body.systemInstruction = {
+        parts: [{ text: req.systemPrompt }],
       };
     }
 
-    const json: any = await res.json();
-    const text =
-      json.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
 
-    return {
-      text,
-      tokensUsed: 0,
-      raw: json,
-    };
+      if (!res.ok) {
+        const errText = await res.text();
+        return { text: `Gemini error: ${res.status} ${errText}`, tokensUsed: 0 };
+      }
+
+      const json: any = await res.json();
+      const text = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+      const tokensUsed =
+        (json?.usageMetadata?.promptTokenCount || 0) +
+        (json?.usageMetadata?.candidatesTokenCount || 0);
+
+      return { text, tokensUsed, raw: json };
+    } catch (err: any) {
+      return { text: `Gemini fetch error: ${err?.message || String(err)}`, tokensUsed: 0 };
+    }
   },
 };

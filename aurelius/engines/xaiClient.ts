@@ -1,70 +1,48 @@
 // aurelius/engines/xaiClient.ts
+import type { EngineAdapter, EngineRequest, EngineResponse } from "./engineAdapter.ts";
 
-import axios from "axios";
-import {
-  EngineAdapter,
-  EngineRequest,
-  EngineResponse,
-} from "./engineAdapter.ts";
-
-const XAI_API_KEY = process.env.XAI_API_KEY || "";
-const XAI_ENDPOINT =
-  "https://api.x.ai/v1/chat/completions";
+const XAI_ENDPOINT = "https://api.x.ai/v1/chat/completions";
 
 export const xaiAdapter: EngineAdapter = {
   name: "xai",
-
   async run(req: EngineRequest): Promise<EngineResponse> {
+    const XAI_API_KEY = process.env.XAI_API_KEY || "";
     if (!XAI_API_KEY) {
-      return {
-        text: "XAI_API_KEY is not configured.",
-        tokensUsed: 0,
-      };
+      return { text: "XAI_API_KEY is not configured.", tokensUsed: 0 };
     }
 
+    const body = {
+      model: req.model || "grok-4-1-fast-reasoning",
+      messages: [
+        req.systemPrompt ? { role: "system", content: req.systemPrompt } : null,
+        { role: "user", content: req.userPrompt },
+      ].filter(Boolean),
+    };
+
     try {
-      const messages: any[] = [];
-
-      if (req.systemPrompt) {
-        messages.push({
-          role: "system",
-          content: req.systemPrompt,
-        });
-      }
-
-      messages.push({
-        role: "user",
-        content: req.userPrompt,
+      const res = await fetch(XAI_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${XAI_API_KEY}`,
+        },
+        body: JSON.stringify(body),
       });
 
-      const response = await axios.post(
-        XAI_ENDPOINT,
-        {
-          model: req.model || "grok-beta",
-          messages,
-        },
-        {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${XAI_API_KEY}`,
-          },
-        }
-      );
+      if (!res.ok) {
+        const errText = await res.text();
+        return { text: `xAI error: ${res.status} ${errText}`, tokensUsed: 0 };
+      }
 
-      const data = response.data;
-      const choice = data.choices?.[0];
-      const text = choice?.message?.content ?? "";
-
+      const json: any = await res.json();
+      const text = json.choices?.[0]?.message?.content ?? "";
       return {
         text,
-        tokensUsed: data.usage?.total_tokens ?? 0,
-        raw: data,
+        tokensUsed: json.usage?.total_tokens ?? 0,
+        raw: json,
       };
     } catch (err: any) {
-      return {
-        text: `xAI/Grok error: ${err?.message ?? "Unknown error"}`,
-        tokensUsed: 0,
-      };
+      return { text: `xAI fetch error: ${err?.message || String(err)}`, tokensUsed: 0 };
     }
   },
 };

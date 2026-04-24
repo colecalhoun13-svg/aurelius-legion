@@ -1,20 +1,19 @@
 /**
  * aurelius/index.ts
- * Aurelius OS v3.4 — Unified Server Entry Point
+ * Aurelius OS — Unified Server Entry Point
  */
-
 import dotenv from "dotenv";
 dotenv.config({ path: "./.env" });
 
 import express, { type Request, type Response } from "express";
 import cors from "cors";
 
-// Canonical engine routing
+// Canonical engine routing (legacy, kept for other endpoints)
 import { routeTask } from "./core/engineRouter.ts";
-
 // Operator routing
 import { routeOperator } from "./router/operatorRouter.ts";
-
+// Smart LLM routing (Phase 1)
+import { runLLM } from "./llm/runLLM.ts";
 // Register all engines once
 import { registerAllEngines } from "./core/registerEngines.ts";
 registerAllEngines();
@@ -25,17 +24,17 @@ import { autonomyRouter } from "./router/autonomyRouter.ts";
 
 const app = express();
 app.use(express.json());
-
 app.use(
   cors({
     origin: "*",
     methods: ["GET", "POST"],
-    credentials: true
+    credentials: true,
   })
 );
 
-console.log("ENV CHECK — Aurelius OS v3.4");
+console.log("ENV CHECK — Aurelius OS");
 console.log("OPENAI_API_KEY:", !!process.env.OPENAI_API_KEY);
+console.log("ANTHROPIC_API_KEY:", !!process.env.ANTHROPIC_API_KEY);
 console.log("GROQ_API_KEY:", !!process.env.GROQ_API_KEY);
 console.log("GEMINI_API_KEY:", !!process.env.GEMINI_API_KEY);
 console.log("DEEPSEEK_API_KEY:", !!process.env.DEEPSEEK_API_KEY);
@@ -49,12 +48,20 @@ app.use("/api", engineTestRouter);
 app.use("/api/autonomy", autonomyRouter);
 
 app.get("/", (req: Request, res: Response) => {
-  res.send("Aurelius OS v3.4 backend is running");
+  res.send("Aurelius OS backend is running");
 });
 
-// Main Aurelius chat endpoint
+// Main Aurelius chat endpoint — Phase 1: smart routing via runLLM
 app.post("/api/aurelius", async (req: Request, res: Response) => {
-  const { message } = req.body;
+  const {
+    message,
+    options,
+    taskType,
+    urgency,
+    autonomyMode,
+    needsRealtime,
+    hasMultimodal,
+  } = req.body;
 
   if (!message || typeof message !== "string") {
     return res.status(400).json({ error: "Message is required" });
@@ -64,37 +71,39 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
     // Determine operator from message
     const operator = routeOperator(message);
 
-    const systemPrompt = `You are Aurelius OS v3.4. Active operator: ${operator}. Respond with precision, clarity, and operator-grade reasoning.`;
-
-    // Canonical task shape
-    const result = await routeTask(
-      {
-        id: `chat-${Date.now()}`,
-        type: "chat",
-        payload: { message },
-        engine: operator,
-        source: "operator",
-      },
-      { message },
-      systemPrompt
-    );
+    // Run through smart router
+    const response = await runLLM({
+      taskType: taskType || "chat",
+      operator,
+      autonomyMode,
+      urgency,
+      input: message,
+      options,
+      needsRealtime,
+      hasMultimodal,
+    });
 
     return res.json({
-      reply: result.text,
+      reply: response.text,
       operator,
       meta: {
-        engine: operator,
-        tokensUsed: result.tokensUsed
-      }
+        engine: response.engine,
+        model: response.model,
+        tokensUsed: response.tokensUsed,
+        latencyMs: response.latencyMs,
+      },
+      reviewed: response.reviewed || null,
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error("Aurelius error:", err);
-    return res.status(500).json({ error: "Aurelius encountered an issue." });
+    return res.status(500).json({
+      error: "Aurelius encountered an issue.",
+      detail: err?.message || String(err),
+    });
   }
 });
 
 const PORT = Number(process.env.PORT) || 3001;
-
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Aurelius server running on port ${PORT}`);
-}); 
+});

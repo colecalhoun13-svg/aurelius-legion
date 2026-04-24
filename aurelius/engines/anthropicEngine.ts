@@ -1,28 +1,39 @@
 /**
  * anthropicEngine.ts
- * Aurelius OS v3.4 — Claude 3.5 Sonnet Engine Wiring
+ * Aurelius OS — Claude API adapter.
+ * Supports any current Claude model (Sonnet, Opus, Haiku).
+ * Respects the model passed in by the router.
  */
+import type { EngineAdapter } from "./engineAdapter.ts";
 
-import type { EngineAdapter, EngineResponse } from "./engineAdapter.ts";
+type RunAnthropicInput = {
+  model?: string;
+  systemPrompt?: string;
+  userPrompt: string;
+  maxTokens?: number;
+};
 
-export async function runAnthropic({
-  message,
+async function runAnthropic({
+  model = "claude-sonnet-4-6",
   systemPrompt,
-  maxTokens = 4096
-}) {
+  userPrompt,
+  maxTokens = 4096,
+}: RunAnthropicInput): Promise<{ text: string; tokensUsed: number; raw: any }> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-
   if (!apiKey) {
-    console.error("Anthropic API key missing (ANTHROPIC_API_KEY).");
-    return "Anthropic engine is not configured. Missing API key.";
+    return {
+      text: "Anthropic engine is not configured. Missing ANTHROPIC_API_KEY.",
+      tokensUsed: 0,
+      raw: null,
+    };
   }
 
-  const body = {
-    model: "claude-3-5-sonnet",
-    system: systemPrompt,
-    messages: [{ role: "user", content: message }],
-    max_tokens: maxTokens
+  const body: any = {
+    model,
+    messages: [{ role: "user", content: userPrompt }],
+    max_tokens: maxTokens,
   };
+  if (systemPrompt) body.system = systemPrompt;
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -30,31 +41,50 @@ export async function runAnthropic({
       headers: {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
+        "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
     });
 
     const json = await res.json();
 
-    // Anthropic always returns content as an array of blocks
-    return json?.content?.[0]?.text ?? "";
-  } catch (err) {
-    console.error("Anthropic engine error:", err);
-    return "Anthropic engine encountered an error while processing the request.";
+    if (!res.ok) {
+      const errMsg = json?.error?.message || `HTTP ${res.status}`;
+      console.error(`[ANTHROPIC] API error: ${errMsg}`, json);
+      return {
+        text: `Anthropic API error: ${errMsg}`,
+        tokensUsed: 0,
+        raw: json,
+      };
+    }
+
+    const text = json?.content?.[0]?.text ?? "";
+    const tokensUsed =
+      (json?.usage?.input_tokens || 0) + (json?.usage?.output_tokens || 0);
+
+    return { text, tokensUsed, raw: json };
+  } catch (err: any) {
+    console.error("[ANTHROPIC] Fetch error:", err);
+    return {
+      text: `Anthropic engine encountered an error: ${err?.message || String(err)}`,
+      tokensUsed: 0,
+      raw: null,
+    };
   }
 }
 
 export const anthropicAdapter: EngineAdapter = {
   name: "anthropic",
   async run(request) {
-    const text = await runAnthropic({
-      message: request.userPrompt,
+    const result = await runAnthropic({
+      model: request.model,
       systemPrompt: request.systemPrompt,
+      userPrompt: request.userPrompt,
     });
     return {
-      text,
-      tokensUsed: 0,
+      text: result.text,
+      tokensUsed: result.tokensUsed,
+      raw: result.raw,
     };
   },
 };

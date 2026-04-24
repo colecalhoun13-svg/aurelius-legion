@@ -1,44 +1,48 @@
-/**
- * deepseekEngine.ts
- * Aurelius OS v3.4 — DeepSeek R1 Engine Wiring
- */
+// aurelius/engines/deepseekEngine.ts
+import type { EngineAdapter, EngineRequest, EngineResponse } from "./engineAdapter.ts";
 
-import type { EngineAdapter } from "./engineAdapter.ts";
-
-export async function runDeepSeek({ message, systemPrompt }) {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-
-  const body = {
-    model: "deepseek-r1",
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: message }
-    ]
-  };
-
-  const res = await fetch("https://api.deepseek.com/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(body)
-  });
-
-  const json = await res.json();
-  return json.choices?.[0]?.message?.content ?? "";
-}
+const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
 
 export const deepseekAdapter: EngineAdapter = {
   name: "deepseek",
-  async run(request) {
-    const text = await runDeepSeek({
-      message: request.userPrompt,
-      systemPrompt: request.systemPrompt,
-    });
-    return {
-      text,
-      tokensUsed: 0,
+  async run(req: EngineRequest): Promise<EngineResponse> {
+    const apiKey = process.env.DEEPSEEK_API_KEY || "";
+    if (!apiKey) {
+      return { text: "DEEPSEEK_API_KEY is not configured.", tokensUsed: 0 };
+    }
+
+    const body = {
+      model: req.model || "deepseek-chat",
+      messages: [
+        req.systemPrompt ? { role: "system", content: req.systemPrompt } : null,
+        { role: "user", content: req.userPrompt },
+      ].filter(Boolean),
     };
+
+    try {
+      const res = await fetch(DEEPSEEK_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        return { text: `DeepSeek error: ${res.status} ${errText}`, tokensUsed: 0 };
+      }
+
+      const json: any = await res.json();
+      const text = json.choices?.[0]?.message?.content ?? "";
+      return {
+        text,
+        tokensUsed: json.usage?.total_tokens ?? 0,
+        raw: json,
+      };
+    } catch (err: any) {
+      return { text: `DeepSeek fetch error: ${err?.message || String(err)}`, tokensUsed: 0 };
+    }
   },
 };
