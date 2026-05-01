@@ -1,6 +1,10 @@
 /**
  * Aurelius OS v3.4 — Canonical Engine Registration
  * This file defines the authoritative engine registry for the entire OS.
+ *
+ * Phase 2 status: autonomy + memoryEvolution adapters are deferred to their
+ * respective phases (9 and 8). They have transitive dependencies on incomplete
+ * code (selfUpgradeEngine, etc.) and would block startup if registered.
  */
 
 import { registerEngine } from "./engineRegistry.ts";
@@ -14,11 +18,15 @@ import { anthropicAdapter } from "../engines/anthropicEngine.ts";
 import { deepseekAdapter } from "../engines/deepseekEngine.ts";
 import { xaiAdapter } from "../engines/xaiClient.ts";
 
-// Aurelius Internal Engines (if using EngineAdapter pattern)
+// Aurelius Internal Engines (active in Phase 2)
 import { researchEngineAdapter } from "../research/researchEngine.ts";
-import { memoryEvolutionEngineAdapter } from "../memory/memoryEvolutionEngine.ts";
-import { autonomyEngineAdapter } from "../autonomy/autonomyEngine.ts";
 import { reflectionEngineAdapter } from "../autonomy/reflectionEngine.ts";
+
+// DEFERRED — Phase 9 (Nervous System): autonomy orchestrator
+// import { autonomyEngineAdapter } from "../autonomy/autonomyEngine.ts";
+
+// DEFERRED — Phase 8 (Self-Upgrade / Memory Evolution): synthesis layer
+// import { memoryEvolutionEngineAdapter } from "../memory/memoryEvolutionEngine.ts";
 
 // Adapter wrapper: converts EngineAdapter to Engine
 function wrapAdapter(adapter: any): Engine {
@@ -68,9 +76,11 @@ export function registerAllEngines() {
   registerEngine(wrapAdapter(deepseekAdapter));
   registerEngine(wrapAdapter(xaiAdapter));
 
-  // Aurelius Internal Engines (if already Engine type)
+  // Aurelius Internal Engines — Phase 2 active
   registerEngine(researchEngineAdapter);
-  registerEngine(memoryEvolutionEngineAdapter);
-  registerEngine(autonomyEngineAdapter);
   registerEngine(reflectionEngineAdapter);
+
+  // DEFERRED registrations:
+  // registerEngine(autonomyEngineAdapter);          // Phase 9
+  // registerEngine(memoryEvolutionEngineAdapter);   // Phase 8
 }

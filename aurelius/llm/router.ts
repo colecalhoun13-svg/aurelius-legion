@@ -3,10 +3,10 @@
  *
  * Philosophy: cost-effective but right for the job.
  * Fit wins. Cost breaks ties between similarly-fit engines.
- * Never route to a wrong-fit engine just because it's cheap.
  *
- * The LLM brings reasoning. The operator core provides the frame.
- * Same LLM + different lens = different answer.
+ * Multi-operator support: a request has ONE primary operator (drives voice and full lens)
+ * plus 0-2 secondary operators (contribute principles + constraints, don't drive voice).
+ * The LLM brings reasoning. The operator core(s) provide the frame(s).
  */
 
 import { gptAdapter } from "../engines/gptEngine.ts";
@@ -17,25 +17,36 @@ import { xaiAdapter } from "../engines/xaiClient.ts";
 import { deepseekAdapter } from "../engines/deepseekEngine.ts";
 import { getOperatorProfile } from "../core/operatorProfiles.ts";
 import { BASE_PERSONA_PROMPT, OPERATOR_PERSONAS } from "../persona/aureliusPersona.ts";
+import { IDENTITY } from "../identity/index.ts";
+import {
+  loadMemoriesForOperator,
+  formatMemoriesForPrompt,
+} from "../memory/memoryService.ts";
 
 // ═══════════════════════════════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════════════════════════════
 
 export type LLMOptions = {
-  engine?: string;        // explicit engine override: "claude-opus", "gpt", "groq", etc.
-  reviewer?: string;      // optional Opus oversight: "claude-opus" only
+  engine?: string;
+  reviewer?: string;
+};
+
+export type OperatorContext = {
+  primary: string;
+  secondaries: string[];
 };
 
 export type LLMTask = {
-  taskType: string;       // "chat", "log", "research", "plan", "extract", "code", "math", etc.
-  operator?: string;      // "strategy", "business", "athlete", etc.
-  autonomyMode?: string;  // "reactive", "planning", "reflection"
+  taskType: string;
+  operators?: OperatorContext;     // multi-operator context
+  operator?: string;               // legacy field — used as primary if `operators` not supplied
+  autonomyMode?: string;
   urgency?: "low" | "medium" | "high";
   input: string;
   options?: LLMOptions;
-  needsRealtime?: boolean;  // explicit signal for real-time info need
-  hasMultimodal?: boolean;  // explicit signal for image/video/audio input
+  needsRealtime?: boolean;
+  hasMultimodal?: boolean;
 };
 
 export type LLMChoice = {
@@ -60,7 +71,7 @@ export type LLMResponse = {
 };
 
 // ═══════════════════════════════════════════════════════════════════
-// TIER MAPPING — current verified model names (April 2026)
+// TIER MAPPING
 // ═══════════════════════════════════════════════════════════════════
 
 const TIERS = {
@@ -73,24 +84,22 @@ const TIERS = {
   mathCheap:     { provider: "deepseek",  model: "deepseek-reasoner" },
 };
 
-// Explicit engine override aliases (used when options.engine is set)
 const ENGINE_ALIASES: Record<string, { provider: string; model: string }> = {
-  "claude-opus":    { provider: "anthropic", model: "claude-opus-4-7" },
-  "claude-sonnet":  { provider: "anthropic", model: "claude-sonnet-4-6" },
-  "gpt":            { provider: "openai",    model: "gpt-5.4-mini" },
-  "gpt-pro":        { provider: "openai",    model: "gpt-5.4" },
-  "groq":           { provider: "groq",      model: "llama-3.3-70b-versatile" },
-  "grok":           { provider: "xai",       model: "grok-4-1-fast-reasoning" },
-  "gemini":         { provider: "gemini",    model: "gemini-2.5-pro" },
-  "deepseek":       { provider: "deepseek",  model: "deepseek-reasoner" },
+  "claude-opus":   { provider: "anthropic", model: "claude-opus-4-7" },
+  "claude-sonnet": { provider: "anthropic", model: "claude-sonnet-4-6" },
+  "gpt":           { provider: "openai",    model: "gpt-5.4-mini" },
+  "gpt-pro":       { provider: "openai",    model: "gpt-5.4" },
+  "groq":          { provider: "groq",      model: "llama-3.3-70b-versatile" },
+  "grok":          { provider: "xai",       model: "grok-4-1-fast-reasoning" },
+  "gemini":        { provider: "gemini",    model: "gemini-2.5-pro" },
+  "deepseek":      { provider: "deepseek",  model: "deepseek-reasoner" },
 };
 
 // ═══════════════════════════════════════════════════════════════════
-// MODEL SELECTION — fit-first rule-based logic
+// MODEL SELECTION
 // ═══════════════════════════════════════════════════════════════════
 
 export function chooseModel(task: LLMTask): LLMChoice {
-  // 1. Explicit engine override wins
   if (task.options?.engine) {
     const alias = ENGINE_ALIASES[task.options.engine];
     if (alias) {
@@ -100,116 +109,208 @@ export function chooseModel(task: LLMTask): LLMChoice {
         reason: `Explicit override: options.engine = "${task.options.engine}"`,
       };
     }
-    // Unknown alias — fall through to auto-routing but warn
     console.warn(`[ROUTER] Unknown engine alias "${task.options.engine}" — auto-routing`);
   }
 
-  // 2. Real-time info signal → Grok (only engine with web/X live search)
   if (task.needsRealtime) {
-    return {
-      ...TIERS.realtime,
-      reason: "Real-time info needed → Grok with live search.",
-    };
+    return { ...TIERS.realtime, reason: "Real-time info needed → Grok with live search." };
   }
 
-  // 3. Multimodal input → Gemini
   if (task.hasMultimodal) {
-    return {
-      ...TIERS.multimodal,
-      reason: "Multimodal input detected → Gemini.",
-    };
+    return { ...TIERS.multimodal, reason: "Multimodal input detected → Gemini." };
   }
 
-  // 4. Clearly-fast tasks → Groq
   const fastTaskTypes = ["log", "extract", "track", "quick_reply", "summary", "rewrite"];
   if (fastTaskTypes.includes(task.taskType)) {
-    return {
-      ...TIERS.fast,
-      reason: `Task type "${task.taskType}" is fit for speed-first → Groq.`,
-    };
+    return { ...TIERS.fast, reason: `Task type "${task.taskType}" is fit for speed-first → Groq.` };
   }
 
-  // 5. Math/code heavy → DeepSeek reasoner (cost-effective for this niche)
   const mathCodeTaskTypes = ["math", "code_heavy"];
   if (mathCodeTaskTypes.includes(task.taskType)) {
-    return {
-      ...TIERS.mathCheap,
-      reason: `Task type "${task.taskType}" → DeepSeek reasoner (math/code fit).`,
-    };
+    return { ...TIERS.mathCheap, reason: `Task type "${task.taskType}" → DeepSeek reasoner.` };
   }
 
-  // 6. Structured output task → GPT-5.4-mini
   if (task.taskType === "structured" || task.taskType === "json") {
-    return {
-      ...TIERS.structured,
-      reason: `Task type "${task.taskType}" → GPT-5.4-mini (structured output fit).`,
-    };
+    return { ...TIERS.structured, reason: `Task type "${task.taskType}" → GPT-5.4-mini.` };
   }
 
-  // 7. Default → Claude Sonnet 4.6 (Aurelius's strategic default voice)
-  return {
-    ...TIERS.strategic,
-    reason: "Default strategic routing → Claude Sonnet 4.6 (Aurelius default).",
-  };
+  return { ...TIERS.strategic, reason: "Default strategic routing → Claude Sonnet 4.6 (Aurelius default)." };
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// SYSTEM PROMPT ASSEMBLY — persona + operator lens + task context
+// IDENTITY FORMATTING
 // ═══════════════════════════════════════════════════════════════════
 
-function buildSystemPrompt(task: LLMTask): string {
+function formatIdentityForPrompt(): string {
+  const p = IDENTITY.profile;
+  const pref = IDENTITY.preferences;
+
+  const lines = [
+    "═══ ABOUT COLE ═══",
+    `Name: ${p.name}`,
+    `Identity: ${p.identity.join(", ")}`,
+    `Roles: ${p.roles.join(", ")}`,
+    "",
+    "═══ HOW HE WANTS YOU TO ENGAGE ═══",
+    `Communication: ${pref.communication.style}. Formality: ${pref.communication.formality}.`,
+    `Cussing: ${pref.communication.cussingFrequency}.`,
+    `Named address: ${pref.communication.namedAddress}.`,
+    "",
+    "Reasoning expectations:",
+    `  — Pushback expected: ${pref.reasoning.expectsPushback}`,
+    `  — Honesty: ${pref.reasoning.expectsHonesty}`,
+    `  — Brevity: ${pref.reasoning.expectsBrevity}`,
+    `  — Structure: ${pref.reasoning.structurePreference}`,
+    "",
+    "Work context:",
+    `  — Rhythm: ${pref.work.rhythm}`,
+    `  — Current motto: "${pref.work.motto}"`,
+  ];
+
+  return lines.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// OPERATOR CORE FORMATTING
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Full core for the primary operator: principles, constraints, heuristics, questions.
+ * This is the dominant lens — Aurelius reasons through this and uses its tone.
+ */
+function formatPrimaryOperatorCore(operatorName: string): string {
+  const profile = getOperatorProfile(operatorName);
+  if (!profile) return "";
+
+  const lines: string[] = [`═══ PRIMARY OPERATOR: ${operatorName} ═══`];
+
+  // Operator persona extension if it exists
+  const ext = OPERATOR_PERSONAS[operatorName];
+  if (ext) {
+    lines.push(ext);
+    lines.push("");
+  }
+
+  if (profile.principles?.length) {
+    lines.push("PRINCIPLES (apply these to your reasoning):");
+    profile.principles.forEach((p: string, i: number) => {
+      lines.push(`  ${i + 1}. ${p}`);
+    });
+    lines.push("");
+  }
+
+  if (profile.constraints?.length) {
+    lines.push("CONSTRAINTS (do not violate):");
+    profile.constraints.forEach((c: string, i: number) => {
+      lines.push(`  ${i + 1}. ${c}`);
+    });
+    lines.push("");
+  }
+
+  if (profile.heuristics?.length) {
+    lines.push("HEURISTICS (use where they fit):");
+    profile.heuristics.forEach((h: string) => {
+      lines.push(`  — ${h}`);
+    });
+    lines.push("");
+  }
+
+  if (profile.questions?.length) {
+    lines.push("CLARIFYING QUESTIONS (ask when genuinely stuck):");
+    profile.questions.forEach((q: string) => {
+      lines.push(`  — ${q}`);
+    });
+  }
+
+  return lines.join("\n").trimEnd();
+}
+
+/**
+ * Trimmed core for secondary operators: only principles + constraints.
+ * They contribute their hard rules without fighting for tone or driving reasoning.
+ */
+function formatSecondaryOperatorCore(operatorName: string): string {
+  const profile = getOperatorProfile(operatorName);
+  if (!profile) return "";
+
+  const lines: string[] = [];
+  let hasContent = false;
+
+  if (profile.principles?.length) {
+    lines.push(`${operatorName} — principles to respect:`);
+    profile.principles.forEach((p: string) => {
+      lines.push(`  — ${p}`);
+    });
+    hasContent = true;
+  }
+
+  if (profile.constraints?.length) {
+    if (hasContent) lines.push("");
+    lines.push(`${operatorName} — constraints to honor:`);
+    profile.constraints.forEach((c: string) => {
+      lines.push(`  — ${c}`);
+    });
+    hasContent = true;
+  }
+
+  return hasContent ? lines.join("\n") : "";
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SYSTEM PROMPT ASSEMBLY (multi-operator)
+// ═══════════════════════════════════════════════════════════════════
+
+async function buildSystemPrompt(task: LLMTask): Promise<string> {
   const parts: string[] = [];
 
-  // Layer 1: Base persona (identity, voice, rules)
+  // Resolve operator context (back-compat: legacy task.operator becomes primary)
+  const operators: OperatorContext = task.operators ?? {
+    primary: task.operator ?? "strategy",
+    secondaries: [],
+  };
+
+  // Layer 1: Base persona
   parts.push(BASE_PERSONA_PROMPT);
 
-  // Layer 2: Operator lens (domain frame + principles)
-  if (task.operator) {
-    const operatorExtension = OPERATOR_PERSONAS[task.operator];
-    if (operatorExtension) {
-      parts.push("\n" + operatorExtension);
+  // Layer 2: Identity
+  parts.push("\n" + formatIdentityForPrompt());
+
+  // Layer 3: Primary operator (full core + lens extension + tone)
+  const primaryBlock = formatPrimaryOperatorCore(operators.primary);
+  if (primaryBlock) {
+    parts.push("\n" + primaryBlock);
+  }
+
+  // Layer 4: Secondary operators (trimmed cores: principles + constraints only)
+  if (operators.secondaries.length > 0) {
+    const secondaryBlocks: string[] = ["═══ ALSO TOUCHING THIS REQUEST ═══"];
+    for (const sec of operators.secondaries) {
+      const block = formatSecondaryOperatorCore(sec);
+      if (block) {
+        secondaryBlocks.push("");
+        secondaryBlocks.push(block);
+      }
     }
-
-    // Layer 3: Full operator core (principles, constraints, heuristics)
-    const profile = getOperatorProfile(task.operator);
-    if (profile) {
-      const core: string[] = [];
-
-      if (profile.principles?.length) {
-        core.push("PRINCIPLES (apply these to your reasoning):");
-        profile.principles.forEach((p: string, i: number) => {
-          core.push(`  ${i + 1}. ${p}`);
-        });
-      }
-
-      if (profile.constraints?.length) {
-        core.push("\nCONSTRAINTS (do not violate):");
-        profile.constraints.forEach((c: string, i: number) => {
-          core.push(`  ${i + 1}. ${c}`);
-        });
-      }
-
-      if (profile.heuristics?.length) {
-        core.push("\nHEURISTICS (use where they fit):");
-        profile.heuristics.forEach((h: string) => {
-          core.push(`  — ${h}`);
-        });
-      }
-
-      if (profile.questions?.length) {
-        core.push("\nCLARIFYING QUESTIONS (ask when genuinely stuck):");
-        profile.questions.forEach((q: string) => {
-          core.push(`  — ${q}`);
-        });
-      }
-
-      if (core.length > 0) {
-        parts.push("\n═══ OPERATOR CORE ═══\n" + core.join("\n"));
-      }
+    if (secondaryBlocks.length > 1) {
+      parts.push("\n" + secondaryBlocks.join("\n"));
     }
   }
 
-  // Layer 4: Task context (minimal, just what the LLM needs)
+  // Layer 5: Memory (loaded for primary operator; relations-aware so secondaries surface naturally)
+  try {
+    const memories = await loadMemoriesForOperator({
+      operator: operators.primary,
+      userMessage: task.input,
+    });
+    const memoryBlock = formatMemoriesForPrompt(memories);
+    if (memoryBlock) {
+      parts.push("\n" + memoryBlock);
+    }
+  } catch (err) {
+    console.warn("[ROUTER] memory load failed:", err);
+  }
+
+  // Layer 6: Task context
   const context: string[] = [];
   if (task.autonomyMode) context.push(`Autonomy mode: ${task.autonomyMode}`);
   if (task.urgency) context.push(`Urgency: ${task.urgency}`);
@@ -245,11 +346,7 @@ async function runAdapter(
   }
 
   const start = Date.now();
-  const response = await adapter.run({
-    model,
-    systemPrompt,
-    userPrompt,
-  });
+  const response = await adapter.run({ model, systemPrompt, userPrompt });
   const latencyMs = Date.now() - start;
 
   return {
@@ -260,22 +357,21 @@ async function runAdapter(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// MAIN ENTRY POINT — routeLLM
+// MAIN ENTRY POINT
 // ═══════════════════════════════════════════════════════════════════
 
 export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
   const choice = chooseModel(task);
-  const systemPrompt = buildSystemPrompt(task);
+  const systemPrompt = await buildSystemPrompt(task);
 
-  console.log(`[ROUTER] ${choice.provider}/${choice.model} — ${choice.reason}`);
+  // Compose log line that shows multi-operator context if present
+  const opCtx = task.operators
+    ? `${task.operators.primary}${task.operators.secondaries.length ? ` + [${task.operators.secondaries.join(", ")}]` : ""}`
+    : task.operator ?? "n/a";
 
-  // Run primary engine
-  const primary = await runAdapter(
-    choice.provider,
-    choice.model,
-    systemPrompt,
-    task.input
-  );
+  console.log(`[ROUTER] ${choice.provider}/${choice.model} — ${choice.reason} | operators: ${opCtx}`);
+
+  const primary = await runAdapter(choice.provider, choice.model, systemPrompt, task.input);
 
   const response: LLMResponse = {
     text: primary.text,
@@ -285,7 +381,6 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
     latencyMs: primary.latencyMs,
   };
 
-  // Optional Opus oversight
   if (task.options?.reviewer === "claude-opus") {
     const reviewerModel = "claude-opus-4-7";
     const reviewerSystemPrompt = `
@@ -311,12 +406,7 @@ ${primary.text}
 Produce your refined response now.
 `.trim();
 
-    const reviewed = await runAdapter(
-      "anthropic",
-      reviewerModel,
-      reviewerSystemPrompt,
-      reviewerUserPrompt
-    );
+    const reviewed = await runAdapter("anthropic", reviewerModel, reviewerSystemPrompt, reviewerUserPrompt);
 
     response.reviewed = {
       reviewer: "anthropic",

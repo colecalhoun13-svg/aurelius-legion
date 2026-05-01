@@ -4,7 +4,7 @@
  * Routes through the Hybrid LLM Router and logs usage.
  */
 import { routeLLM } from "./router.ts";
-import type { LLMTask, LLMResponse, LLMOptions } from "./router.ts";
+import type { LLMTask, LLMResponse, LLMOptions, OperatorContext } from "./router.ts";
 
 export type RunLLMInput = LLMTask;
 
@@ -17,7 +17,7 @@ export async function runLLM(params: RunLLMInput): Promise<LLMResponse> {
 
   console.log("[AURELIUS][LLM]", {
     taskType: params.taskType,
-    operator: params.operator,
+    operators: params.operators ?? { primary: params.operator ?? "n/a", secondaries: [] },
     engine: response.engine,
     model: response.model,
     tokensUsed: response.tokensUsed,
@@ -29,5 +29,4 @@ export async function runLLM(params: RunLLMInput): Promise<LLMResponse> {
   return response;
 }
 
-// Re-export for convenience
-export type { LLMTask, LLMResponse, LLMOptions };
+export type { LLMTask, LLMResponse, LLMOptions, OperatorContext };
