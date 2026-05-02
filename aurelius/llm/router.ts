@@ -22,6 +22,7 @@ import {
   loadMemoriesForOperator,
   formatMemoriesForPrompt,
 } from "../memory/memoryService.ts";
+import { buildToolCatalog } from "../tools/toolRegistry.ts";
 
 // ═══════════════════════════════════════════════════════════════════
 // TYPES
@@ -310,7 +311,17 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     console.warn("[ROUTER] memory load failed:", err);
   }
 
-  // Layer 6: Task context
+  // Layer 6: Tool catalog (auto-generated from registered tool adapters)
+  try {
+    const toolCatalog = buildToolCatalog();
+    if (toolCatalog) {
+      parts.push("\n═══ " + toolCatalog);
+    }
+  } catch (err) {
+    console.warn("[ROUTER] tool catalog generation failed:", err);
+  }
+
+  // Layer 7: Task context
   const context: string[] = [];
   if (task.autonomyMode) context.push(`Autonomy mode: ${task.autonomyMode}`);
   if (task.urgency) context.push(`Urgency: ${task.urgency}`);

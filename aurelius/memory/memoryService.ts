@@ -26,6 +26,7 @@ export const MEMORY_CATEGORIES = [
   "decisions",
   "context",
   "facts",
+  "tool_result",
 ] as const;
 
 export type MemoryCategory = typeof MEMORY_CATEGORIES[number];
@@ -97,6 +98,46 @@ export async function saveMemory(params: SaveMemoryParams) {
     value: params.value,
     metadata,
   });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CLIENT → SHEET ID RESOLVER
+// Find the most recent sheet_registration memory matching a client name.
+// Used by Tool Engine wiring to resolve "Mike" → his sheet ID.
+// ═══════════════════════════════════════════════════════════════════
+
+export async function findClientSheetId(clientName: string): Promise<string | null> {
+  if (!clientName) return null;
+
+  try {
+    // Look for memories tagged kind=sheet_registration with matching clientName.
+    // Most recent registration wins (in case Cole re-registered).
+    const matches = await prisma.memory.findMany({
+      where: {
+        category: "clients",
+        metadata: {
+          path: ["kind"],
+          equals: "sheet_registration",
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+
+    const target = clientName.toLowerCase().trim();
+    for (const m of matches) {
+      const meta = m.metadata as any;
+      const candidate = (meta?.clientName ?? "").toString().toLowerCase().trim();
+      if (candidate === target && meta?.sheetId) {
+        return meta.sheetId as string;
+      }
+    }
+
+    return null;
+  } catch (err) {
+    console.error("[memoryService] findClientSheetId error:", err);
+    return null;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -303,9 +344,8 @@ export async function loadMemoriesForOperator(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// AUTO-SAVE DIRECTIVE PARSING
-// Looks for [SAVE: category=X value="Y"] patterns.
-// Optionally [SAVE: category=X value="Y" related=op1,op2] for relations.
+// AUTO-SAVE DIRECTIVE PARSING (legacy shim)
+// New code should use llm/directiveParser.ts. This is kept for back-compat.
 // ═══════════════════════════════════════════════════════════════════
 
 export type ParsedSaveDirective = {
@@ -319,7 +359,6 @@ export type ParseResult = {
   directives: ParsedSaveDirective[];
 };
 
-// Matches [SAVE: category=X value="Y"] OR [SAVE: category=X value="Y" related=a,b]
 const SAVE_DIRECTIVE_REGEX =
   /\[SAVE:\s*category=([a-zA-Z0-9_-]+)\s+value="([^"]+)"(?:\s+related=([a-zA-Z0-9_,-]+))?\]/g;
 
@@ -373,7 +412,6 @@ export function formatMemoriesForPrompt(memories: FormattedMemory[]): string {
   for (const [category, mems] of byCategory.entries()) {
     lines.push(`\n${category}:`);
     for (const m of mems) {
-      // Show value, plus primary/related operators in parens if relevant
       const operators =
         m.relatedOperators.length > 0
           ? ` (${m.primaryOperator} + ${m.relatedOperators.join(", ")})`

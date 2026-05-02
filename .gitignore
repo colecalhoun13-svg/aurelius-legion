@@ -83,3 +83,11 @@ frontend-tree.txt
 ui-tree.txt
 folder_tree.txt
 aurelius_tree.txt
+
+# ============================================
+# Service account keys / secrets
+# ============================================
+secrets/
+**/secrets/
+*.serviceaccount.json
+*-credentials.json
