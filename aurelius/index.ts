@@ -29,6 +29,11 @@ import { runResearch } from "./research/researchEngine.ts";
 // Tool engine
 import { executeToolCall } from "./tools/toolEngine.ts";
 import type { ToolResult } from "./tools/types.ts";
+// Training reasoning (Phase 4)
+import {
+  reasonOverSession,
+  type TrainingReasoningResult,
+} from "./training/reasoner.ts";
 // Register all engines once
 import { registerAllEngines } from "./core/registerEngines.ts";
 registerAllEngines();
@@ -223,6 +228,235 @@ function summarizeToolResults(executed: ExecutedTool[]): string {
           }
         }
       }
+
+      // review_recent returns a sessionsToReview array (Phase 4 δ flow)
+      if (Array.isArray(output.sessionsToReview) && ex.directive.action === "review_recent") {
+        if (output.sessionsToReview.length === 0) {
+          lines.push(`   (no sessions in the lookback window meet the threshold)`);
+        } else {
+          for (const s of output.sessionsToReview as any[]) {
+            lines.push(`   • ${s.date} · ${s.client} · ${s.dayTab} · ${s.exerciseCount} exercises · ${s.workingSetCount} working sets`);
+          }
+        }
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PHASE 4 — Two-pass training reasoning
+// After successful log_session OR review_recent, fire reasoning for each
+// eligible session. Reasoning produces feedback + PRs which are then
+// written back to the athlete's sheet via the Tool Engine.
+// ═══════════════════════════════════════════════════════════════════
+
+type Pass2Outcome = {
+  client: string;
+  dayTab: string;
+  date: string;
+  ok: boolean;
+  feedbackWritten?: boolean;
+  prsRecorded?: number;
+  error?: string;
+  llmTokens?: number;
+};
+
+/**
+ * For each successful log_session in this turn, run reasoning and write
+ * feedback + maxes back to the sheet. Returns one outcome per attempted
+ * session so we can surface successes and failures to Cole.
+ */
+async function firePass2ForLoggedSessions(
+  executed: ExecutedTool[]
+): Promise<Pass2Outcome[]> {
+  const outcomes: Pass2Outcome[] = [];
+
+  for (const ex of executed) {
+    if (!ex.result.ok) continue;
+    if (ex.directive.tool !== "google_sheets") continue;
+    if (ex.directive.action !== "log_session") continue;
+
+    const data = ex.directive.data as any;
+    const sheetId = ex.result.output?.sheetId as string | undefined;
+    const dayTab = (data?.dayTab ?? ex.result.output?.dayTab) as string | undefined;
+    const date = (data?.date ?? ex.result.output?.date) as string | undefined;
+    const client = (ex.resolvedClientId ?? data?.client) as string | undefined;
+
+    if (!sheetId || !dayTab || !date || !client) {
+      outcomes.push({
+        client: client ?? "(unknown)",
+        dayTab: dayTab ?? "(unknown)",
+        date: date ?? "(unknown)",
+        ok: false,
+        error: "missing context for Pass 2 (sheetId/dayTab/date/client)",
+      });
+      continue;
+    }
+
+    const outcome = await runPass2(client, sheetId, dayTab, date);
+    outcomes.push(outcome);
+  }
+
+  return outcomes;
+}
+
+/**
+ * For each session surfaced by review_recent, run reasoning + feedback.
+ * Same outcome shape as the log_session-triggered path.
+ */
+async function firePass2ForReviewRecent(
+  executed: ExecutedTool[]
+): Promise<Pass2Outcome[]> {
+  const outcomes: Pass2Outcome[] = [];
+
+  for (const ex of executed) {
+    if (!ex.result.ok) continue;
+    if (ex.directive.tool !== "google_sheets") continue;
+    if (ex.directive.action !== "review_recent") continue;
+
+    const sessions = (ex.result.output?.sessionsToReview as any[]) ?? [];
+    for (const s of sessions) {
+      const outcome = await runPass2(s.client, s.sheetId, s.dayTab, s.date);
+      outcomes.push(outcome);
+    }
+  }
+
+  return outcomes;
+}
+
+/**
+ * Single Pass 2 execution: read → reason → write feedback + maxes.
+ */
+async function runPass2(
+  client: string,
+  sheetId: string,
+  dayTab: string,
+  date: string
+): Promise<Pass2Outcome> {
+  console.log(`[pass-2] firing reasoning for ${client} · ${dayTab} · ${date}`);
+
+  let reasoning: TrainingReasoningResult;
+  try {
+    reasoning = await reasonOverSession({
+      client,
+      sheetId,
+      dayTab,
+      targetDate: date,
+    });
+  } catch (err: any) {
+    return {
+      client,
+      dayTab,
+      date,
+      ok: false,
+      error: `reasonOverSession threw: ${err?.message ?? String(err)}`,
+    };
+  }
+
+  if (!reasoning.ok || !reasoning.feedback) {
+    return {
+      client,
+      dayTab,
+      date,
+      ok: false,
+      error: reasoning.error ?? "reasoning produced no feedback",
+      llmTokens: reasoning.llm?.tokensUsed,
+    };
+  }
+
+  // Write the feedback block to Tab 4
+  const feedback = reasoning.feedback;
+  const writeResult = await executeToolCall({
+    tool: "google_sheets",
+    action: "write_feedback",
+    data: {
+      sheetId,
+      client,
+      date: feedback.date,
+      header: feedback.header,
+      session: feedback.session,
+      volume: feedback.volume,
+      prs: feedback.prs,
+      observation: feedback.observation,
+    },
+    operator: "training",
+    context: { clientId: client },
+  });
+
+  // Best-effort: write each new PR to the Maxes tab. Don't fail Pass 2 if Maxes write fails.
+  let prsRecorded = 0;
+  for (const pr of reasoning.newPRs) {
+    if (pr.previousBest === null) continue; // skip first-ever exercise (baseline, not a "PR" Cole tracks)
+    try {
+      const maxResult = await executeToolCall({
+        tool: "google_sheets",
+        action: "update_max",
+        data: {
+          sheetId,
+          exercise: pr.exercise,
+          estimated1RM: pr.newEstimate,
+          fromLoad: 0, // not surfaced by comparePRs; ok to leave 0 for now
+          fromReps: 0,
+          date,
+          previousBest: pr.previousBest,
+          improvementPct: pr.improvementPct,
+        },
+        operator: "training",
+        context: { clientId: client },
+      });
+      if (maxResult.ok) prsRecorded++;
+    } catch (err) {
+      console.error(`[pass-2] Maxes update failed for ${pr.exercise}:`, err);
+    }
+  }
+
+  // Persist PR records to memory so future reasoning has them as known PRs
+  for (const pr of reasoning.newPRs) {
+    try {
+      await saveMemory({
+        operator: "training",
+        category: "facts",
+        value: `${client} hit a PR — ${pr.exercise}: est 1RM ${pr.newEstimate} lb (prior ${pr.previousBest ?? "no prior"})`,
+        relatedOperators: [],
+        metadata: {
+          kind: "pr_record",
+          client,
+          exercise: pr.exercise,
+          estimated1RM: pr.newEstimate,
+          previousBest: pr.previousBest,
+          improvementPct: pr.improvementPct,
+          date,
+        },
+      });
+    } catch (err) {
+      console.error(`[pass-2] PR memory save failed for ${pr.exercise}:`, err);
+    }
+  }
+
+  return {
+    client,
+    dayTab,
+    date,
+    ok: writeResult.ok,
+    feedbackWritten: writeResult.ok,
+    prsRecorded,
+    error: writeResult.ok ? undefined : writeResult.error,
+    llmTokens: reasoning.llm?.tokensUsed,
+  };
+}
+
+function summarizePass2(outcomes: Pass2Outcome[]): string {
+  if (outcomes.length === 0) return "";
+
+  const lines: string[] = ["", "─── Aurelius reasoning ───"];
+  for (const o of outcomes) {
+    const head = `${o.client} · ${o.dayTab} · ${o.date}`;
+    if (o.ok) {
+      const prsPart = o.prsRecorded ? ` · ${o.prsRecorded} PR${o.prsRecorded === 1 ? "" : "s"} recorded` : "";
+      lines.push(`✓ ${head}: feedback written${prsPart}`);
+    } else {
+      lines.push(`✗ ${head}: ${o.error ?? "failed"}`);
     }
   }
   return lines.join("\n");
@@ -348,12 +582,20 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
 
     // Execute TOOL directives synchronously, then append a summary to the reply.
     let executedTools: ExecutedTool[] = [];
+    let pass2Outcomes: Pass2Outcome[] = [];
+
     if (parsed.tools.length > 0) {
       executedTools = await executeToolDirectives(parsed.tools, primary);
-      const summary = summarizeToolResults(executedTools);
-      if (summary) {
-        cleanedText = cleanedText + "\n" + summary;
-      }
+
+      // ── Phase 4 Pass 2: training reasoning after eligible tool successes ──
+      const pass2A = await firePass2ForLoggedSessions(executedTools);
+      const pass2B = await firePass2ForReviewRecent(executedTools);
+      pass2Outcomes = [...pass2A, ...pass2B];
+
+      const toolSummary = summarizeToolResults(executedTools);
+      const pass2Summary = summarizePass2(pass2Outcomes);
+      if (toolSummary) cleanedText = cleanedText + "\n" + toolSummary;
+      if (pass2Summary) cleanedText = cleanedText + "\n" + pass2Summary;
     }
 
     // Strip directives from reviewer response if present (and persist any saves it produced)
@@ -423,6 +665,8 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
         reflectionsTriggered,
         toolsExecuted: executedTools.length,
         toolsSucceeded: executedTools.filter((e) => e.result.ok).length,
+        pass2Sessions: pass2Outcomes.length,
+        pass2Succeeded: pass2Outcomes.filter((o) => o.ok).length,
       },
       tools: executedTools.map((e) => ({
         tool: e.directive.tool,
@@ -432,6 +676,7 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
         output: e.result.output,
         durationMs: e.result.durationMs,
       })),
+      pass2: pass2Outcomes,
       reviewed: cleanedReviewed || null,
     });
   } catch (err: any) {

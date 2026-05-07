@@ -16,10 +16,13 @@ model Operator {
   lastRunAt       DateTime?
 
   // Reverse relations
-  memories        Memory[]
-  tasks           Task[]
-  autonomyGoals   AutonomyGoal[]
-  logs            LogEntry[]
+  memories              Memory[]
+  tasks                 Task[]
+  autonomyGoals         AutonomyGoal[]
+  logs                  LogEntry[]
+  reasoningCacheEntries ReasoningCacheEntry[]
+  compiledPatterns      CompiledPattern[]
+  knowledgeEntries      KnowledgeEntry[]
 }
 
 model Memory {
@@ -64,4 +67,115 @@ model LogEntry {
   message    String
   context    Json?
   createdAt  DateTime @default(now())
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PHASE 4.5 — COMPILED UNDERSTANDING
+// Two tables that turn Aurelius's experience into reusable knowledge.
+// ReasoningCacheEntry stores tagged situations + prior conclusions.
+// CompiledPattern stores patterns derived across similar situations.
+// ═══════════════════════════════════════════════════════════════════
+
+model ReasoningCacheEntry {
+  id                 String   @id @default(cuid())
+  operatorId         String
+  operator           Operator @relation(fields: [operatorId], references: [id])
+
+  // Identity / scope
+  entityKey          String   // e.g. athlete name "Mike" — entities aren't Operators
+  sheetId            String   // program sheet — scopes invalidation (new program = new sheet)
+  dayTab             String?  // e.g. "Day 1" — optional for non-training operators
+
+  // The situation, tagged at write time using the operator's knowledge module
+  situationSignature Json     // structured signature with domain tags
+
+  // What Aurelius concluded for this situation
+  reasoningSummary   String
+
+  // Provenance + usage
+  sourceMemoryIds    String[] // IDs of underlying memories that informed reasoning
+  usageCount         Int      @default(0)
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([operatorId, entityKey, sheetId])
+  @@index([operatorId, entityKey])
+}
+
+model CompiledPattern {
+  id                 String   @id @default(cuid())
+  operatorId         String
+  operator           Operator @relation(fields: [operatorId], references: [id])
+
+  // Scope — null entityKey = cross-athlete (rare in v1, used for global Cole patterns)
+  entityKey          String?
+  sheetId            String?
+
+  // Pattern shape
+  patternType        String   // "factual" | "heuristic" | "structuralMatch"
+  patternSignature   Json     // structured description of the pattern itself
+  conditions         Json?    // structured "when this applies" filters
+
+  // Lifecycle status
+  // auto_factual          — facts that compiled automatically (N=2)
+  // proposed_heuristic    — heuristic noticed but unconfirmed (N=3)
+  // confirmed_heuristic   — Cole confirmed; usable as soft rule
+  // discarded             — Cole denied, kept as observation only
+  status             String   @default("proposed_heuristic")
+
+  // Evidence trail
+  evidence           String[] // IDs of ReasoningCacheEntry rows supporting this
+  supportCount       Int      @default(0)
+  confidenceScore    Float    @default(0)
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([operatorId, entityKey])
+  @@index([operatorId, status])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PHASE 4.5a — LIVING KNOWLEDGE
+// Structured, evolving domain intelligence. Updated by Cole's
+// confirmed conversations and research ingestion. Provenance on
+// every entry. Per-operator namespacing on a single table.
+// ═══════════════════════════════════════════════════════════════════
+
+model KnowledgeEntry {
+  id          String   @id @default(cuid())
+  operatorId  String
+  operator    Operator @relation(fields: [operatorId], references: [id])
+
+  // Scope — namespacing within an operator's knowledge
+  // e.g., scope="rep_bands", key="strength" → value={lower:4, upper:5, intent:"strength"}
+  scope       String   // top-level category: "rep_bands", "intensity_zones", etc.
+  key         String   // identifier within scope: "strength", "hypertrophy", etc.
+  value       Json     // the actual knowledge payload (structured)
+
+  // Provenance — why does this value exist?
+  // sourceType: "founding_default" | "cole_conversation" | "research_ingestion" | "manual"
+  // sourceId: opaque reference (memory id, research result id, conversation turn id)
+  // rationale: short human-readable explanation
+  sourceType  String
+  sourceId    String?
+  rationale   String?
+
+  // Audit + lifecycle
+  createdBy   String   // "system" for seeded defaults, "cole" for confirmed updates, etc.
+  updatedBy   String?
+  version     Int      @default(1)  // increments on update
+  active      Boolean  @default(true) // soft-disable without deletion
+
+  // History trail — previous values preserved for audit
+  // Each prior version stored as { value, sourceType, sourceId, rationale, version, replacedAt }
+  history     Json[]   @default([])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([operatorId, scope, key])
+  @@index([operatorId, scope])
+  @@index([operatorId, active])
 }
