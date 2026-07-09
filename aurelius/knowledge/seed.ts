@@ -7,6 +7,17 @@
 // of truth post-bootstrap). Pass { force: true } to overwrite, but
 // that resets Cole's evolved knowledge to founding values — destructive.
 
+// Load env regardless of where this script is invoked from. The server
+// loads dotenv itself; CLI entrypoints have to fend for themselves.
+// Checks repo root .env first, then aurelius/.env. dotenv never overrides
+// vars already set in the shell.
+import dotenv from "dotenv";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+const _seedDir = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(_seedDir, "../../.env") });
+dotenv.config({ path: path.resolve(_seedDir, "../.env") });
+
 import { setKnowledge, getKnowledge, resolveOperatorId } from "./store.ts";
 import { FOUNDING_DEFAULTS } from "./foundationalTrainingKnowledge.ts";
 
