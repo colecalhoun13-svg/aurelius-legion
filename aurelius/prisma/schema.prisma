@@ -81,26 +81,33 @@ model ReasoningCacheEntry {
   operatorId         String
   operator           Operator @relation(fields: [operatorId], references: [id])
 
-  // Identity / scope
-  entityKey          String   // e.g. athlete name "Mike" — entities aren't Operators
-  sheetId            String   // program sheet — scopes invalidation (new program = new sheet)
-  dayTab             String?  // e.g. "Day 1" — optional for non-training operators
+  // Modularity primitive: operator + domain as separate axes
+  domain             String   @default("training_session")
+
+  // Identity / scope — generalized for cross-operator use
+  entityKey          String   // athlete name, lead ID, post ID, etc.
+  externalScopeId    String   // sheet ID, CRM ID, post ID — was sheetId
+  subContext         String?  // "Day 1", "Q4_2026", "instagram_reels" — was dayTab
 
   // The situation, tagged at write time using the operator's knowledge module
-  situationSignature Json     // structured signature with domain tags
+  situationSignature Json
 
   // What Aurelius concluded for this situation
   reasoningSummary   String
 
   // Provenance + usage
-  sourceMemoryIds    String[] // IDs of underlying memories that informed reasoning
+  sourceMemoryIds    String[]
   usageCount         Int      @default(0)
+
+  // Re-tagging support (populated in future; v1 leaves empty)
+  previousTags       Json[]   @default([])
 
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  @@index([operatorId, entityKey, sheetId])
-  @@index([operatorId, entityKey])
+  @@index([operatorId, domain, entityKey])
+  @@index([operatorId, entityKey, externalScopeId])
+  @@index([domain])
 }
 
 model CompiledPattern {
@@ -108,14 +115,17 @@ model CompiledPattern {
   operatorId         String
   operator           Operator @relation(fields: [operatorId], references: [id])
 
-  // Scope — null entityKey = cross-athlete (rare in v1, used for global Cole patterns)
+  // Modularity primitive (matches ReasoningCacheEntry)
+  domain             String
+
+  // Scope — null entityKey = cross-entity (e.g., cross-athlete)
   entityKey          String?
-  sheetId            String?
+  externalScopeId    String?
 
   // Pattern shape
   patternType        String   // "factual" | "heuristic" | "structuralMatch"
-  patternSignature   Json     // structured description of the pattern itself
-  conditions         Json?    // structured "when this applies" filters
+  patternSignature   Json
+  conditions         Json?
 
   // Lifecycle status
   // auto_factual          — facts that compiled automatically (N=2)
@@ -125,15 +135,16 @@ model CompiledPattern {
   status             String   @default("proposed_heuristic")
 
   // Evidence trail
-  evidence           String[] // IDs of ReasoningCacheEntry rows supporting this
+  evidence           String[]
   supportCount       Int      @default(0)
   confidenceScore    Float    @default(0)
 
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  @@index([operatorId, entityKey])
+  @@index([operatorId, domain, entityKey])
   @@index([operatorId, status])
+  @@index([domain])
 }
 
 // ═══════════════════════════════════════════════════════════════════
