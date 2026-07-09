@@ -43,4 +43,5 @@ export type ResearchOutput = {
   contradictions: string[];      // optional — conflicts noticed in the data
   rawResults: ResearchResult[];  // unfused inputs (for audit)
   savedMemoryIds: string[];      // memories created by this research run
+  proposalsCreated: number;      // Phase 4.5 — knowledge proposals emitted by synthesis
 };
