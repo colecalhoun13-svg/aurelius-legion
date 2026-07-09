@@ -1,12 +1,13 @@
 // aurelius/training/reasoner.ts
 //
-// Training reasoning layer (Phase 4 Pass 2).
+// Training reasoning layer (Phase 4 Pass 2 → Phase 4.5 compiled).
 //
 // Responsibilities:
 //   1. Read recent sessions for an athlete (via Tool Engine)
 //   2. Compute deterministic volume metrics (per-session, per-week, per-block)
 //   3. Detect PRs (deterministic Brzycki + memory comparison)
-//   4. Reason over the data via runLLM with the training operator
+//   4. Reason over the data via reasonWithCompilation() — signature tagged
+//      from Living Knowledge, grounded in cached reasoning + compiled patterns
 //   5. Return structured output for the caller to hand to write_feedback
 //
 // What this layer does NOT do:
@@ -25,7 +26,6 @@ import {
   computeSessionVolume,
   computeWeeklyVolumes,
   computeBlockVolume,
-  groupSessionsByDate,
   type SessionRow,
   type SessionVolume,
   type WeeklyVolume,
@@ -39,6 +39,13 @@ import {
   type ExercisePREstimate,
 } from "./prDetection.ts";
 import { prisma } from "../core/db/prisma.ts";
+import { getScope, resolveOperatorId } from "../knowledge/store.ts";
+import {
+  reasonWithCompilation,
+  formatGroundedContextForPrompt,
+  type GroundedReasoningContext,
+} from "../compiled/reasoningHelper.ts";
+import type { TaggedSignature, SignatureBuilderFn } from "../compiled/types.ts";
 
 // ═══════════════════════════════════════════════════════════════════
 // TYPES
@@ -72,7 +79,342 @@ export type TrainingReasoningResult = {
     tokensUsed: number;
     latencyMs: number;
   };
+  // Phase 4.5 — compilation telemetry for this reasoning run
+  compiled?: {
+    cacheHit: boolean;
+    cacheHitScore: number | null;
+    patternsConsulted: number;
+    patternsDetected: number;
+    cacheEntryId: string;
+  };
 };
+
+// Bundled input handed to the signature builder + reasoning fn.
+type TrainingReasoningInput = {
+  client: string;
+  sheetId: string;
+  dayTab: string;
+  targetDate: string;
+  blockTabs: string[];
+  targetRows: SessionRow[];
+  allRows: SessionRow[];
+  sessionVol: SessionVolume;
+  weeks: WeeklyVolume[];
+  block: BlockVolume;
+  sessionPREstimates: Map<string, ExercisePREstimate>;
+  newPRs: PRComparison[];
+};
+
+// What the reasoning fn returns through reasonWithCompilation.
+type TrainingReasoningFnResult = {
+  feedback: TrainingFeedback | null;
+  reasoningSummary: string;
+  sourceMemoryIds: string[];
+  parseError?: string;
+  llm: {
+    engine: string;
+    model: string;
+    tokensUsed: number;
+    latencyMs: number;
+  };
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// LIVING KNOWLEDGE CONSUMERS
+// Signature tagging pulls classifications from the knowledge store —
+// NOT from hardcoded tables. When Cole updates rep bands, tagging follows.
+// ═══════════════════════════════════════════════════════════════════
+
+type RepBandEntry = {
+  intent: string;
+  lowerReps: number;
+  upperReps: number;
+};
+
+type IntensityZoneEntry = {
+  zone: string;
+  lowerPct: number;
+  upperPct: number;
+};
+
+type MovementPatternEntry = {
+  pattern: string;
+  keywords: string[];
+  priority: number;
+};
+
+function classifyRepBand(
+  avgReps: number,
+  bands: Map<string, RepBandEntry>
+): string {
+  if (avgReps <= 0) return "unknown";
+  for (const band of bands.values()) {
+    if (avgReps >= band.lowerReps && avgReps <= band.upperReps) {
+      return band.intent;
+    }
+  }
+  return "unknown";
+}
+
+function classifyIntensity(
+  peakLoad: number,
+  est1RM: number,
+  zones: Map<string, IntensityZoneEntry>
+): string {
+  if (peakLoad <= 0 || est1RM <= 0) return "unknown";
+  const pct = Math.round((peakLoad / est1RM) * 100);
+  for (const zone of zones.values()) {
+    if (pct >= zone.lowerPct && pct <= zone.upperPct) {
+      return zone.zone;
+    }
+  }
+  return "unknown";
+}
+
+function classifyMovementPattern(
+  exerciseName: string,
+  patterns: Map<string, MovementPatternEntry>
+): string {
+  if (!exerciseName) return "unknown";
+  const name = exerciseName.toLowerCase().trim();
+  // Sort by priority descending — high-priority matches first
+  const sortedPatterns = Array.from(patterns.values()).sort(
+    (a, b) => b.priority - a.priority
+  );
+  for (const p of sortedPatterns) {
+    for (const kw of p.keywords) {
+      if (name.includes(kw.toLowerCase())) {
+        return p.pattern;
+      }
+    }
+  }
+  return "unknown";
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SIGNATURE BUILDER
+// Tags the session using Living Knowledge so the cache and pattern
+// detector compare STRUCTURE (movement pattern × rep-band intent ×
+// set shape), not raw numbers.
+// ═══════════════════════════════════════════════════════════════════
+
+const buildTrainingSignature: SignatureBuilderFn<TrainingReasoningInput> = async (
+  input: TrainingReasoningInput
+): Promise<TaggedSignature> => {
+  const trainingOperatorId = await resolveOperatorId("training");
+  if (!trainingOperatorId) {
+    return shallowSignatureFallback(input);
+  }
+
+  // Pull Living Knowledge in parallel
+  const [repBands, intensityZones, movementPatterns] = await Promise.all([
+    getScope<RepBandEntry>(trainingOperatorId, "rep_bands"),
+    getScope<IntensityZoneEntry>(trainingOperatorId, "intensity_zones"),
+    getScope<MovementPatternEntry>(trainingOperatorId, "movement_patterns"),
+  ]);
+
+  // Tag each exercise using Living Knowledge
+  const exerciseSignatures = input.sessionVol.exercises.map((e) => {
+    const est = input.sessionPREstimates.get(e.exercise);
+    const peakLoad = e.highestLoad;
+    const est1RM = est?.bestEstimated1RM ?? 0;
+    const avgReps = e.workingSets > 0 ? e.totalReps / e.workingSets : 0;
+    return {
+      exercise: e.exercise,
+      movementPattern: classifyMovementPattern(e.exercise, movementPatterns),
+      repBandIntent: classifyRepBand(avgReps, repBands),
+      intensityZone: classifyIntensity(peakLoad, est1RM, intensityZones),
+      workingSets: e.workingSets,
+      avgReps: Math.round(avgReps * 10) / 10,
+      peakLoad,
+      est1RM,
+    };
+  });
+
+  // Week-over-week delta
+  const targetWeek = input.weeks.find(
+    (w) => input.targetDate >= w.weekStart && input.targetDate <= w.weekEnd
+  );
+  const previousWeek = targetWeek
+    ? input.weeks[input.weeks.indexOf(targetWeek) - 1]
+    : undefined;
+  const weekOverWeekDelta =
+    targetWeek && previousWeek && previousWeek.totalTonnage > 0
+      ? Math.round(
+          ((targetWeek.totalTonnage - previousWeek.totalTonnage) /
+            previousWeek.totalTonnage) *
+            100
+        )
+      : null;
+
+  const tags = {
+    athlete: input.client,
+    dayTab: input.dayTab,
+    exerciseCount: input.sessionVol.exercises.length,
+    workingSetCount: input.sessionVol.totalWorkingSets,
+    tonnage: input.sessionVol.sessionTonnage,
+    exerciseSignatures,
+    weekOverWeekDelta,
+    hasPRs: input.newPRs.length > 0,
+    weeksOfHistory: input.weeks.length,
+  };
+
+  // Fingerprint: structural shape only, no raw numbers.
+  // So 3x6,5,5 @ 185 and 3x6,5,5 @ 195 have the same fingerprint.
+  const fingerprint = buildTrainingFingerprint(tags);
+
+  return {
+    tags,
+    fingerprint,
+    raw: {
+      exercises: input.sessionVol.exercises.map((e) => e.exercise),
+      date: input.targetDate,
+    },
+  };
+};
+
+function buildTrainingFingerprint(tags: any): string {
+  const exerciseSigs = (tags.exerciseSignatures as any[])
+    .map(
+      (s) =>
+        `${s.movementPattern}:${s.repBandIntent}:${s.workingSets}x${Math.round(s.avgReps)}`
+    )
+    .sort()
+    .join("|");
+  return `${tags.athlete}|${tags.dayTab}|${exerciseSigs}`;
+}
+
+// If the training operator can't be resolved (DB issue, unseeded), tag
+// shallowly so reasoning still runs — the cache just matches less precisely.
+function shallowSignatureFallback(input: TrainingReasoningInput): TaggedSignature {
+  const tags = {
+    athlete: input.client,
+    dayTab: input.dayTab,
+    exerciseCount: input.sessionVol.exercises.length,
+    workingSetCount: input.sessionVol.totalWorkingSets,
+    hasPRs: input.newPRs.length > 0,
+  };
+  return {
+    tags,
+    fingerprint: `${input.client}|${input.dayTab}|shallow:${input.sessionVol.exercises.length}x${input.sessionVol.totalWorkingSets}`,
+    raw: {
+      exercises: input.sessionVol.exercises.map((e) => e.exercise),
+      date: input.targetDate,
+    },
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// REASONING FUNCTION
+// The LLM call + Groq fallback + empty-response retry + parsing.
+// Grounded context (cache hit + compiled patterns) inlines into the prompt.
+// Fallbacks are load-bearing for Phase 4 stability — preserve them.
+// ═══════════════════════════════════════════════════════════════════
+
+async function runTrainingReasoning(
+  context: GroundedReasoningContext<TrainingReasoningInput>
+): Promise<TrainingReasoningFnResult> {
+  const input = context.rawInput;
+  const groundedSection = formatGroundedContextForPrompt(context);
+  const reasoningPrompt = buildReasoningPrompt(input, groundedSection);
+
+  let llmResponse;
+  try {
+    llmResponse = await runLLM({
+      taskType: "reasoning",
+      operators: { primary: "training", secondaries: [] },
+      input: reasoningPrompt,
+    });
+  } catch (err: any) {
+    // Strategic tier failure (Anthropic out of credits, etc.) → fall back to Groq.
+    console.warn(`[reasoner] strategic tier failed (${err?.message ?? err}); falling back to groq`);
+    try {
+      llmResponse = await runLLM({
+        taskType: "reasoning",
+        operators: { primary: "training", secondaries: [] },
+        input: reasoningPrompt,
+        options: { engine: "groq" },
+      });
+    } catch (fallbackErr: any) {
+      return {
+        feedback: null,
+        reasoningSummary: "",
+        sourceMemoryIds: [],
+        parseError: `LLM reasoning failed (both strategic and groq fallback): ${fallbackErr?.message ?? String(fallbackErr)}`,
+        llm: { engine: "unknown", model: "unknown", tokensUsed: 0, latencyMs: 0 },
+      };
+    }
+  }
+
+  // Some upstream errors return a "success" object with empty text and 0 tokens
+  // (e.g. Anthropic credit error swallowed by the router). Detect and retry on Groq.
+  if (!llmResponse.text || llmResponse.tokensUsed === 0) {
+    console.warn(`[reasoner] strategic tier returned empty (tokens=${llmResponse.tokensUsed}); falling back to groq`);
+    try {
+      llmResponse = await runLLM({
+        taskType: "reasoning",
+        operators: { primary: "training", secondaries: [] },
+        input: reasoningPrompt,
+        options: { engine: "groq" },
+      });
+    } catch (fallbackErr: any) {
+      return {
+        feedback: null,
+        reasoningSummary: "",
+        sourceMemoryIds: [],
+        parseError: `LLM reasoning failed after empty-response retry: ${fallbackErr?.message ?? String(fallbackErr)}`,
+        llm: {
+          engine: llmResponse.engine,
+          model: llmResponse.model,
+          tokensUsed: 0,
+          latencyMs: llmResponse.latencyMs,
+        },
+      };
+    }
+  }
+
+  const feedback = parseReasoningOutput({
+    rawText: llmResponse.text,
+    client: input.client,
+    date: input.targetDate,
+    dayTab: input.dayTab,
+  });
+
+  if (!feedback) {
+    const errPrefix =
+      !llmResponse.text || llmResponse.text.trim().length === 0
+        ? "LLM returned empty response"
+        : "LLM reasoning output could not be parsed into feedback structure";
+    return {
+      feedback: null,
+      reasoningSummary: "",
+      sourceMemoryIds: [],
+      parseError: `${errPrefix} (engine: ${llmResponse.engine}, model: ${llmResponse.model}, tokens: ${llmResponse.tokensUsed}, raw text length: ${llmResponse.text?.length ?? 0})`,
+      llm: {
+        engine: llmResponse.engine,
+        model: llmResponse.model,
+        tokensUsed: llmResponse.tokensUsed,
+        latencyMs: llmResponse.latencyMs,
+      },
+    };
+  }
+
+  // reasoningSummary stored in cache is compact — the OBSERVATION carries
+  // the coaching signal, which is what future sessions want to recall.
+  const reasoningSummary = `[${feedback.header}] ${feedback.observation}`;
+
+  return {
+    feedback,
+    reasoningSummary,
+    sourceMemoryIds: [],
+    llm: {
+      engine: llmResponse.engine,
+      model: llmResponse.model,
+      tokensUsed: llmResponse.tokensUsed,
+      latencyMs: llmResponse.latencyMs,
+    },
+  };
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // MAIN ENTRY: reason over a specific session
@@ -121,114 +463,66 @@ export async function reasonOverSession(args: {
   const allComparisons = comparePRs(sessionPREstimates, knownPRs);
   const newPRs = newPRsOnly(allComparisons);
 
-  // ── Step 4: LLM reasoning ──
-  const reasoningInput = buildReasoningPrompt({
-    client,
-    dayTab,
-    targetDate,
-    sessionVol,
-    weeks,
-    block,
-    sessionPREstimates,
-    newPRs,
-    targetRows,
-  });
-
-  let llmResponse;
-  try {
-    llmResponse = await runLLM({
-      taskType: "reasoning",
-      operators: { primary: "training", secondaries: [] },
-      input: reasoningInput,
-    });
-  } catch (err: any) {
-    // Strategic tier failure (Anthropic out of credits, etc.) → fall back to Groq.
-    console.warn(`[reasoner] strategic tier failed (${err?.message ?? err}); falling back to groq`);
-    try {
-      llmResponse = await runLLM({
-        taskType: "reasoning",
-        operators: { primary: "training", secondaries: [] },
-        input: reasoningInput,
-        options: { engine: "groq" },
-      });
-    } catch (fallbackErr: any) {
-      return {
-        ok: false,
-        error: `LLM reasoning failed (both strategic and groq fallback): ${fallbackErr?.message ?? String(fallbackErr)}`,
-        newPRs,
-        metrics: { session: sessionVol, weeks, block },
-        rawSessionRows: targetRows,
-      };
-    }
-  }
-
-  // Some upstream errors return a "success" object with empty text and 0 tokens
-  // (e.g. Anthropic credit error swallowed by the router). Detect and retry on Groq.
-  if (!llmResponse.text || llmResponse.tokensUsed === 0) {
-    console.warn(`[reasoner] strategic tier returned empty (tokens=${llmResponse.tokensUsed}); falling back to groq`);
-    try {
-      llmResponse = await runLLM({
-        taskType: "reasoning",
-        operators: { primary: "training", secondaries: [] },
-        input: reasoningInput,
-        options: { engine: "groq" },
-      });
-    } catch (fallbackErr: any) {
-      return {
-        ok: false,
-        error: `LLM reasoning failed after empty-response retry: ${fallbackErr?.message ?? String(fallbackErr)}`,
-        newPRs,
-        metrics: { session: sessionVol, weeks, block },
-        rawSessionRows: targetRows,
-        llm: {
-          engine: llmResponse.engine,
-          model: llmResponse.model,
-          tokensUsed: 0,
-          latencyMs: llmResponse.latencyMs,
-        },
-      };
-    }
-  }
-
-  // ── Step 5: Parse the structured output ──
-  const feedback = parseReasoningOutput({
-    rawText: llmResponse.text,
-    client,
-    date: targetDate,
-    dayTab,
-  });
-
-  if (!feedback) {
-    const errPrefix = !llmResponse.text || llmResponse.text.trim().length === 0
-      ? "LLM returned empty response"
-      : "LLM reasoning output could not be parsed into feedback structure";
+  // ── Step 4: Resolve operator for compilation scoping ──
+  const trainingOperatorId = await resolveOperatorId("training");
+  if (!trainingOperatorId) {
     return {
       ok: false,
-      error: `${errPrefix} (engine: ${llmResponse.engine}, model: ${llmResponse.model}, tokens: ${llmResponse.tokensUsed}, raw text length: ${llmResponse.text?.length ?? 0})`,
+      error: "training operator not found in DB — run seedOperators before Pass 2",
       newPRs,
       metrics: { session: sessionVol, weeks, block },
       rawSessionRows: targetRows,
-      llm: {
-        engine: llmResponse.engine,
-        model: llmResponse.model,
-        tokensUsed: llmResponse.tokensUsed,
-        latencyMs: llmResponse.latencyMs,
-      },
+    };
+  }
+
+  // ── Step 5: Bundle input ──
+  const reasoningInput: TrainingReasoningInput = {
+    client, sheetId, dayTab, targetDate, blockTabs,
+    targetRows, allRows, sessionVol, weeks, block,
+    sessionPREstimates, newPRs,
+  };
+
+  // ── Step 6: Route through the compilation helper ──
+  const compResult = await reasonWithCompilation<TrainingReasoningInput, TrainingReasoningFnResult>({
+    operatorId: trainingOperatorId,
+    domain: "training_session",
+    entityKey: client,
+    externalScopeId: sheetId,
+    subContext: dayTab,
+    rawInput: reasoningInput,
+    signatureBuilder: buildTrainingSignature,
+    reasoningFn: runTrainingReasoning,
+  });
+
+  const fn = compResult.result;
+  const compiled = {
+    cacheHit: compResult.cacheHit,
+    cacheHitScore: compResult.cacheHitScore,
+    patternsConsulted: compResult.patternsConsulted.length,
+    patternsDetected: compResult.patternsDetected.length,
+    cacheEntryId: compResult.cacheEntryId,
+  };
+
+  if (!fn.feedback) {
+    return {
+      ok: false,
+      error: fn.parseError ?? "training reasoning produced no feedback",
+      newPRs,
+      metrics: { session: sessionVol, weeks, block },
+      rawSessionRows: targetRows,
+      llm: fn.llm,
+      compiled,
     };
   }
 
   return {
     ok: true,
-    feedback,
+    feedback: fn.feedback,
     newPRs,
     metrics: { session: sessionVol, weeks, block },
     rawSessionRows: targetRows,
-    llm: {
-      engine: llmResponse.engine,
-      model: llmResponse.model,
-      tokensUsed: llmResponse.tokensUsed,
-      latencyMs: llmResponse.latencyMs,
-    },
+    llm: fn.llm,
+    compiled,
   };
 }
 
@@ -277,20 +571,14 @@ export async function reasonOverRecent(args: {
 // ═══════════════════════════════════════════════════════════════════
 // PROMPT CONSTRUCTION
 // Enriches the LLM with computed metrics so reasoning is grounded.
-// Asks for a structured response with named sections.
+// Phase 4.5: also inlines the grounded compilation context (prior
+// reasoning + compiled patterns) when present.
 // ═══════════════════════════════════════════════════════════════════
 
-function buildReasoningPrompt(args: {
-  client: string;
-  dayTab: string;
-  targetDate: string;
-  sessionVol: SessionVolume;
-  weeks: WeeklyVolume[];
-  block: BlockVolume;
-  sessionPREstimates: Map<string, ExercisePREstimate>;
-  newPRs: PRComparison[];
-  targetRows: SessionRow[];
-}): string {
+function buildReasoningPrompt(
+  input: TrainingReasoningInput,
+  groundedSection: string
+): string {
   const {
     client,
     dayTab,
@@ -301,7 +589,7 @@ function buildReasoningPrompt(args: {
     sessionPREstimates,
     newPRs,
     targetRows,
-  } = args;
+  } = input;
 
   // Find the week containing this session
   const targetWeek = weeks.find(
@@ -342,9 +630,13 @@ function buildReasoningPrompt(args: {
     `  ${w.weekStart} → ${w.weekEnd}: ${w.totalTonnage} lb, ${w.sessionCount} sessions, avg ${w.averagePerSession} lb/session`
   );
 
+  const groundedBlock = groundedSection.trim().length > 0
+    ? `\n${groundedSection}\n`
+    : "";
+
   return `
 Cole has logged a session for ${client}. You are reasoning over the session as the training operator.
-
+${groundedBlock}
 ═══ SESSION CONTEXT ═══
 Athlete: ${client}
 Day tab: ${dayTab}
