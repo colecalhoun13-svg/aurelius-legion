@@ -19,12 +19,38 @@ export type SeedResult = {
 };
 
 /**
+ * Ensure the reserved "global" operator exists. Not a conversational
+ * operator — a namespace for cross-domain knowledge any operator can
+ * fall back to. domain "reserved", priority 0, never routed to.
+ */
+export async function ensureGlobalOperator(): Promise<string> {
+  const { prisma } = await import("../core/db/prisma.ts");
+  const existing = await prisma.operator.findUnique({
+    where: { name: "global" },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+
+  const created = await prisma.operator.create({
+    data: {
+      name: "global",
+      domain: "reserved",
+      priority: 0,
+    },
+  });
+  console.log(`[seed] created reserved "global" operator: ${created.id}`);
+  return created.id;
+}
+
+/**
  * Seed founding training knowledge for the training operator.
  * Idempotent by default. Pass { force: true } to overwrite existing entries.
  */
 export async function seedTrainingKnowledge(
   options: { force?: boolean } = {}
 ): Promise<SeedResult> {
+  await ensureGlobalOperator();
+
   const operatorName = "training";
   const operatorId = await resolveOperatorId(operatorName);
 

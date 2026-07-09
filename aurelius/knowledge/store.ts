@@ -17,63 +17,132 @@ import type {
 
 // ═══════════════════════════════════════════════════════════════════
 // READS
+// Phase 4.5 Block 6: reads are LAYERED — operator-specific entries win,
+// the reserved "global" operator's entries fill the gaps. Callers that
+// want ONLY operator-specific data pass skipGlobalFallback: true.
 // ═══════════════════════════════════════════════════════════════════
+
+let _cachedGlobalOperatorId: string | null | undefined = undefined;
+
+async function getGlobalOperatorId(): Promise<string | null> {
+  if (_cachedGlobalOperatorId !== undefined) return _cachedGlobalOperatorId;
+  try {
+    const op = await prisma.operator.findUnique({
+      where: { name: "global" },
+      select: { id: true },
+    });
+    _cachedGlobalOperatorId = op?.id ?? null;
+  } catch (err) {
+    console.warn("[knowledge/store] could not resolve global operator:", err);
+    _cachedGlobalOperatorId = null;
+  }
+  return _cachedGlobalOperatorId;
+}
 
 /**
  * Get a single knowledge entry by operator + scope + key.
- * Returns null if not found or inactive.
+ * Falls back to the "global" operator's entry when the operator
+ * has none. Returns null if not found or inactive.
  */
 export async function getKnowledge(
   operatorId: string,
   scope: string,
   key: string,
-  options: { includeInactive?: boolean } = {}
+  options: { includeInactive?: boolean; skipGlobalFallback?: boolean } = {}
 ): Promise<KnowledgeEntryShape | null> {
-  const entry = await prisma.knowledgeEntry.findUnique({
+  const ownEntry = await prisma.knowledgeEntry.findUnique({
     where: {
       operatorId_scope_key: { operatorId, scope, key },
     },
   });
 
-  if (!entry) return null;
-  if (!entry.active && !options.includeInactive) return null;
+  if (ownEntry && (ownEntry.active || options.includeInactive)) {
+    return entryToShape(ownEntry);
+  }
 
-  return entryToShape(entry);
+  if (options.skipGlobalFallback) return null;
+
+  const globalId = await getGlobalOperatorId();
+  if (!globalId || globalId === operatorId) return null;
+
+  const globalEntry = await prisma.knowledgeEntry.findUnique({
+    where: {
+      operatorId_scope_key: { operatorId: globalId, scope, key },
+    },
+  });
+  if (!globalEntry) return null;
+  if (!globalEntry.active && !options.includeInactive) return null;
+
+  return entryToShape(globalEntry);
 }
 
 /**
  * List knowledge entries for an operator, optionally filtered by scope.
+ * Merges in "global" entries the operator doesn't override —
+ * operator wins on (scope, key) collision.
  */
 export async function listKnowledge(
-  query: KnowledgeQueryInput
+  query: KnowledgeQueryInput & { skipGlobalFallback?: boolean }
 ): Promise<KnowledgeEntryShape[]> {
   const where: any = { operatorId: query.operatorId };
   if (query.scope) where.scope = query.scope;
   if (query.key) where.key = query.key;
   if (query.activeOnly !== false) where.active = true;
 
-  const entries = await prisma.knowledgeEntry.findMany({
+  const ownEntries = await prisma.knowledgeEntry.findMany({
     where,
     orderBy: [{ scope: "asc" }, { key: "asc" }],
   });
 
-  return entries.map(entryToShape);
+  if (query.skipGlobalFallback) {
+    return ownEntries.map(entryToShape);
+  }
+
+  const globalId = await getGlobalOperatorId();
+  if (!globalId || globalId === query.operatorId) {
+    return ownEntries.map(entryToShape);
+  }
+
+  const globalWhere: any = { operatorId: globalId };
+  if (query.scope) globalWhere.scope = query.scope;
+  if (query.key) globalWhere.key = query.key;
+  if (query.activeOnly !== false) globalWhere.active = true;
+
+  const globalEntries = await prisma.knowledgeEntry.findMany({
+    where: globalWhere,
+    orderBy: [{ scope: "asc" }, { key: "asc" }],
+  });
+
+  // Operator-priority: skip global entries with matching (scope, key) in operator's
+  const ownKeys = new Set(ownEntries.map((e) => `${e.scope}:${e.key}`));
+  const mergedGlobal = globalEntries.filter(
+    (g) => !ownKeys.has(`${g.scope}:${g.key}`)
+  );
+
+  const merged = [...ownEntries, ...mergedGlobal];
+  merged.sort((a, b) => {
+    if (a.scope !== b.scope) return a.scope < b.scope ? -1 : 1;
+    return a.key < b.key ? -1 : 1;
+  });
+
+  return merged.map(entryToShape);
 }
 
 /**
  * Get all entries within a scope as a Map keyed by `key`.
  * Convenient for callers that want a typed lookup table
- * (e.g. the rep band classifier).
+ * (e.g. the rep band classifier). Global fallback applies.
  */
 export async function getScope<T = any>(
   operatorId: string,
   scope: string,
-  options: { includeInactive?: boolean } = {}
+  options: { includeInactive?: boolean; skipGlobalFallback?: boolean } = {}
 ): Promise<Map<string, T>> {
   const entries = await listKnowledge({
     operatorId,
     scope,
     activeOnly: !options.includeInactive,
+    skipGlobalFallback: options.skipGlobalFallback,
   });
 
   const result = new Map<string, T>();
