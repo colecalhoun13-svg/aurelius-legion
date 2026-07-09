@@ -16,7 +16,13 @@ import { geminiAdapter } from "../engines/geminiEngine.ts";
 import { xaiAdapter } from "../engines/xaiClient.ts";
 import { deepseekAdapter } from "../engines/deepseekEngine.ts";
 import { getOperatorProfile } from "../core/operatorProfiles.ts";
-import { BASE_PERSONA_PROMPT, OPERATOR_PERSONAS } from "../persona/aureliusPersona.ts";
+import {
+  BASE_PERSONA_PROMPT,
+  OPERATOR_PERSONAS,
+  KNOWLEDGE_UPDATE_GUIDANCE,
+} from "../persona/aureliusPersona.ts";
+import { formatIntentClassesForPrompt } from "../knowledge/intentClasses.ts";
+import { formatPendingProposalsForPrompt } from "../knowledge/proposals.ts";
 import { IDENTITY } from "../identity/index.ts";
 import {
   loadMemoriesForOperator,
@@ -48,6 +54,11 @@ export type LLMTask = {
   options?: LLMOptions;
   needsRealtime?: boolean;
   hasMultimodal?: boolean;
+  // Phase 4.5 — Knowledge update propose/confirm context
+  knowledgeContext?: {
+    operatorId: string;
+    operatorName: string;
+  };
 };
 
 export type LLMChoice = {
@@ -327,6 +338,28 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
   if (task.urgency) context.push(`Urgency: ${task.urgency}`);
   if (context.length > 0) {
     parts.push("\n═══ CONTEXT ═══\n" + context.join("\n"));
+  }
+
+  // Layer 7.5 (Phase 4.5): Knowledge update guidance — propose/confirm flow
+  if (task.knowledgeContext) {
+    const { operatorId, operatorName } = task.knowledgeContext;
+    const knowledgeLines: string[] = [];
+    knowledgeLines.push("\n═══ KNOWLEDGE UPDATE FLOW ═══");
+    knowledgeLines.push(KNOWLEDGE_UPDATE_GUIDANCE);
+
+    const intentClassesSection = formatIntentClassesForPrompt(operatorName);
+    if (intentClassesSection) {
+      knowledgeLines.push("");
+      knowledgeLines.push(intentClassesSection);
+    }
+
+    const pendingSection = formatPendingProposalsForPrompt(operatorId);
+    if (pendingSection) {
+      knowledgeLines.push("");
+      knowledgeLines.push(pendingSection);
+    }
+
+    parts.push(knowledgeLines.join("\n"));
   }
 
   return parts.join("\n");

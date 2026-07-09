@@ -1,16 +1,11 @@
 // aurelius/llm/directiveParser.ts
 //
-// Centralizes parsing of directives that the LLM embeds in its responses.
-// Currently handles:
+// Centralizes parsing of directives the LLM embeds in responses.
+// Handles:
 //   [SAVE: category=<cat> value="<text>"]
 //   [TOOL: tool=<name> action=<name> data={...JSON...}]
-//
-// Adding new directive types: extend ParsedDirectives and add a parser block here.
-// The chat endpoint calls extractDirectives(text) once and acts on whatever it returns.
-
-// ═══════════════════════════════════════════════════════════════════
-// TYPES
-// ═══════════════════════════════════════════════════════════════════
+//   [KNOWLEDGE_UPDATE_PROPOSE: data={...JSON...}]  (Phase 4.5)
+//   [KNOWLEDGE_UPDATE_CONFIRM: data={...JSON...}]  (Phase 4.5)
 
 export type SaveDirective = {
   category: string;
@@ -23,38 +18,37 @@ export type ToolDirective = {
   data: Record<string, any>;
 };
 
+export type KnowledgeProposeDirective = {
+  data: Record<string, any>;
+};
+
+export type KnowledgeConfirmDirective = {
+  data: Record<string, any>;
+};
+
 export type ParsedDirectives = {
   saves: SaveDirective[];
   tools: ToolDirective[];
-  cleanedText: string;        // response text with all directives stripped
+  knowledgeProposals: KnowledgeProposeDirective[];
+  knowledgeConfirmations: KnowledgeConfirmDirective[];
+  cleanedText: string;
 };
-
-// ═══════════════════════════════════════════════════════════════════
-// MAIN ENTRY POINT
-// ═══════════════════════════════════════════════════════════════════
 
 export function extractDirectives(text: string): ParsedDirectives {
   const saves = extractSaveDirectives(text);
   const tools = extractToolDirectives(text);
+  const knowledgeProposals = extractKnowledgeProposeDirectives(text);
+  const knowledgeConfirmations = extractKnowledgeConfirmDirectives(text);
   const cleanedText = stripAllDirectives(text);
-
-  return { saves, tools, cleanedText };
+  return { saves, tools, knowledgeProposals, knowledgeConfirmations, cleanedText };
 }
-
-// ═══════════════════════════════════════════════════════════════════
-// SAVE DIRECTIVE PARSING
-// Format: [SAVE: category=<cat> value="<the fact>"]
-// ═══════════════════════════════════════════════════════════════════
 
 const SAVE_REGEX = /\[SAVE:\s*category=([a-z_]+)\s+value="([^"]*)"\s*\]/gi;
 
 export function extractSaveDirectives(text: string): SaveDirective[] {
   const directives: SaveDirective[] = [];
   let match;
-
-  // Reset regex state because /g regexes are stateful
   SAVE_REGEX.lastIndex = 0;
-
   while ((match = SAVE_REGEX.exec(text)) !== null) {
     const [, category, value] = match;
     if (category && value) {
@@ -64,44 +58,27 @@ export function extractSaveDirectives(text: string): SaveDirective[] {
       });
     }
   }
-
   return directives;
 }
-
-// ═══════════════════════════════════════════════════════════════════
-// TOOL DIRECTIVE PARSING
-// Format: [TOOL: tool=<name> action=<name> data={...JSON...}]
-//
-// JSON parsing is the tricky bit — we have to find the matching closing
-// brace because the JSON itself can contain braces. We use a simple
-// brace-matching walker rather than regex for the data field.
-// ═══════════════════════════════════════════════════════════════════
 
 export function extractToolDirectives(text: string): ToolDirective[] {
   const directives: ToolDirective[] = [];
   const TOOL_START = /\[TOOL:\s*tool=([a-z_]+)\s+action=([a-z_]+)\s+data=/gi;
-
   TOOL_START.lastIndex = 0;
   let match;
-
   while ((match = TOOL_START.exec(text)) !== null) {
     const [fullMatch, tool, action] = match;
     const dataStart = match.index + fullMatch.length;
-
-    // Find the matching closing brace for the JSON object
     const jsonResult = extractJSONFromPosition(text, dataStart);
     if (!jsonResult) {
       console.warn(`[directiveParser] couldn't parse JSON for tool=${tool} action=${action}`);
       continue;
     }
-
-    // After the JSON, expect optional whitespace then `]` to close the directive
     const afterJSON = text.slice(jsonResult.endIndex);
     if (!/^\s*\]/.test(afterJSON)) {
       console.warn(`[directiveParser] no closing ] after JSON for tool=${tool} action=${action}`);
       continue;
     }
-
     let parsedData: Record<string, any>;
     try {
       parsedData = JSON.parse(jsonResult.json);
@@ -109,21 +86,59 @@ export function extractToolDirectives(text: string): ToolDirective[] {
       console.warn(`[directiveParser] invalid JSON for tool=${tool} action=${action}:`, err);
       continue;
     }
-
     directives.push({
       tool: tool.toLowerCase().trim(),
       action: action.toLowerCase().trim(),
       data: parsedData,
     });
   }
-
   return directives;
 }
 
-// Walk the text from `start` finding the matching closing `}` for a JSON object.
-// Handles nested braces and string literals (so `}` inside a string doesn't fool us).
-function extractJSONFromPosition(text: string, start: number): { json: string; endIndex: number } | null {
-  // Skip whitespace to find the opening brace
+export function extractKnowledgeProposeDirectives(text: string): KnowledgeProposeDirective[] {
+  return extractDataOnlyDirectives(text, "KNOWLEDGE_UPDATE_PROPOSE");
+}
+
+export function extractKnowledgeConfirmDirectives(text: string): KnowledgeConfirmDirective[] {
+  return extractDataOnlyDirectives(text, "KNOWLEDGE_UPDATE_CONFIRM");
+}
+
+function extractDataOnlyDirectives<T extends { data: Record<string, any> }>(
+  text: string,
+  directiveName: string
+): T[] {
+  const directives: T[] = [];
+  const startPattern = new RegExp(`\\[${directiveName}:\\s*data=`, "gi");
+  startPattern.lastIndex = 0;
+  let match;
+  while ((match = startPattern.exec(text)) !== null) {
+    const dataStart = match.index + match[0].length;
+    const jsonResult = extractJSONFromPosition(text, dataStart);
+    if (!jsonResult) {
+      console.warn(`[directiveParser] couldn't parse JSON for ${directiveName}`);
+      continue;
+    }
+    const afterJSON = text.slice(jsonResult.endIndex);
+    if (!/^\s*\]/.test(afterJSON)) {
+      console.warn(`[directiveParser] no closing ] after JSON for ${directiveName}`);
+      continue;
+    }
+    let parsedData: Record<string, any>;
+    try {
+      parsedData = JSON.parse(jsonResult.json);
+    } catch (err) {
+      console.warn(`[directiveParser] invalid JSON for ${directiveName}:`, err);
+      continue;
+    }
+    directives.push({ data: parsedData } as T);
+  }
+  return directives;
+}
+
+function extractJSONFromPosition(
+  text: string,
+  start: number
+): { json: string; endIndex: number } | null {
   let i = start;
   while (i < text.length && /\s/.test(text[i]!)) i++;
   if (text[i] !== "{") return null;
@@ -135,24 +150,19 @@ function extractJSONFromPosition(text: string, start: number): { json: string; e
 
   for (; i < text.length; i++) {
     const ch = text[i]!;
-
     if (escapeNext) {
       escapeNext = false;
       continue;
     }
-
     if (ch === "\\" && inString) {
       escapeNext = true;
       continue;
     }
-
     if (ch === '"') {
       inString = !inString;
       continue;
     }
-
     if (inString) continue;
-
     if (ch === "{") depth++;
     else if (ch === "}") {
       depth--;
@@ -164,51 +174,32 @@ function extractJSONFromPosition(text: string, start: number): { json: string; e
       }
     }
   }
-
-  return null; // unmatched braces
+  return null;
 }
-
-// ═══════════════════════════════════════════════════════════════════
-// STRIP DIRECTIVES FROM TEXT
-// Remove all directives so the response Cole sees doesn't include them.
-// ═══════════════════════════════════════════════════════════════════
 
 function stripAllDirectives(text: string): string {
   let cleaned = text;
-
-  // Strip SAVE directives (regex-safe — no nested braces)
   cleaned = cleaned.replace(/\[SAVE:\s*category=[a-z_]+\s+value="[^"]*"\s*\]/gi, "");
-
-  // Strip TOOL directives — needs the same brace-walking approach as parsing
-  cleaned = stripToolDirectives(cleaned);
-
-  // Clean up any extra blank lines left behind
+  cleaned = stripBraceContainingDirectives(cleaned, /\[TOOL:\s*tool=[a-z_]+\s+action=[a-z_]+\s+data=/gi);
+  cleaned = stripBraceContainingDirectives(cleaned, /\[KNOWLEDGE_UPDATE_PROPOSE:\s*data=/gi);
+  cleaned = stripBraceContainingDirectives(cleaned, /\[KNOWLEDGE_UPDATE_CONFIRM:\s*data=/gi);
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
-
   return cleaned;
 }
 
-function stripToolDirectives(text: string): string {
-  const TOOL_START = /\[TOOL:\s*tool=[a-z_]+\s+action=[a-z_]+\s+data=/gi;
+function stripBraceContainingDirectives(text: string, startPattern: RegExp): string {
   let result = "";
   let lastEnd = 0;
-
-  TOOL_START.lastIndex = 0;
+  startPattern.lastIndex = 0;
   let match;
-
-  while ((match = TOOL_START.exec(text)) !== null) {
+  while ((match = startPattern.exec(text)) !== null) {
     result += text.slice(lastEnd, match.index);
-
     const dataStart = match.index + match[0].length;
     const jsonResult = extractJSONFromPosition(text, dataStart);
-
     if (!jsonResult) {
-      // Couldn't parse — skip past `[TOOL:` and continue
       lastEnd = match.index + match[0].length;
       continue;
     }
-
-    // Find the closing `]`
     const afterJSON = text.slice(jsonResult.endIndex);
     const closeMatch = afterJSON.match(/^\s*\]/);
     if (closeMatch) {
@@ -217,7 +208,6 @@ function stripToolDirectives(text: string): string {
       lastEnd = jsonResult.endIndex;
     }
   }
-
   result += text.slice(lastEnd);
   return result;
 }

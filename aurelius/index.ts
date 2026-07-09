@@ -20,8 +20,15 @@ import {
   loadMemoriesForOperator,
   findClientSheetId,
 } from "./memory/memoryService.ts";
-// Centralized directive parser ([SAVE:] and [TOOL:])
+// Centralized directive parser ([SAVE:], [TOOL:], [KNOWLEDGE_UPDATE_*:])
 import { extractDirectives, type ToolDirective } from "./llm/directiveParser.ts";
+// Phase 4.5 — Living Knowledge propose-confirm flow
+import {
+  createProposal,
+  resolveProposal,
+  getPendingProposals,
+} from "./knowledge/proposals.ts";
+import { resolveOperatorId } from "./knowledge/store.ts";
 // Reflection
 import { reflectAndSave } from "./autonomy/reflectionEngine.ts";
 // Research
@@ -545,6 +552,14 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
     }
 
     // ── Run LLM through smart router ──
+    // Phase 4.5: Resolve operatorId for knowledge update flow
+    let primaryOperatorId: string | null = null;
+    try {
+      primaryOperatorId = await resolveOperatorId(primary);
+    } catch (err) {
+      console.warn("[aurelius] could not resolve operatorId for", primary, err);
+    }
+
     const response = await runLLM({
       taskType: taskType || "chat",
       operators: { primary, secondaries },
@@ -554,6 +569,9 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       options,
       needsRealtime,
       hasMultimodal,
+      knowledgeContext: primaryOperatorId
+        ? { operatorId: primaryOperatorId, operatorName: primary }
+        : undefined,
     });
 
     // ── Pattern 2: extract directives (SAVE + TOOL), persist saves, execute tools ──
@@ -596,6 +614,70 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       const pass2Summary = summarizePass2(pass2Outcomes);
       if (toolSummary) cleanedText = cleanedText + "\n" + toolSummary;
       if (pass2Summary) cleanedText = cleanedText + "\n" + pass2Summary;
+    }
+
+    // ── Phase 4.5: Handle knowledge update directives ──
+    const knowledgeProposalsCreated: Array<{ id: string; scope: string; key: string }> = [];
+    const knowledgeProposalsResolved: Array<{ id: string; decision: string }> = [];
+
+    if (primaryOperatorId && parsed.knowledgeProposals.length > 0) {
+      for (const dir of parsed.knowledgeProposals) {
+        const d = dir.data;
+        if (!d.intentClassId || !d.scope || !d.key || d.proposedValue === undefined) {
+          console.warn("[aurelius] KNOWLEDGE_UPDATE_PROPOSE missing fields:", d);
+          continue;
+        }
+        try {
+          const proposal = await createProposal({
+            operatorId: primaryOperatorId,
+            operatorName: primary,
+            intentClassId: d.intentClassId,
+            scope: d.scope,
+            key: d.key,
+            proposedValue: d.proposedValue,
+            rationale: d.rationale ?? "",
+            coleNaturalLanguage: d.coleNaturalLanguage ?? message,
+          });
+          knowledgeProposalsCreated.push({
+            id: proposal.id,
+            scope: proposal.scope,
+            key: proposal.key,
+          });
+        } catch (err) {
+          console.error("[aurelius] createProposal failed:", err);
+        }
+      }
+    }
+
+    if (primaryOperatorId && parsed.knowledgeConfirmations.length > 0) {
+      for (const dir of parsed.knowledgeConfirmations) {
+        const d = dir.data;
+        if (!d.proposalId || !d.decision) {
+          console.warn("[aurelius] KNOWLEDGE_UPDATE_CONFIRM missing fields:", d);
+          continue;
+        }
+        if (!["confirmed", "denied", "corrected"].includes(d.decision)) {
+          console.warn("[aurelius] KNOWLEDGE_UPDATE_CONFIRM invalid decision:", d.decision);
+          continue;
+        }
+        try {
+          const resolved = await resolveProposal({
+            operatorId: primaryOperatorId,
+            proposalId: d.proposalId,
+            decision: d.decision as "confirmed" | "denied" | "corrected",
+            coleResponseText: d.coleResponseText ?? message,
+            correctedValue: d.correctedValue,
+          });
+          if (resolved) {
+            knowledgeProposalsResolved.push({
+              id: resolved.id,
+              decision: resolved.status,
+            });
+          }
+        } catch (err) {
+          console.error("[aurelius] resolveProposal failed:", err);
+        }
+      }
     }
 
     // Strip directives from reviewer response if present (and persist any saves it produced)
@@ -667,6 +749,11 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
         toolsSucceeded: executedTools.filter((e) => e.result.ok).length,
         pass2Sessions: pass2Outcomes.length,
         pass2Succeeded: pass2Outcomes.filter((o) => o.ok).length,
+        knowledgeProposalsCreated: knowledgeProposalsCreated.length,
+        knowledgeProposalsResolved: knowledgeProposalsResolved.length,
+        pendingProposalsAfter: primaryOperatorId
+          ? getPendingProposals(primaryOperatorId).length
+          : 0,
       },
       tools: executedTools.map((e) => ({
         tool: e.directive.tool,
