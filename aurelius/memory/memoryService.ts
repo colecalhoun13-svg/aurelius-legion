@@ -12,6 +12,7 @@ import {
   getMemoryTimeline,
 } from "../repositories/memoryRepository.ts";
 import { prisma } from "../core/db/prisma.ts";
+import { embedSourceSafe } from "../retrieval/embedPipeline.ts";
 
 // ═══════════════════════════════════════════════════════════════════
 // CATEGORY VOCABULARY
@@ -92,12 +93,25 @@ export async function saveMemory(params: SaveMemoryParams) {
     ...(validRelated.length > 0 ? { relatedOperators: validRelated } : {}),
   };
 
-  return repoSaveMemory({
+  const saved = await repoSaveMemory({
     operatorId,
     category: params.category,
     value: params.value,
     metadata,
   });
+
+  // Phase 4.6: index for semantic recall. Fire-and-forget — a memory
+  // save never fails because the embedding provider is down.
+  if (saved) {
+    embedSourceSafe({
+      sourceType: "memory",
+      sourceId: saved.id,
+      text: `[${params.category}] ${params.value}`,
+      operatorId,
+    });
+  }
+
+  return saved;
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -7,6 +7,17 @@
 // of truth post-bootstrap). Pass { force: true } to overwrite, but
 // that resets Cole's evolved knowledge to founding values — destructive.
 
+// Load env regardless of where this script is invoked from. The server
+// loads dotenv itself; CLI entrypoints have to fend for themselves.
+// Checks repo root .env first, then aurelius/.env. dotenv never overrides
+// vars already set in the shell.
+import dotenv from "dotenv";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+const _seedDir = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(_seedDir, "../../.env") });
+dotenv.config({ path: path.resolve(_seedDir, "../.env") });
+
 import { setKnowledge, getKnowledge, resolveOperatorId } from "./store.ts";
 import { FOUNDING_DEFAULTS } from "./foundationalTrainingKnowledge.ts";
 
@@ -19,12 +30,38 @@ export type SeedResult = {
 };
 
 /**
+ * Ensure the reserved "global" operator exists. Not a conversational
+ * operator — a namespace for cross-domain knowledge any operator can
+ * fall back to. domain "reserved", priority 0, never routed to.
+ */
+export async function ensureGlobalOperator(): Promise<string> {
+  const { prisma } = await import("../core/db/prisma.ts");
+  const existing = await prisma.operator.findUnique({
+    where: { name: "global" },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+
+  const created = await prisma.operator.create({
+    data: {
+      name: "global",
+      domain: "reserved",
+      priority: 0,
+    },
+  });
+  console.log(`[seed] created reserved "global" operator: ${created.id}`);
+  return created.id;
+}
+
+/**
  * Seed founding training knowledge for the training operator.
  * Idempotent by default. Pass { force: true } to overwrite existing entries.
  */
 export async function seedTrainingKnowledge(
   options: { force?: boolean } = {}
 ): Promise<SeedResult> {
+  await ensureGlobalOperator();
+
   const operatorName = "training";
   const operatorId = await resolveOperatorId(operatorName);
 

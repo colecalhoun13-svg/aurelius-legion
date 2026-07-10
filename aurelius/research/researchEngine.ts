@@ -27,6 +27,11 @@ import { getOperatorProfile } from "../core/operatorProfiles.ts";
 import { runLLM } from "../llm/runLLM.ts";
 import { saveMemory } from "../memory/memoryService.ts";
 
+// Phase 4.5 — research findings can propose Living Knowledge updates
+import { extractDirectives } from "../llm/directiveParser.ts";
+import { createProposal } from "../knowledge/proposals.ts";
+import { resolveOperatorId } from "../knowledge/store.ts";
+
 // ═══════════════════════════════════════════════════════════════════
 // FEATURE FLAGS
 // External adapters are gated by API key presence. Missing keys = silent skip.
@@ -103,7 +108,7 @@ type StructuredSynthesis = {
 async function synthesizeFindings(
   task: ResearchTask,
   fused: FusedInsight[]
-): Promise<StructuredSynthesis> {
+): Promise<{ structured: StructuredSynthesis; rawText: string }> {
   const fusedSummary = fused
     .slice(0, 12)
     .map((f, i) => `  ${i + 1}. (conf ${f.confidence.toFixed(2)}) ${f.insight}`)
@@ -129,8 +134,26 @@ INSIGHTS:
 CONTRADICTIONS:
 - [optional — only include if the data conflicts with itself]
 
+IMPORTANT — KNOWLEDGE UPDATE PROPOSALS:
+If any finding has direct implications for Cole's Living Knowledge (rep bands,
+intensity zones, movement patterns, block contexts, fatigue signals, or
+similar structured taxonomies for this operator), emit a
+[KNOWLEDGE_UPDATE_PROPOSE: data={...}] directive AFTER the structured output.
+Use the intent classes listed in your guidance. Set coleNaturalLanguage to
+the research query itself. Set the rationale to indicate this is
+research-derived. Only propose updates that the evidence clearly supports.
+If findings don't have taxonomy implications, emit no directives.
+
 Be tactical. No filler. Match Aurelius's voice.
 `.trim();
+
+  // Phase 4.5: resolve operatorId so Layer 7.5 fires for research synthesis
+  let operatorId: string | null = null;
+  try {
+    operatorId = await resolveOperatorId(task.operator);
+  } catch (err) {
+    console.warn("[research] could not resolve operatorId for", task.operator, err);
+  }
 
   const response = await runLLM({
     taskType: "research",
@@ -139,9 +162,15 @@ Be tactical. No filler. Match Aurelius's voice.
       secondaries: task.secondaryOperators ?? [],
     },
     input: prompt,
+    knowledgeContext: operatorId
+      ? { operatorId, operatorName: task.operator }
+      : undefined,
   });
 
-  return parseStructuredSynthesis(response.text);
+  return {
+    structured: parseStructuredSynthesis(response.text),
+    rawText: response.text,
+  };
 }
 
 function parseStructuredSynthesis(text: string): StructuredSynthesis {
@@ -244,7 +273,7 @@ export async function runResearch(task: ResearchTask): Promise<ResearchOutput> {
   fused = applyMemoryPolicy(fused, memory);
 
   // ── Synthesis (LLM produces structured output) ──
-  const structured = await synthesizeFindings(task, fused);
+  const { structured, rawText: synthesisRawText } = await synthesizeFindings(task, fused);
 
   // Guard: if the LLM call errored, synthesis will be the error string.
   // Skip persistence entirely — don't pollute memory with API error messages.
@@ -257,6 +286,7 @@ export async function runResearch(task: ResearchTask): Promise<ResearchOutput> {
       contradictions: [],
       rawResults: results,
       savedMemoryIds: [],
+      proposalsCreated: 0,
     };
   }
 
@@ -313,6 +343,39 @@ export async function runResearch(task: ResearchTask): Promise<ResearchOutput> {
     }
   }
 
+  // ── Phase 4.5: Extract knowledge update proposals from synthesis ──
+  let proposalsCreated = 0;
+  try {
+    const operatorId = await resolveOperatorId(task.operator);
+    if (operatorId) {
+      const parsed = extractDirectives(synthesisRawText);
+      for (const dir of parsed.knowledgeProposals) {
+        const d = dir.data;
+        if (!d.intentClassId || !d.scope || !d.key || d.proposedValue === undefined) {
+          console.warn("[research] KNOWLEDGE_UPDATE_PROPOSE missing fields:", d);
+          continue;
+        }
+        try {
+          await createProposal({
+            operatorId,
+            operatorName: task.operator,
+            intentClassId: d.intentClassId,
+            scope: d.scope,
+            key: d.key,
+            proposedValue: d.proposedValue,
+            rationale: d.rationale ?? `Research-derived from query: "${task.query}"`,
+            coleNaturalLanguage: d.coleNaturalLanguage ?? task.query,
+          });
+          proposalsCreated++;
+        } catch (err) {
+          console.error("[research] createProposal failed:", err);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[research] knowledge proposal extraction failed (non-fatal):", err);
+  }
+
   return {
     query: task.query,
     synthesis: structured.synthesis,
@@ -320,6 +383,7 @@ export async function runResearch(task: ResearchTask): Promise<ResearchOutput> {
     contradictions: structured.contradictions,
     rawResults: results,
     savedMemoryIds,
+    proposalsCreated,
   };
 }
 
