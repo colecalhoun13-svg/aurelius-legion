@@ -1,7 +1,7 @@
 // AURELIUS OS — BACKGROUND WREATH
-// The mockup's field: the real crest artwork at field scale — weathered
-// olive, slowly breathing — with the central letterform occluded so only
-// the organic laurel ring reads behind the interface.
+// The mockup's field: the crest artwork with the letterform removed from
+// the image itself (aurelius-wreath.png) — the pure laurel ring at field
+// scale, weathered olive, slowly breathing behind the interface.
 export default function BackgroundWreath() {
   return (
     <div aria-hidden className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
@@ -18,18 +18,10 @@ export default function BackgroundWreath() {
         <div className="relative" style={{ width: "108vmin", height: "108vmin" }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/crest/aurelius-crest.png"
+            src="/crest/aurelius-wreath.png"
             alt=""
             className="w-full h-full object-contain"
             style={{ filter: "sepia(0.5) saturate(0.62) brightness(0.68)", opacity: 0.55 }}
-          />
-          {/* occlude the A — the field wants the ring, not the logo */}
-          <div
-            className="absolute inset-0"
-            style={{
-              background:
-                "radial-gradient(circle at 50% 50%, #0a0a0a 0%, #0a0a0a 19%, rgba(10,10,10,0) 29%)",
-            }}
           />
         </div>
       </div>
