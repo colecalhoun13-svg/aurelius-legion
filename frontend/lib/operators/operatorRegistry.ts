@@ -25,6 +25,26 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     path: "/today",
     description: "Cole's lane — today's plan, tasks, habits, capture",
   },
+  projects: {
+    name: "Projects",
+    path: "/projects",
+    description: "Progress, runway, and what each project needs",
+  },
+  goals: {
+    name: "Goals",
+    path: "/goals",
+    description: "Big and small, by horizon",
+  },
+  bridge: {
+    name: "Bridge",
+    path: "/bridge",
+    description: "Signals from Aurelius's background work",
+  },
+  aurelius: {
+    name: "Aurelius",
+    path: "/aurelius",
+    description: "What the system is doing in the background",
+  },
   corpus: {
     name: "Corpus",
     path: "/corpus",
