@@ -102,6 +102,11 @@ export async function ingestDocument(input: IngestInput) {
       data: { status: "completed", finishedAt: new Date(), findingsCount: chunkCount },
     });
 
+    // Mirror the raw document into the vault — fire-and-forget.
+    import("../wiki/vaultMirror.ts")
+      .then(async (m) => { await m.mirrorCorpusDoc(doc); await m.mirrorIndex(); })
+      .catch((err) => console.warn("[corpus] vault mirror failed (non-fatal):", err));
+
     // The wiki keeps up with the corpus — fire-and-forget synthesis so
     // the domain's living page absorbs the new material. Never blocks
     // or fails an ingestion.

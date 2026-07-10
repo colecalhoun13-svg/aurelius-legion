@@ -152,6 +152,11 @@ ${knBlock || "(none)"}
     },
   });
 
+  // Mirror to the vault (Obsidian-compatible markdown) — fire-and-forget.
+  import("./vaultMirror.ts")
+    .then(async (m) => { await m.mirrorWikiPage(page); await m.mirrorIndex(); })
+    .catch((err) => console.warn("[wiki] vault mirror failed (non-fatal):", err));
+
   console.log(`[wiki] ${domain} rev ${page.revision} (${reason})`);
   return { skipped: false as const, page };
 }

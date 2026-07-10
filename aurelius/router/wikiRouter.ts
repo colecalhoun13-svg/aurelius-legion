@@ -13,6 +13,16 @@ wikiRouter.get("/", async (_req: Request, res: Response) => {
   }
 });
 
+// Static routes BEFORE /:slug — Express matches in order.
+wikiRouter.post("/vault/rebuild", async (_req: Request, res: Response) => {
+  try {
+    const { mirrorAll } = await import("../wiki/vaultMirror.ts");
+    res.json(await mirrorAll());
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
 wikiRouter.get("/:slug", async (req: Request, res: Response) => {
   try {
     const page = await getWikiPage(String(req.params.slug));

@@ -91,3 +91,7 @@ secrets/
 **/secrets/
 *.serviceaccount.json
 *-credentials.json
+
+# Generated Obsidian-compatible mirror of the second brain
+vault/
+aurelius/vault/
