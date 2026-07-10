@@ -65,6 +65,11 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     path: "/corpus",
     description: "The library — ask it, feed it, it stays aware",
   },
+  wiki: {
+    name: "Wiki",
+    path: "/wiki",
+    description: "Aurelius's own synthesis — one living page per domain",
+  },
   engines: {
     name: "Engines",
     path: "/engines",

@@ -15,7 +15,8 @@ export type EmbeddingSourceType =
   | "note"
   | "task"
   | "project"
-  | "corpus_doc";
+  | "corpus_doc"
+  | "wiki_page";
 
 export type UpsertEmbeddingArgs = {
   sourceType: EmbeddingSourceType;

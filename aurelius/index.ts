@@ -57,6 +57,7 @@ import { corpusRouter } from "./router/corpusRouter.ts";
 import { missionsRouter } from "./router/missionsRouter.ts";
 import { ritualsRouter } from "./router/ritualsRouter.ts";
 import { proposalsRouter } from "./router/proposalsRouter.ts";
+import { wikiRouter } from "./router/wikiRouter.ts";
 
 const app = express();
 app.use(express.json());
@@ -85,6 +86,7 @@ app.use("/api/corpus", corpusRouter);
 app.use("/api/missions", missionsRouter);
 app.use("/api/rituals", ritualsRouter);
 app.use("/api/proposals", proposalsRouter);
+app.use("/api/wiki", wikiRouter);
 
 app.get("/", (req: Request, res: Response) => {
   res.send("Aurelius OS backend is running");
@@ -931,8 +933,15 @@ nodeSchedule.scheduleJob("30 21 * * *", async () => {
     console.error("[rituals] nightly failed:", err);
   }
 });
-nodeSchedule.scheduleJob("0 9 * * 0", () => {
-  runWeekendPulse().catch((err) => console.error("[pulse] weekend failed:", err));
+nodeSchedule.scheduleJob("0 9 * * 0", async () => {
+  try {
+    await runWeekendPulse();
+    // After the research pass lands, the wiki absorbs the week.
+    const { synthesizeAllDomains } = await import("./wiki/engine.ts");
+    await synthesizeAllDomains("weekend_pulse");
+  } catch (err) {
+    console.error("[pulse] weekend failed:", err);
+  }
 });
 // Weekly scoreboard — Sunday 20:00, one honest snapshot of both lanes.
 nodeSchedule.scheduleJob("0 20 * * 0", () => {

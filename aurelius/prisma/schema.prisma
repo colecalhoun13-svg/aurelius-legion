@@ -444,6 +444,40 @@ model IngestionRun {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// THE WIKI — Aurelius's own synthesis. One living page per domain,
+// written and rewritten by Aurelius from everything it has absorbed
+// (corpus, memories, confirmed knowledge). Pages embed into recall, so
+// synthesis compounds: tomorrow's answers stand on today's write-ups.
+// ═══════════════════════════════════════════════════════════════════
+
+model WikiPage {
+  id         String   @id @default(cuid())
+  slug       String   @unique // = domain, v1
+  title      String
+  domain     String
+  content    String // markdown
+  sourceRefs Json? // { corpusDocIds: [], memoryCount, knowledgeCount }
+  revision   Int      @default(1)
+  updatedBy  String   @default("aurelius") // "aurelius" | "cole"
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  revisions WikiRevision[]
+}
+
+model WikiRevision {
+  id        String   @id @default(cuid())
+  pageId    String
+  page      WikiPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  revision  Int
+  content   String
+  reason    String? // what triggered the rewrite
+  createdAt DateTime @default(now())
+
+  @@index([pageId, revision])
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // KNOWLEDGE PROPOSALS — the propose→confirm loop, durable.
 // Was in-memory in v1 (died on restart); now every proposal survives
 // until Cole resolves it, and the Bridge review surface reads from here.

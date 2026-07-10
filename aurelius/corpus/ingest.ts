@@ -102,6 +102,13 @@ export async function ingestDocument(input: IngestInput) {
       data: { status: "completed", finishedAt: new Date(), findingsCount: chunkCount },
     });
 
+    // The wiki keeps up with the corpus — fire-and-forget synthesis so
+    // the domain's living page absorbs the new material. Never blocks
+    // or fails an ingestion.
+    import("../wiki/engine.ts")
+      .then(({ synthesizeWikiPage }) => synthesizeWikiPage(doc.domain, "ingestion"))
+      .catch((err) => console.warn("[corpus] wiki refresh failed (non-fatal):", err));
+
     return { doc, chunkCount };
   } catch (err: any) {
     await prisma.ingestionRun.update({
