@@ -1,40 +1,53 @@
-/*
-  Warnings:
+-- Phase 4.5 Block 0 — generalize compilation schema for cross-operator use.
+--
+-- Rewritten as defensive drop+recreate: the original diff-based migration
+-- assumed index state that had drifted on the production DB (indexes named
+-- in migration history were never actually present). Both tables are empty
+-- by construction — nothing wrote to them before this phase shipped — so
+-- drop+recreate is lossless and converges any starting state.
 
-  - You are about to drop the column `sheetId` on the `CompiledPattern` table. All the data in the column will be lost.
-  - You are about to drop the column `dayTab` on the `ReasoningCacheEntry` table. All the data in the column will be lost.
-  - You are about to drop the column `sheetId` on the `ReasoningCacheEntry` table. All the data in the column will be lost.
-  - Added the required column `domain` to the `CompiledPattern` table without a default value. This is not possible if the table is not empty.
-  - Added the required column `externalScopeId` to the `ReasoningCacheEntry` table without a default value. This is not possible if the table is not empty.
+-- DropTables (defensive — tolerate any drift)
+DROP TABLE IF EXISTS "ReasoningCacheEntry" CASCADE;
+DROP TABLE IF EXISTS "CompiledPattern" CASCADE;
 
-*/
--- DropIndex
-DROP INDEX "CompiledPattern_operatorId_entityKey_idx";
+-- CreateTable
+CREATE TABLE "ReasoningCacheEntry" (
+    "id" TEXT NOT NULL,
+    "operatorId" TEXT NOT NULL,
+    "domain" TEXT NOT NULL DEFAULT 'training_session',
+    "entityKey" TEXT NOT NULL,
+    "externalScopeId" TEXT NOT NULL,
+    "subContext" TEXT,
+    "situationSignature" JSONB NOT NULL,
+    "reasoningSummary" TEXT NOT NULL,
+    "sourceMemoryIds" TEXT[],
+    "usageCount" INTEGER NOT NULL DEFAULT 0,
+    "previousTags" JSONB[] DEFAULT ARRAY[]::JSONB[],
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
--- DropIndex
-DROP INDEX "ReasoningCacheEntry_operatorId_entityKey_idx";
+    CONSTRAINT "ReasoningCacheEntry_pkey" PRIMARY KEY ("id")
+);
 
--- DropIndex
-DROP INDEX "ReasoningCacheEntry_operatorId_entityKey_sheetId_idx";
+-- CreateTable
+CREATE TABLE "CompiledPattern" (
+    "id" TEXT NOT NULL,
+    "operatorId" TEXT NOT NULL,
+    "domain" TEXT NOT NULL,
+    "entityKey" TEXT,
+    "externalScopeId" TEXT,
+    "patternType" TEXT NOT NULL,
+    "patternSignature" JSONB NOT NULL,
+    "conditions" JSONB,
+    "status" TEXT NOT NULL DEFAULT 'proposed_heuristic',
+    "evidence" TEXT[],
+    "supportCount" INTEGER NOT NULL DEFAULT 0,
+    "confidenceScore" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
--- AlterTable
-ALTER TABLE "CompiledPattern" DROP COLUMN "sheetId",
-ADD COLUMN     "domain" TEXT NOT NULL,
-ADD COLUMN     "externalScopeId" TEXT;
-
--- AlterTable
-ALTER TABLE "ReasoningCacheEntry" DROP COLUMN "dayTab",
-DROP COLUMN "sheetId",
-ADD COLUMN     "domain" TEXT NOT NULL DEFAULT 'training_session',
-ADD COLUMN     "externalScopeId" TEXT NOT NULL,
-ADD COLUMN     "previousTags" JSONB[] DEFAULT ARRAY[]::JSONB[],
-ADD COLUMN     "subContext" TEXT;
-
--- CreateIndex
-CREATE INDEX "CompiledPattern_operatorId_domain_entityKey_idx" ON "CompiledPattern"("operatorId", "domain", "entityKey");
-
--- CreateIndex
-CREATE INDEX "CompiledPattern_domain_idx" ON "CompiledPattern"("domain");
+    CONSTRAINT "CompiledPattern_pkey" PRIMARY KEY ("id")
+);
 
 -- CreateIndex
 CREATE INDEX "ReasoningCacheEntry_operatorId_domain_entityKey_idx" ON "ReasoningCacheEntry"("operatorId", "domain", "entityKey");
@@ -44,3 +57,18 @@ CREATE INDEX "ReasoningCacheEntry_operatorId_entityKey_externalScopeId_idx" ON "
 
 -- CreateIndex
 CREATE INDEX "ReasoningCacheEntry_domain_idx" ON "ReasoningCacheEntry"("domain");
+
+-- CreateIndex
+CREATE INDEX "CompiledPattern_operatorId_domain_entityKey_idx" ON "CompiledPattern"("operatorId", "domain", "entityKey");
+
+-- CreateIndex
+CREATE INDEX "CompiledPattern_operatorId_status_idx" ON "CompiledPattern"("operatorId", "status");
+
+-- CreateIndex
+CREATE INDEX "CompiledPattern_domain_idx" ON "CompiledPattern"("domain");
+
+-- AddForeignKey
+ALTER TABLE "ReasoningCacheEntry" ADD CONSTRAINT "ReasoningCacheEntry_operatorId_fkey" FOREIGN KEY ("operatorId") REFERENCES "Operator"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CompiledPattern" ADD CONSTRAINT "CompiledPattern_operatorId_fkey" FOREIGN KEY ("operatorId") REFERENCES "Operator"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
