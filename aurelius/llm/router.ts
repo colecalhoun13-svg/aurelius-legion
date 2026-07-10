@@ -23,6 +23,8 @@ import {
 } from "../persona/aureliusPersona.ts";
 import { formatIntentClassesForPrompt } from "../knowledge/intentClasses.ts";
 import { formatPendingProposalsForPrompt } from "../knowledge/proposals.ts";
+import { semanticRecall, formatRecallForPrompt } from "../retrieval/retrieve.ts";
+import { resolveOperatorId } from "../knowledge/store.ts";
 import { IDENTITY } from "../identity/index.ts";
 import {
   loadMemoriesForOperator,
@@ -320,6 +322,27 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     }
   } catch (err) {
     console.warn("[ROUTER] memory load failed:", err);
+  }
+
+  // Layer 5.5 (Phase 4.6): Semantic recall — retrieval-augmented context.
+  // Embeds the user's message and surfaces the closest knowledge, memories,
+  // and prior reasoning. No-op when embeddings are disabled; never fatal.
+  try {
+    const recallOperatorId =
+      task.knowledgeContext?.operatorId ??
+      (await resolveOperatorId(operators.primary).catch(() => null)) ??
+      undefined;
+    const hits = await semanticRecall({
+      query: task.input,
+      operatorId: recallOperatorId,
+      limit: 8,
+    });
+    const recallBlock = formatRecallForPrompt(hits);
+    if (recallBlock) {
+      parts.push("\n" + recallBlock);
+    }
+  } catch (err) {
+    console.warn("[ROUTER] semantic recall failed (non-fatal):", err);
   }
 
   // Layer 6: Tool catalog (auto-generated from registered tool adapters)

@@ -11,6 +11,7 @@ import type {
   TaggedSignature,
 } from "./types.ts";
 import { similarityScore, fingerprintMatch } from "./similarity.ts";
+import { embedSourceSafe } from "../retrieval/embedPipeline.ts";
 
 /**
  * Find the most similar cached reasoning above the similarity threshold.
@@ -92,6 +93,19 @@ export async function writeCache(
       previousTags: [],
     },
   });
+
+  // Phase 4.6: reasoning summaries index for semantic recall.
+  // Skip empty summaries (failed parses write those) — no signal to index.
+  if (args.reasoningSummary && args.reasoningSummary.trim().length > 0) {
+    embedSourceSafe({
+      sourceType: "reasoning_cache",
+      sourceId: created.id,
+      text: args.reasoningSummary,
+      operatorId: args.operatorId,
+      domain: args.domain,
+    });
+  }
+
   return entryToShape(created);
 }
 

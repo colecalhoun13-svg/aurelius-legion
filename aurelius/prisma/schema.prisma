@@ -148,6 +148,33 @@ model CompiledPattern {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// PHASE 4.6 — RETRIEVAL SUBSTRATE
+// Derived data: semantic index over knowledge, memory, and reasoning.
+// Rebuildable at any time from source tables (scripts/backfillEmbeddings).
+// The embedding column is pgvector; Prisma treats it as Unsupported, so
+// all reads/writes go through raw SQL in aurelius/retrieval/vectorStore.ts.
+// Dimension fixed at 1536 (OpenAI text-embedding-3-small). Switching
+// embedding models = migration + re-run backfill; cheap by design.
+// ═══════════════════════════════════════════════════════════════════
+
+model VectorEmbedding {
+  id             String                       @id @default(cuid())
+  sourceType     String // "knowledge_entry" | "memory" | "reasoning_cache" | "note" | "corpus_doc"
+  sourceId       String
+  chunkIndex     Int                          @default(0)
+  chunkText      String // the text that was embedded (hydration + citation)
+  operatorId     String? // loose reference — embeddings are derived, no FK
+  domain         String?
+  embedding      Unsupported("vector(1536)")?
+  embeddingModel String
+  createdAt      DateTime                     @default(now())
+
+  @@unique([sourceType, sourceId, chunkIndex])
+  @@index([sourceType, sourceId])
+  @@index([operatorId])
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // PHASE 4.5a — LIVING KNOWLEDGE
 // Structured, evolving domain intelligence. Updated by Cole's
 // confirmed conversations and research ingestion. Provenance on

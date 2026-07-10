@@ -14,6 +14,27 @@ import type {
   KnowledgeHistoryEntry,
   KnowledgeSourceType,
 } from "./types.ts";
+import { embedSourceSafe } from "../retrieval/embedPipeline.ts";
+
+// Phase 4.6: knowledge entries index for semantic recall on every write.
+// Text = human-readable rendering of scope.key + value + rationale.
+function indexKnowledgeEntry(entry: KnowledgeEntryShape): void {
+  const valueStr =
+    typeof entry.value === "string" ? entry.value : JSON.stringify(entry.value);
+  const text = [
+    `${entry.scope}.${entry.key}: ${valueStr}`,
+    entry.rationale ? `rationale: ${entry.rationale}` : "",
+  ]
+    .filter(Boolean)
+    .join(" — ");
+  embedSourceSafe({
+    sourceType: "knowledge_entry",
+    sourceId: entry.id,
+    text,
+    operatorId: entry.operatorId,
+    domain: entry.scope,
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // READS
@@ -194,7 +215,9 @@ export async function setKnowledge(
         history: [],
       },
     });
-    return entryToShape(created);
+    const shape = entryToShape(created);
+    indexKnowledgeEntry(shape);
+    return shape;
   }
 
   // Update — archive old value to history, bump version
@@ -221,7 +244,9 @@ export async function setKnowledge(
     },
   });
 
-  return entryToShape(updated);
+  const shape = entryToShape(updated);
+  indexKnowledgeEntry(shape);
+  return shape;
 }
 
 /**
