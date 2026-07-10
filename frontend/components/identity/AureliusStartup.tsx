@@ -9,7 +9,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import LaurelWreath from "./LaurelWreath";
+
 
 const FLASH_MS = 1050; // matches wreathFlash
 const HOLD_MS = 300;   // beat after lock-on
@@ -37,7 +37,13 @@ export default function AureliusStartup({ children }: { children: React.ReactNod
       }`}
     >
       <div className="absolute inset-0 flex items-center justify-center animate-wreathFlash opacity-0">
-        <LaurelWreath size="105vmin" />
+        <div className="relative" style={{ width: "108vmin", height: "108vmin" }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/crest/aurelius-crest.png" alt="" className="w-full h-full object-contain"
+            style={{ filter: "sepia(0.4) saturate(0.7) brightness(0.75)" }} />
+          <div className="absolute inset-0"
+            style={{ background: "radial-gradient(circle at 50% 50%, #000 0%, #000 24%, rgba(0,0,0,0) 36%)" }} />
+        </div>
       </div>
     </div>
   );
