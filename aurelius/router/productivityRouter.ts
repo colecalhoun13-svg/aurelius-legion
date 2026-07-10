@@ -26,6 +26,7 @@ import {
   getDeck,
 } from "../productivity/service.ts";
 import { runNightlyPulse, runWeekendPulse } from "../autonomy/pulse.ts";
+import { computeWeeklySnapshot, listSnapshots } from "../measurement/scoreboard.ts";
 
 export const productivityRouter = Router();
 
@@ -208,6 +209,22 @@ productivityRouter.get("/stats", async (req: Request, res: Response) => {
 productivityRouter.get("/activity", async (_req: Request, res: Response) => {
   try {
     res.json(await getAureliusActivity());
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+productivityRouter.get("/scoreboard", async (_req: Request, res: Response) => {
+  try {
+    res.json({ snapshots: await listSnapshots() });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+productivityRouter.post("/scoreboard/run", async (req: Request, res: Response) => {
+  try {
+    res.json(await computeWeeklySnapshot(req.body?.weekStart));
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? String(err) });
   }

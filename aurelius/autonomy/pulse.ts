@@ -104,6 +104,16 @@ export async function runNightlyPulse(dateStr?: string) {
 }
 
 export async function runWeekendPulse() {
+  // Scoreboard row for the pass — the measurement plane sees every sweep.
+  const run = await prisma.ingestionRun.create({
+    data: {
+      runType: "weekend_deep",
+      operatorName: "training",
+      triggeredBy: "schedule",
+      sourcesQueried: TRAINING_RESEARCH_TOPICS,
+    },
+  });
+
   const results: Array<{ topic: string; insights: number; proposals: number; error?: string }> = [];
 
   for (const topic of TRAINING_RESEARCH_TOPICS) {
@@ -137,6 +147,17 @@ export async function runWeekendPulse() {
             : `• ${r.topic}: ${r.insights} insights${r.proposals ? `, ${r.proposals} proposals` : ""}`
         )
         .join("\n"),
+    },
+  });
+
+  await prisma.ingestionRun.update({
+    where: { id: run.id },
+    data: {
+      status: failed === results.length ? "failed" : "completed",
+      finishedAt: new Date(),
+      findingsCount: totalInsights,
+      proposalsCreated: totalProposals,
+      errors: failed > 0 ? results.filter((r) => r.error).map((r) => `${r.topic}: ${r.error}`) : undefined,
     },
   });
 

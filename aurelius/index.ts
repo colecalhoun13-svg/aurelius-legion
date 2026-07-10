@@ -904,19 +904,37 @@ import {
   generateMorningBriefing,
   generateNightlyDebrief,
 } from "./rituals/engine.ts";
+import { computeWeeklySnapshot } from "./measurement/scoreboard.ts";
+import { startTelegramBridge, sendToCole } from "./telegram/bot.ts";
 
 ensureRituals().catch((err) => console.error("[rituals] seed failed:", err));
+// Dormant without TELEGRAM_BOT_TOKEN; wakes the moment the token lands.
+startTelegramBridge();
 
 // Morning briefing at 07:00 — the day opens with a push, not a blank page.
-nodeSchedule.scheduleJob("0 7 * * *", () => {
-  generateMorningBriefing().catch((err) => console.error("[rituals] morning failed:", err));
+nodeSchedule.scheduleJob("0 7 * * *", async () => {
+  try {
+    const { briefing } = await generateMorningBriefing();
+    await sendToCole(briefing);
+  } catch (err) {
+    console.error("[rituals] morning failed:", err);
+  }
 });
 // Nightly debrief at 21:30 — wraps the deterministic pulse (gap math) in voice.
-nodeSchedule.scheduleJob("30 21 * * *", () => {
-  generateNightlyDebrief().catch((err) => console.error("[rituals] nightly failed:", err));
+nodeSchedule.scheduleJob("30 21 * * *", async () => {
+  try {
+    const { debrief } = await generateNightlyDebrief();
+    await sendToCole(debrief);
+  } catch (err) {
+    console.error("[rituals] nightly failed:", err);
+  }
 });
 nodeSchedule.scheduleJob("0 9 * * 0", () => {
   runWeekendPulse().catch((err) => console.error("[pulse] weekend failed:", err));
+});
+// Weekly scoreboard — Sunday 20:00, one honest snapshot of both lanes.
+nodeSchedule.scheduleJob("0 20 * * 0", () => {
+  computeWeeklySnapshot().catch((err) => console.error("[scoreboard] failed:", err));
 });
 
 const PORT = Number(process.env.PORT) || 3001;
