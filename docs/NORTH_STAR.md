@@ -269,3 +269,11 @@ token, Google Calendar OAuth, finance-plane go/no-go.
 
 **Next candidates:** calendar engine, finance plane v1, Mac Mini deploy
 runbook, corrections capture UX, engineRouter consolidation, tests.
+
+**Parked for a Cole working session (do not build speculatively):**
+Business Engine buildout — Offer Engine · Lead Generation · Content
+Engine · Systems/SOP · Workflow · Client Engine · Analytics · Brand
+(OG doc Part XI). Build around Cole's real offers, pricing, client
+list, and outreach flow once he supplies them. The research lane and
+Business OS living document are live in the meantime and will have
+compounded context by then.
