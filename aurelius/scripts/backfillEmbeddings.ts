@@ -16,9 +16,16 @@ const _dir = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(_dir, "../../.env") });
 dotenv.config({ path: path.resolve(_dir, "../.env") });
 
+// CLI override: --provider gemini|openai|mock beats whatever .env parsing
+// produced. Must run BEFORE the adapter module resolves the provider.
+const provFlagIdx = process.argv.indexOf("--provider");
+if (provFlagIdx !== -1 && process.argv[provFlagIdx + 1]) {
+  process.env.EMBEDDINGS_PROVIDER = process.argv[provFlagIdx + 1];
+}
+
 import { prisma } from "../core/db/prisma.ts";
 import { embedSource } from "../retrieval/embedPipeline.ts";
-import { embeddingsEnabled } from "../retrieval/embeddingAdapter.ts";
+import { embeddingsEnabled, getEmbeddingAdapter } from "../retrieval/embeddingAdapter.ts";
 import { countEmbeddings } from "../retrieval/vectorStore.ts";
 
 async function existingSourceIds(sourceType: string): Promise<Set<string>> {
@@ -38,6 +45,10 @@ async function main() {
     );
     process.exit(1);
   }
+
+  // Say which provider is live BEFORE burning 70 API calls on the wrong one.
+  const adapter = getEmbeddingAdapter()!;
+  console.log(`[backfill] provider: ${adapter.name} (${adapter.model}, ${adapter.dims}d)`);
 
   let embedded = 0;
   let skipped = 0;

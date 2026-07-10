@@ -155,7 +155,7 @@ const mockEmbeddingAdapter: EmbeddingAdapter = {
 export function getEmbeddingAdapter(): EmbeddingAdapter | null {
   if (process.env.RETRIEVAL_EMBEDDINGS_ENABLED === "false") return null;
 
-  const provider = process.env.EMBEDDINGS_PROVIDER ?? "openai";
+  const provider = (process.env.EMBEDDINGS_PROVIDER ?? "openai").trim().toLowerCase();
   if (provider === "mock") return mockEmbeddingAdapter;
   if (provider === "openai") {
     return process.env.OPENAI_API_KEY ? openaiEmbeddingAdapter : null;
