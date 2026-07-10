@@ -947,6 +947,26 @@ nodeSchedule.scheduleJob("30 21 * * *", async () => {
     console.error("[rituals] nightly failed:", err);
   }
 });
+// Midday check at 13:00 — corrective, and silent when Cole is on pace.
+nodeSchedule.scheduleJob("0 13 * * *", async () => {
+  try {
+    const { runMiddayCheck } = await import("./planning/tools.ts");
+    await runMiddayCheck();
+  } catch (err) {
+    console.error("[planning] midday check failed:", err);
+  }
+});
+// Weekly planning session — Sunday 18:00, after the research pass digests.
+nodeSchedule.scheduleJob("0 18 * * 0", async () => {
+  try {
+    const { planWeekLite } = await import("./planning/tools.ts");
+    const { briefing } = await planWeekLite();
+    const { sendToCole } = await import("./telegram/bot.ts");
+    await sendToCole(briefing);
+  } catch (err) {
+    console.error("[planning] weekly session failed:", err);
+  }
+});
 nodeSchedule.scheduleJob("0 9 * * 0", async () => {
   try {
     await runWeekendPulse();
