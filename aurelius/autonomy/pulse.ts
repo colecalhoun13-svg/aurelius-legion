@@ -17,13 +17,34 @@
 
 import { prisma } from "../core/db/prisma.ts";
 import { runResearch } from "../research/researchEngine.ts";
+import { getKnowledge, resolveOperatorId } from "../knowledge/store.ts";
 
-// Standing research topics until per-operator strategy files ship (Phase 5.5).
+// Fallback topics if Living Knowledge holds no standing list yet.
 const TRAINING_RESEARCH_TOPICS = [
   "rep range optimization for strength endurance in athletes",
   "deload timing signals and fatigue markers in youth athletes",
   "bar speed and velocity loss as autoregulation signals",
 ];
+
+/**
+ * Standing topics live in Living Knowledge (research.standing_topics on
+ * the training operator) so Cole can steer the weekend sweep by
+ * confirming a proposal — no deploy required. Falls back to the
+ * hardcoded list until an entry exists.
+ */
+async function resolveResearchTopics(): Promise<string[]> {
+  try {
+    const operatorId = await resolveOperatorId("training");
+    if (!operatorId) return TRAINING_RESEARCH_TOPICS;
+    const entry = await getKnowledge(operatorId, "research", "standing_topics");
+    if (Array.isArray(entry?.value) && entry.value.every((t: any) => typeof t === "string") && entry.value.length > 0) {
+      return entry.value as string[];
+    }
+  } catch (err) {
+    console.warn("[pulse] standing-topics lookup failed, using defaults:", err);
+  }
+  return TRAINING_RESEARCH_TOPICS;
+}
 
 function dayRange(dateStr?: string): { start: Date; end: Date; dstr: string } {
   const dstr = dateStr ?? new Date().toISOString().slice(0, 10);
@@ -104,19 +125,21 @@ export async function runNightlyPulse(dateStr?: string) {
 }
 
 export async function runWeekendPulse() {
+  const topics = await resolveResearchTopics();
+
   // Scoreboard row for the pass — the measurement plane sees every sweep.
   const run = await prisma.ingestionRun.create({
     data: {
       runType: "weekend_deep",
       operatorName: "training",
       triggeredBy: "schedule",
-      sourcesQueried: TRAINING_RESEARCH_TOPICS,
+      sourcesQueried: topics,
     },
   });
 
   const results: Array<{ topic: string; insights: number; proposals: number; error?: string }> = [];
 
-  for (const topic of TRAINING_RESEARCH_TOPICS) {
+  for (const topic of topics) {
     try {
       const r = await runResearch({ query: topic, operator: "training", depth: "medium" });
       results.push({
