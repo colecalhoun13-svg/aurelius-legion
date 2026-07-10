@@ -231,6 +231,15 @@ export async function runResearch(task: ResearchTask): Promise<ResearchOutput> {
     console.warn("[research] llmResearch failed:", err);
   }
 
+  // ── Tier 1.5: open academic sources (free, no keys, always on) ──
+  try {
+    const { openSourcesSearch } = await import("./researchAdapters/openSourcesAdapter.ts");
+    const open = await openSourcesSearch(task.query, Math.max(2, Math.floor(limit / 3)));
+    results.push(...open);
+  } catch (err) {
+    console.warn("[research] open sources unavailable:", err);
+  }
+
   // ── Tier 2: external adapters (feature-flagged) ──
   if (FEATURES.bing) {
     try {
