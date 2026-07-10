@@ -214,6 +214,15 @@ productivityRouter.get("/activity", async (_req: Request, res: Response) => {
   }
 });
 
+productivityRouter.get("/score", async (_req: Request, res: Response) => {
+  try {
+    const { computeOperatorScore } = await import("../measurement/operatorScore.ts");
+    res.json(await computeOperatorScore());
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
 productivityRouter.get("/scoreboard", async (_req: Request, res: Response) => {
   try {
     res.json({ snapshots: await listSnapshots() });

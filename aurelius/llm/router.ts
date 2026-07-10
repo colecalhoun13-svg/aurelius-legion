@@ -287,6 +287,16 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
   // Layer 1: Base persona
   parts.push(BASE_PERSONA_PROMPT);
 
+  // Layer 1.5: Operator state — score-triggered mode (OG doc Parts II+IX).
+  // Cole's override (persona.mode_override) beats the math inside the block.
+  try {
+    const { getModePromptBlock } = await import("../measurement/operatorScore.ts");
+    const modeBlock = await getModePromptBlock();
+    if (modeBlock) parts.push("\n" + modeBlock);
+  } catch (err) {
+    console.warn("[router] mode block failed (non-fatal):", err);
+  }
+
   // Layer 2: Identity
   parts.push("\n" + formatIdentityForPrompt());
 
