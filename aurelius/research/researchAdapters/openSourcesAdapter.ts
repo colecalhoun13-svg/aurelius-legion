@@ -94,12 +94,42 @@ export async function semanticScholarSearch(query: string, limit = 4): Promise<R
   }
 }
 
-/** All three in parallel — the free academic sweep. */
+/** OpenAlex — the broadest open academic index. No key, generous limits. */
+export async function openAlexSearch(query: string, limit = 4): Promise<ResearchResult[]> {
+  try {
+    const url = `https://api.openalex.org/works?search=${encodeURIComponent(query)}&per-page=${limit}&select=title,publication_year,cited_by_count,primary_location,abstract_inverted_index`;
+    const json = await (await fetchWithTimeout(url)).json();
+    return (json?.results ?? []).map((w: any) => {
+      // OpenAlex ships abstracts as an inverted index — rebuild the text.
+      let abstract = "";
+      if (w.abstract_inverted_index) {
+        const words: string[] = [];
+        for (const [word, positions] of Object.entries(w.abstract_inverted_index as Record<string, number[]>)) {
+          for (const pos of positions) words[pos] = word;
+        }
+        abstract = words.join(" ").slice(0, 350);
+      }
+      return {
+        title: w.title ?? "untitled",
+        snippet: `${abstract || "(no abstract)"} (${w.publication_year ?? "?"}, ${w.cited_by_count ?? 0} citations)`,
+        url: w.primary_location?.landing_page_url ?? undefined,
+        source: "openalex" as const,
+        confidence: 0.8,
+      };
+    });
+  } catch (err) {
+    console.warn("[research] openalex unavailable:", (err as any)?.message ?? err);
+    return [];
+  }
+}
+
+/** All four in parallel — the free academic sweep. */
 export async function openSourcesSearch(query: string, perSource = 3): Promise<ResearchResult[]> {
-  const [arxiv, pubmed, s2] = await Promise.all([
+  const [arxiv, pubmed, s2, oa] = await Promise.all([
     arxivSearch(query, perSource),
     pubmedSearch(query, perSource),
     semanticScholarSearch(query, perSource),
+    openAlexSearch(query, perSource),
   ]);
-  return [...pubmed, ...s2, ...arxiv];
+  return [...pubmed, ...s2, ...oa, ...arxiv];
 }

@@ -97,6 +97,18 @@ Accepted, in install order:
    as a Tool Engine adapter with the escalation matrix in front of it.
 5. **Zotero** (optional) — if Cole uses it for reading, poll its local
    SQLite for new items → corpus.
+6. **Ollama** (`brew install ollama`) — local embeddings (swap
+   EMBEDDINGS_PROVIDER when ready; NORTH_STAR names this as the Gemini
+   swap-in) and local inference for the fast tier. Sovereignty upgrade.
+7. **whisper.cpp** (`brew install whisper-cpp`) — local audio/video
+   transcription → corpus ingestion. Athlete film + voice notes.
+8. **Docker Compose** — carries Paperless-ngx (and anything else
+   containerized) on the Mini or the UGREEN's container station.
+9. **Caddy** (`brew install caddy`) — reverse proxy with auto-HTTPS in
+   front of the PWA on the tailnet.
+10. **Restic** (`brew install restic`) — upgrade §5's plain pg_dump gzip
+    to encrypted, deduplicated snapshots targeting the UGREEN repo
+    (pg_dump | restic backup --stdin). Keep the monthly restore test.
 
 Rejected (recorded so we stop relitigating): n8n/Huginn (Aurelius IS the
 workflow+trigger engine — no second brainstem), MinIO (Postgres + NAS

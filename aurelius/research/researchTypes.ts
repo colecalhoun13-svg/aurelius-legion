@@ -1,6 +1,6 @@
 // aurelius/research/researchTypes.ts
 
-export type ResearchSource = "bing" | "serpapi" | "llm" | "embedding" | "arxiv" | "pubmed" | "semanticscholar";
+export type ResearchSource = "bing" | "serpapi" | "llm" | "embedding" | "arxiv" | "pubmed" | "semanticscholar" | "openalex";
 
 export type ResearchResult = {
   title: string;
