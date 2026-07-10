@@ -249,6 +249,15 @@ productivityRouter.post("/pulse/nightly", async (req: Request, res: Response) =>
   }
 });
 
+productivityRouter.post("/pulse/market", async (req: Request, res: Response) => {
+  try {
+    const { runMarketPulse } = await import("../wealth/engine.ts");
+    res.json(await runMarketPulse(req.body?.date));
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
 productivityRouter.post("/pulse/weekend", async (_req: Request, res: Response) => {
   try {
     res.json(await runWeekendPulse());

@@ -912,9 +912,23 @@ import { computeWeeklySnapshot } from "./measurement/scoreboard.ts";
 import { startTelegramBridge, sendToCole } from "./telegram/bot.ts";
 
 ensureRituals().catch((err) => console.error("[rituals] seed failed:", err));
+// The five living documents exist from first boot (founding editions).
+import("./wiki/livingDocs.ts")
+  .then((m) => m.ensureLivingDocuments())
+  .catch((err) => console.error("[livingDocs] seed failed:", err));
 // Dormant without TELEGRAM_BOT_TOKEN; wakes the moment the token lands.
 startTelegramBridge();
 
+// Market pulse at 06:30 — crypto/equities/macro digest into the wealth
+// corpus before the day starts. Signals only; Cole makes the calls.
+nodeSchedule.scheduleJob("30 6 * * *", async () => {
+  try {
+    const { runMarketPulse } = await import("./wealth/engine.ts");
+    await runMarketPulse();
+  } catch (err) {
+    console.error("[wealth] market pulse failed:", err);
+  }
+});
 // Morning briefing at 07:00 — the day opens with a push, not a blank page.
 nodeSchedule.scheduleJob("0 7 * * *", async () => {
   try {

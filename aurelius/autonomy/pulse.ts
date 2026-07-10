@@ -19,31 +19,59 @@ import { prisma } from "../core/db/prisma.ts";
 import { runResearch } from "../research/researchEngine.ts";
 import { getKnowledge, resolveOperatorId } from "../knowledge/store.ts";
 
-// Fallback topics if Living Knowledge holds no standing list yet.
-const TRAINING_RESEARCH_TOPICS = [
-  "rep range optimization for strength endurance in athletes",
-  "deload timing signals and fatigue markers in youth athletes",
-  "bar speed and velocity loss as autoregulation signals",
+// WHOLE-LIFE SWEEP CONFIG (OG doc Parts XI-XIII). Each operator sweeps
+// its own standing topics; Cole steers any lane via Living Knowledge
+// (research.standing_topics on that operator) — these are fallbacks
+// until an entry exists. Findings ingest into each lane's corpus, which
+// refreshes its living document.
+const SWEEPS: Array<{ operator: string; domain: string; fallback: string[] }> = [
+  {
+    operator: "training",
+    domain: "cole_training",
+    fallback: [
+      "rep range optimization for strength endurance in athletes",
+      "deload timing signals and fatigue markers in youth athletes",
+      "bar speed and velocity loss as autoregulation signals",
+    ],
+  },
+  {
+    operator: "business",
+    domain: "business",
+    fallback: [
+      "client retention systems for athletic performance coaching businesses",
+      "offer positioning and pricing for youth athlete training",
+      "lead generation channels for local sports performance coaches",
+    ],
+  },
+  {
+    operator: "wealth",
+    domain: "wealth",
+    fallback: [
+      "current macro liquidity regime and implications for risk assets",
+      "bitcoin and major crypto market structure this cycle",
+      "risk management and position sizing frameworks for small portfolios",
+    ],
+  },
+  {
+    operator: "content",
+    domain: "content",
+    fallback: ["short-form content formats that convert for performance coaches"],
+  },
 ];
 
-/**
- * Standing topics live in Living Knowledge (research.standing_topics on
- * the training operator) so Cole can steer the weekend sweep by
- * confirming a proposal — no deploy required. Falls back to the
- * hardcoded list until an entry exists.
- */
-async function resolveResearchTopics(): Promise<string[]> {
+/** Resolve an operator's standing topics from Living Knowledge, else fallback. */
+export async function resolveTopicsFor(operator: string, fallback: string[], key = "standing_topics"): Promise<string[]> {
   try {
-    const operatorId = await resolveOperatorId("training");
-    if (!operatorId) return TRAINING_RESEARCH_TOPICS;
-    const entry = await getKnowledge(operatorId, "research", "standing_topics");
+    const operatorId = await resolveOperatorId(operator);
+    if (!operatorId) return fallback;
+    const entry = await getKnowledge(operatorId, "research", key);
     if (Array.isArray(entry?.value) && entry.value.every((t: any) => typeof t === "string") && entry.value.length > 0) {
       return entry.value as string[];
     }
   } catch (err) {
-    console.warn("[pulse] standing-topics lookup failed, using defaults:", err);
+    console.warn(`[pulse] topics lookup failed for ${operator}, using defaults:`, err);
   }
-  return TRAINING_RESEARCH_TOPICS;
+  return fallback;
 }
 
 function dayRange(dateStr?: string): { start: Date; end: Date; dstr: string } {
@@ -125,46 +153,53 @@ export async function runNightlyPulse(dateStr?: string) {
 }
 
 export async function runWeekendPulse() {
-  const topics = await resolveResearchTopics();
+  // Resolve every lane's topics up front so the run row records the truth.
+  const lanes: Array<{ operator: string; domain: string; topics: string[] }> = [];
+  for (const sw of SWEEPS) {
+    lanes.push({ operator: sw.operator, domain: sw.domain, topics: await resolveTopicsFor(sw.operator, sw.fallback) });
+  }
+  const allTopics = lanes.flatMap((l) => l.topics.map((t) => `${l.operator}: ${t}`));
 
   // Scoreboard row for the pass — the measurement plane sees every sweep.
   const run = await prisma.ingestionRun.create({
     data: {
       runType: "weekend_deep",
-      operatorName: "training",
+      operatorName: "all",
       triggeredBy: "schedule",
-      sourcesQueried: topics,
+      sourcesQueried: allTopics,
     },
   });
 
   const results: Array<{ topic: string; insights: number; proposals: number; error?: string }> = [];
 
-  for (const topic of topics) {
-    try {
-      const r = await runResearch({ query: topic, operator: "training", depth: "medium" });
-      results.push({
-        topic,
-        insights: r.insights.length,
-        proposals: r.proposalsCreated,
-      });
+  for (const lane of lanes) {
+    for (const topic of lane.topics) {
+      try {
+        const r = await runResearch({ query: topic, operator: lane.operator, depth: "medium" });
+        results.push({
+          topic: `${lane.operator}: ${topic}`,
+          insights: r.insights.length,
+          proposals: r.proposalsCreated,
+        });
 
-      // Real findings join the corpus — the brain grows from its own
-      // sweeps (all four auto-awareness writes fire, wiki refreshes).
-      if (r.synthesis && r.insights.length > 0) {
-        const { ingestDocument } = await import("../corpus/ingest.ts");
-        await ingestDocument({
-          title: `Research: ${topic}`,
-          content: [r.synthesis, "", ...r.insights.map((i) => `- ${i}`)].join("\n"),
-          sourceType: "research",
-          domain: "cole_training",
-          operatorName: "training",
-          triggeredBy: "schedule",
-        }).catch((err: any) =>
-          console.warn("[pulse] corpus ingestion of findings failed (non-fatal):", err)
-        );
+        // Real findings join the corpus — the brain grows from its own
+        // sweeps (all four auto-awareness writes fire, wiki refreshes).
+        if (r.synthesis && r.insights.length > 0) {
+          const { ingestDocument } = await import("../corpus/ingest.ts");
+          await ingestDocument({
+            title: `Research: ${topic}`,
+            content: [r.synthesis, "", ...r.insights.map((i) => `- ${i}`)].join("\n"),
+            sourceType: "research",
+            domain: lane.domain,
+            operatorName: lane.operator,
+            triggeredBy: "schedule",
+          }).catch((err: any) =>
+            console.warn("[pulse] corpus ingestion of findings failed (non-fatal):", err)
+          );
+        }
+      } catch (err: any) {
+        results.push({ topic: `${lane.operator}: ${topic}`, insights: 0, proposals: 0, error: err?.message ?? String(err) });
       }
-    } catch (err: any) {
-      results.push({ topic, insights: 0, proposals: 0, error: err?.message ?? String(err) });
     }
   }
 

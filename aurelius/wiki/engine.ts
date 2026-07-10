@@ -69,11 +69,14 @@ function deterministicPage(domain: string, m: Awaited<ReturnType<typeof gatherDo
  */
 export async function synthesizeWikiPage(domain: string, reason = "manual") {
   const material = await gatherDomainMaterial(domain);
-  if (material.docs.length === 0) {
+  const existing = await prisma.wikiPage.findUnique({ where: { slug: domain } });
+
+  // A domain with no material and no standing page has nothing to say.
+  // Living documents (standing pages) synthesize even before their first
+  // corpus doc — from memories and confirmed knowledge.
+  if (material.docs.length === 0 && !existing) {
     return { skipped: true as const, reason: "no corpus documents in domain" };
   }
-
-  const existing = await prisma.wikiPage.findUnique({ where: { slug: domain } });
 
   const docsBlock = material.docs
     .map((d) => `- "${d.title}" — ${d.summary ?? "(no summary)"}`)
@@ -161,11 +164,14 @@ ${knBlock || "(none)"}
   return { skipped: false as const, page };
 }
 
-/** Refresh every domain that has corpus material. */
+/** Refresh every domain with corpus material + the five living documents. */
 export async function synthesizeAllDomains(reason = "schedule") {
-  const domains = await prisma.corpusDocument.groupBy({ by: ["domain"] });
+  const corpusDomains = await prisma.corpusDocument.groupBy({ by: ["domain"] });
+  const { LIVING_DOCS } = await import("./livingDocs.ts");
+  const all = new Set<string>([...corpusDomains.map((d) => d.domain), ...Object.keys(LIVING_DOCS)]);
   const results = [];
-  for (const d of domains) {
+  for (const domain of all) {
+    const d = { domain };
     try {
       results.push({ domain: d.domain, ...(await synthesizeWikiPage(d.domain, reason)) });
     } catch (err: any) {
