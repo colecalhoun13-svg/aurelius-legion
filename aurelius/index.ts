@@ -54,6 +54,8 @@ import { engineTestRouter } from "./router/index.ts";
 import { autonomyRouter } from "./router/autonomyRouter.ts";
 import { productivityRouter } from "./router/productivityRouter.ts";
 import { corpusRouter } from "./router/corpusRouter.ts";
+import { missionsRouter } from "./router/missionsRouter.ts";
+import { ritualsRouter } from "./router/ritualsRouter.ts";
 
 const app = express();
 app.use(express.json());
@@ -79,6 +81,8 @@ app.use("/api", engineTestRouter);
 app.use("/api/autonomy", autonomyRouter);
 app.use("/api/productivity", productivityRouter);
 app.use("/api/corpus", corpusRouter);
+app.use("/api/missions", missionsRouter);
+app.use("/api/rituals", ritualsRouter);
 
 app.get("/", (req: Request, res: Response) => {
   res.send("Aurelius OS backend is running");
@@ -894,10 +898,22 @@ app.post("/api/aurelius/register-sheet", async (req: Request, res: Response) => 
 // Sunday 09:00: weekend research pass → proposals for Monday review.
 // ═══════════════════════════════════════════════════════════════════
 import nodeSchedule from "node-schedule";
-import { runNightlyPulse, runWeekendPulse } from "./autonomy/pulse.ts";
+import { runWeekendPulse } from "./autonomy/pulse.ts";
+import {
+  ensureRituals,
+  generateMorningBriefing,
+  generateNightlyDebrief,
+} from "./rituals/engine.ts";
 
+ensureRituals().catch((err) => console.error("[rituals] seed failed:", err));
+
+// Morning briefing at 07:00 — the day opens with a push, not a blank page.
+nodeSchedule.scheduleJob("0 7 * * *", () => {
+  generateMorningBriefing().catch((err) => console.error("[rituals] morning failed:", err));
+});
+// Nightly debrief at 21:30 — wraps the deterministic pulse (gap math) in voice.
 nodeSchedule.scheduleJob("30 21 * * *", () => {
-  runNightlyPulse().catch((err) => console.error("[pulse] nightly failed:", err));
+  generateNightlyDebrief().catch((err) => console.error("[rituals] nightly failed:", err));
 });
 nodeSchedule.scheduleJob("0 9 * * 0", () => {
   runWeekendPulse().catch((err) => console.error("[pulse] weekend failed:", err));

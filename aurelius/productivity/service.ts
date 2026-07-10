@@ -539,26 +539,41 @@ export async function getDeck(dateStr?: string) {
 export async function getAureliusActivity() {
   const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
 
-  const [memories24h, reasoningRuns24h, patterns, researchRecent, signals] = await Promise.all([
-    prisma.memory.count({ where: { createdAt: { gte: dayAgo } } }),
-    prisma.reasoningCacheEntry.count({ where: { createdAt: { gte: dayAgo } } }),
-    prisma.compiledPattern.findMany({
-      orderBy: { updatedAt: "desc" },
-      take: 3,
-      select: { patternType: true, status: true, supportCount: true, domain: true, updatedAt: true },
-    }),
-    prisma.memory.findMany({
-      where: { category: "research" },
-      orderBy: { createdAt: "desc" },
-      take: 3,
-      select: { value: true, createdAt: true },
-    }),
-    prisma.bridgeSignal.findMany({
-      orderBy: { createdAt: "desc" },
-      take: 5,
-      select: { kind: true, severity: true, title: true, status: true, createdAt: true },
-    }),
-  ]);
+  const [memories24h, reasoningRuns24h, patterns, researchRecent, signals, missions] =
+    await Promise.all([
+      prisma.memory.count({ where: { createdAt: { gte: dayAgo } } }),
+      prisma.reasoningCacheEntry.count({ where: { createdAt: { gte: dayAgo } } }),
+      prisma.compiledPattern.findMany({
+        orderBy: { updatedAt: "desc" },
+        take: 3,
+        select: { patternType: true, status: true, supportCount: true, domain: true, updatedAt: true },
+      }),
+      prisma.memory.findMany({
+        where: { category: "research" },
+        orderBy: { createdAt: "desc" },
+        take: 3,
+        select: { value: true, createdAt: true },
+      }),
+      prisma.bridgeSignal.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        select: { kind: true, severity: true, title: true, status: true, createdAt: true },
+      }),
+      prisma.mission.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          domain: true,
+          planSummary: true,
+          createdAt: true,
+          finishedAt: true,
+          steps: { orderBy: { idx: "asc" }, select: { kind: true, status: true } },
+        },
+      }),
+    ]);
 
   return {
     counts: { memories24h, reasoningRuns24h },
@@ -568,5 +583,6 @@ export async function getAureliusActivity() {
       at: r.createdAt,
     })),
     recentSignals: signals,
+    missions,
   };
 }

@@ -444,6 +444,56 @@ model IngestionRun {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MISSIONS — the autonomy loop that actually executes.
+// Cole (or a schedule) states an objective; Aurelius plans discrete
+// steps, runs them (research / recall / synthesize), and files a
+// report. Reports auto-ingest into the corpus, so the second brain
+// grows from its own missions. Hard rule carried: missions produce
+// signals and proposals only — they never touch Living Knowledge
+// directly and never act outward without Cole.
+// ═══════════════════════════════════════════════════════════════════
+
+model Mission {
+  id           String    @id @default(cuid())
+  title        String
+  objective    String // what success looks like, in Cole's words
+  domain       String    @default("personal")
+  operatorName String? // lens the mission runs under (strategy default)
+  origin       String    @default("cole") // "cole" | "aurelius_proposed" | "schedule"
+  priority     String    @default("normal") // "low" | "normal" | "high"
+  status       String    @default("proposed") // "proposed" | "planned" | "running" | "completed" | "failed" | "cancelled"
+  planSummary  String? // one-line restatement of the approach
+  report       String? // final report (markdown)
+  corpusDocId  String? // report's home in the second brain
+  error        String?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  steps MissionStep[]
+
+  @@index([status, createdAt])
+}
+
+model MissionStep {
+  id         String    @id @default(cuid())
+  missionId  String
+  mission    Mission   @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  idx        Int
+  kind       String // "research" | "recall" | "synthesize"
+  input      String // query / instruction for this step
+  status     String    @default("pending") // "pending" | "running" | "done" | "failed"
+  output     String? // step result (truncated for storage)
+  error      String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([missionId, idx])
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // PHASE 4.6 — RETRIEVAL SUBSTRATE
 // Derived data: semantic index over knowledge, memory, and reasoning.
 // Rebuildable at any time from source tables (scripts/backfillEmbeddings).
