@@ -1,54 +1,34 @@
 // aurelius/measurement/operatorScore.ts
 //
-// OPERATOR SCORE (OG doc Part IX) + PERSONALITY MODES (Part II).
+// OPERATOR SCORE — one weighted, deterministic read on how Cole is
+// operating (OG doc Part IX weights: completion 40 · balance 20 ·
+// consistency 20 · priority 10 · recovery 10), with insights that name
+// what's dragging.
 //
-// One weighted, deterministic number for how Cole is operating, with the
-// breakdown, insights, and the mode it puts Aurelius in. Weights are the
-// OG doc's: completion 40 · balance 20 · consistency 20 · priority 10 ·
-// recovery 10. The score TRIGGERS the mode (90+ Tactical, 75+ Mentor,
-// 60+ Commander, 40+ Stoic, else Accountability); Cole can override any
-// time via Living Knowledge (persona.mode_override) — his word beats
-// the math, per the invariants.
+// NO MODES. Cole's call: one voice, always — the register modulates
+// naturally from (a) this live state and (b) what Aurelius has LEARNED
+// about how Cole wants to be spoken to (persona.* entries in Living
+// Knowledge, each one confirmed by Cole through propose→confirm).
+// The voice never announces a shift and never switches personas.
 
 import { prisma } from "../core/db/prisma.ts";
-import { getKnowledge, resolveOperatorId } from "../knowledge/store.ts";
-
-export type OperatorMode = "tactical" | "mentor" | "commander" | "stoic" | "accountability";
+import { resolveOperatorId } from "../knowledge/store.ts";
 
 export type OperatorScore = {
   score: number;
-  mode: OperatorMode;
-  modeSource: "score" | "cole_override";
   components: {
-    taskCompletion: number;   // /40
-    categoryBalance: number;  // /20
-    consistency: number;      // /20
+    taskCompletion: number;    // /40
+    categoryBalance: number;   // /20
+    consistency: number;       // /20
     priorityAlignment: number; // /10
-    recoveryLoad: number;     // /10
+    recoveryLoad: number;      // /10
   };
   insights: string[];
   daysMeasured: number;
 };
 
-const MODE_GUIDANCE: Record<OperatorMode, string> = {
-  tactical: "Mode: TACTICAL. Cole is executing. Sharp, brief, dry wit allowed. Match his tempo; don't slow him down.",
-  mentor: "Mode: MENTOR. Solid week with soft spots. Offer clarity and one refinement at a time; teach, don't lecture.",
-  commander: "Mode: COMMANDER. Drift detected. Be direct about what's slipping and issue clear next moves. Pressure, with respect.",
-  stoic: "Mode: STOIC. The week is heavy. Calm, grounded, no wit. Reduce to what matters; steady the line.",
-  accountability: "Mode: ACCOUNTABILITY. Follow-through has collapsed. Surgical honesty about the gap between stated intent and action. No flattery, no filler — name it and give the single first step back.",
-};
-
-function modeFromScore(score: number): OperatorMode {
-  if (score >= 90) return "tactical";
-  if (score >= 75) return "mentor";
-  if (score >= 60) return "commander";
-  if (score >= 40) return "stoic";
-  return "accountability";
-}
-
 export async function computeOperatorScore(): Promise<OperatorScore> {
-  const now = Date.now();
-  const week = new Date(now - 7 * 24 * 3600 * 1000);
+  const week = new Date(Date.now() - 7 * 24 * 3600 * 1000);
   const window = { gte: week };
 
   const [done, created, habits, habitDone, gaps] = await Promise.all([
@@ -106,45 +86,48 @@ export async function computeOperatorScore(): Promise<OperatorScore> {
 
   const score = Math.max(0, Math.min(100, taskCompletion + categoryBalance + consistency + priorityAlignment + recoveryLoad));
 
-  // Mode: Cole's override wins over the math, always.
-  let mode = modeFromScore(score);
-  let modeSource: "score" | "cole_override" = "score";
-  try {
-    const globalOp = await resolveOperatorId("strategy");
-    if (globalOp) {
-      const override = await getKnowledge(globalOp, "persona", "mode_override");
-      const v = typeof override?.value === "string" ? override.value.toLowerCase() : null;
-      if (v && v in MODE_GUIDANCE) {
-        mode = v as OperatorMode;
-        modeSource = "cole_override";
-      }
-    }
-  } catch {
-    // override lookup is best-effort
-  }
-
   return {
     score,
-    mode,
-    modeSource,
     components: { taskCompletion, categoryBalance, consistency, priorityAlignment, recoveryLoad },
     insights,
     daysMeasured: gaps.length,
   };
 }
 
-/** The prompt layer — one compact block for buildSystemPrompt. */
-export async function getModePromptBlock(): Promise<string> {
+/**
+ * Prompt Layer 1.5 — operator state + learned calibration, one voice.
+ * The register comes from what Aurelius has learned about Cole (every
+ * persona.* entry was confirmed by him), never from a mode switch.
+ */
+export async function getOperatorStateBlock(): Promise<string> {
   try {
     const s = await computeOperatorScore();
-    return [
+    const lines = [
       `═══ OPERATOR STATE ═══`,
-      `Operator Score: ${s.score}/100 (completion ${s.components.taskCompletion}/40 · balance ${s.components.categoryBalance}/20 · consistency ${s.components.consistency}/20 · priority ${s.components.priorityAlignment}/10 · recovery ${s.components.recoveryLoad}/10)${s.modeSource === "cole_override" ? " · mode set by Cole" : ""}`,
-      MODE_GUIDANCE[s.mode],
+      `Operator Score: ${s.score}/100 (completion ${s.components.taskCompletion}/40 · balance ${s.components.categoryBalance}/20 · consistency ${s.components.consistency}/20 · priority ${s.components.priorityAlignment}/10 · recovery ${s.components.recoveryLoad}/10)`,
       ...(s.insights.length ? [`Signals: ${s.insights.join(" ")}`] : []),
-    ].join("\n");
+      "One voice — yours, always. Let this state tune your register naturally: when Cole is executing, match his tempo and stay brief; when follow-through slips, be more direct about the gap between intent and action. Never announce a shift, never switch personas.",
+    ];
+
+    // Learned calibration: everything Cole has confirmed about how he
+    // wants to be spoken to. Grows through propose→confirm over time.
+    const globalOp = await resolveOperatorId("strategy");
+    if (globalOp) {
+      const learned = await prisma.knowledgeEntry.findMany({
+        where: { operatorId: globalOp, scope: "persona", active: true },
+        select: { key: true, value: true },
+        take: 12,
+      });
+      if (learned.length > 0) {
+        lines.push("What Cole has taught you about speaking to him:");
+        for (const e of learned) {
+          lines.push(`  — ${e.key.replace(/_/g, " ")}: ${typeof e.value === "string" ? e.value : JSON.stringify(e.value)}`);
+        }
+      }
+    }
+    return lines.join("\n");
   } catch (err) {
-    console.warn("[operatorScore] mode block failed (non-fatal):", err);
+    console.warn("[operatorScore] state block failed (non-fatal):", err);
     return "";
   }
 }

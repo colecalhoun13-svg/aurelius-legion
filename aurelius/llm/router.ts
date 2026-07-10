@@ -287,14 +287,15 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
   // Layer 1: Base persona
   parts.push(BASE_PERSONA_PROMPT);
 
-  // Layer 1.5: Operator state — score-triggered mode (OG doc Parts II+IX).
-  // Cole's override (persona.mode_override) beats the math inside the block.
+  // Layer 1.5: Operator state — score + learned calibration, one voice.
+  // No modes: the register modulates from live state and from persona.*
+  // entries Cole has confirmed, never from a persona switch.
   try {
-    const { getModePromptBlock } = await import("../measurement/operatorScore.ts");
-    const modeBlock = await getModePromptBlock();
-    if (modeBlock) parts.push("\n" + modeBlock);
+    const { getOperatorStateBlock } = await import("../measurement/operatorScore.ts");
+    const stateBlock = await getOperatorStateBlock();
+    if (stateBlock) parts.push("\n" + stateBlock);
   } catch (err) {
-    console.warn("[router] mode block failed (non-fatal):", err);
+    console.warn("[router] operator state block failed (non-fatal):", err);
   }
 
   // Layer 2: Identity
