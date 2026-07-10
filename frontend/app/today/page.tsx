@@ -135,9 +135,9 @@ export default function TodayPage() {
     <main className="text-aurelius-text">
       <div className="max-w-3xl mx-auto space-y-8">
         {/* Header */}
-        <header className="flex items-baseline justify-between border-b border-aurelius-border pb-4">
+        <header className="flex items-baseline justify-between border-b border-aurelius-gold/35 pb-4">
           <div>
-            <h1 className="aurelius-heading text-3xl">Today</h1>
+            <h1 className="aurelius-heading text-4xl">Today</h1>
             <p className="text-sm text-neutral-400">{data.date}</p>
           </div>
           <div className="text-sm text-neutral-400 space-x-4">
@@ -227,12 +227,12 @@ export default function TodayPage() {
           <h2 className="aurelius-heading text-base mb-3">
             Tasks — {data.tasks.length}
           </h2>
-          <ul className="space-y-2 mb-4">
+          <ul className="divide-y divide-aurelius-gold/10 mb-4">
             {data.tasks.length === 0 && (
               <li className="text-neutral-600 italic text-sm">Nothing on deck. Add something.</li>
             )}
             {data.tasks.map((t) => (
-              <li key={t.id} className="flex items-center gap-3">
+              <li key={t.id} className="flex items-center gap-3 py-2.5">
                 <button
                   onClick={() => act({ action: "completeTask", id: t.id })}
                   className="w-4 h-4 border border-aurelius-gold rounded-sm hover:bg-aurelius-gold/40 shrink-0"

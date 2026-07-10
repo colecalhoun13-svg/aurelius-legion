@@ -116,17 +116,51 @@
 .aurelius-heading {
   font-family: Georgia, "Times New Roman", serif;
   font-variant: small-caps;
-  letter-spacing: 0.12em;
-  color: var(--aurelius-gold);
+  letter-spacing: 0.14em;
+  background: linear-gradient(180deg, #f6e2a2 0%, #d4af37 55%, #a87f1d 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 1px 12px rgba(212, 175, 55, 0.15);
 }
 
 .aurelius-panel-frame {
-  border: 1px solid rgba(212, 175, 55, 0.28);
-  border-radius: 0.5rem;
-  background: linear-gradient(180deg, rgba(17, 17, 17, 0.92), rgba(10, 10, 10, 0.94));
+  border: 1px solid rgba(212, 175, 55, 0.5);
+  border-radius: 0.375rem;
+  background: linear-gradient(180deg, rgba(14, 13, 9, 0.94), rgba(6, 6, 5, 0.96));
   box-shadow:
-    0 0 0 1px rgba(212, 175, 55, 0.05),
-    inset 0 0 28px rgba(0, 0, 0, 0.55);
+    0 0 18px rgba(212, 175, 55, 0.07),
+    0 0 0 1px rgba(0, 0, 0, 0.8),
+    inset 0 1px 0 rgba(212, 175, 55, 0.12),
+    inset 0 0 32px rgba(0, 0, 0, 0.6);
+}
+
+/* Panel header row — gold underline like the mockup */
+.aurelius-panel-frame > h2 {
+  border-bottom: 1px solid rgba(212, 175, 55, 0.35);
+  padding-bottom: 0.5rem;
+}
+
+/* The plaque: outer gold frame around the whole app */
+.aurelius-app-frame {
+  border: 1px solid rgba(212, 175, 55, 0.55);
+  border-radius: 0.375rem;
+  box-shadow:
+    0 0 34px rgba(212, 175, 55, 0.1),
+    inset 0 0 60px rgba(0, 0, 0, 0.6);
+}
+
+/* Grain — the mockup's speckled black texture */
+.aurelius-grain {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='180' height='180' filter='url(%23n)' opacity='0.5'/></svg>");
+  opacity: 0.07;
+  mix-blend-mode: screen;
+}
+
+/* Olive-gold, weathered wreath — the mockup's watermark tone */
+.aurelius-wreath-watermark {
+  filter: sepia(0.5) saturate(0.55) brightness(0.62);
+  opacity: 0.3;
 }
 
 /* ===============================================
