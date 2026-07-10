@@ -198,10 +198,13 @@
   mix-blend-mode: screen;
 }
 
-/* Olive-gold, weathered wreath — the mockup's watermark tone */
-.aurelius-wreath-watermark {
-  filter: sepia(0.5) saturate(0.55) brightness(0.62);
-  opacity: 0.3;
+/* The wreath breathes — barely perceptible, but alive */
+@keyframes wreathBreathe {
+  from { transform: scale(1); }
+  to { transform: scale(1.015); }
+}
+.animate-wreathBreathe {
+  animation: wreathBreathe 11s ease-in-out infinite alternate;
 }
 
 /* ===============================================

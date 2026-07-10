@@ -31,6 +31,33 @@ function greeting(): string {
   return "Evening";
 }
 
+// A fresh quote every load — Stoics only.
+const QUOTES: [string, string][] = [
+  ["You have power over your mind — not outside events. Realize this, and you will find strength.", "Marcus Aurelius"],
+  ["Waste no more time arguing about what a good man should be. Be one.", "Marcus Aurelius"],
+  ["The impediment to action advances action. What stands in the way becomes the way.", "Marcus Aurelius"],
+  ["If it is not right, do not do it; if it is not true, do not say it.", "Marcus Aurelius"],
+  ["Confine yourself to the present.", "Marcus Aurelius"],
+  ["The best revenge is to be unlike him who performed the injury.", "Marcus Aurelius"],
+  ["Very little is needed to make a happy life; it is all within yourself, in your way of thinking.", "Marcus Aurelius"],
+  ["It is not death that a man should fear, but he should fear never beginning to live.", "Marcus Aurelius"],
+  ["We suffer more often in imagination than in reality.", "Seneca"],
+  ["Luck is what happens when preparation meets opportunity.", "Seneca"],
+  ["He who is brave is free.", "Seneca"],
+  ["Begin at once to live, and count each separate day as a separate life.", "Seneca"],
+  ["It is a rough road that leads to the heights of greatness.", "Seneca"],
+  ["No man is free who is not master of himself.", "Epictetus"],
+  ["First say to yourself what you would be; and then do what you have to do.", "Epictetus"],
+  ["It's not what happens to you, but how you react to it that matters.", "Epictetus"],
+  ["Don't explain your philosophy. Embody it.", "Epictetus"],
+  ["The greater the difficulty, the more glory in surmounting it.", "Epictetus"],
+  ["Dwell on the beauty of life. Watch the stars, and see yourself running with them.", "Marcus Aurelius"],
+  ["Think of yourself as dead. You have lived your life. Now take what's left and live it properly.", "Marcus Aurelius"],
+  ["When you arise in the morning, think of what a precious privilege it is to be alive.", "Marcus Aurelius"],
+]
+
+
+
 const QUICK_LINKS = [
   { name: "Today", path: "/today", glyph: "☀", desc: "plan · tasks · capture" },
   { name: "Projects", path: "/projects", glyph: "❖", desc: "progress · runway" },
@@ -41,6 +68,7 @@ const QUICK_LINKS = [
 
 export default function DeckPage() {
   const [deck, setDeck] = useState<Deck | null>(null);
+  const [quote] = useState(() => QUOTES[Math.floor(Math.random() * QUOTES.length)]!);
   const [cmd, setCmd] = useState("");
   const [flash, setFlash] = useState<string | null>(null);
 
@@ -80,6 +108,14 @@ export default function DeckPage() {
         {greeting()}, Operator
       </h1>
       <p className="text-neutral-500 text-sm mt-3">{deck?.date ?? ""}</p>
+
+      {/* The day's quote */}
+      <blockquote className="mt-6 max-w-2xl px-8 text-center">
+        <p className="italic text-neutral-400 leading-relaxed" style={{ fontFamily: "Georgia, serif" }}>
+          “{quote[0]}”
+        </p>
+        <footer className="aurelius-heading text-sm mt-2">— {quote[1]}</footer>
+      </blockquote>
 
       {/* Focus, if set — a single quiet line */}
       {deck?.plan?.focus && (

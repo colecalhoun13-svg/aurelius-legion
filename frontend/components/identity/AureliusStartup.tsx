@@ -9,6 +9,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import LaurelWreath from "./LaurelWreath";
 
 const FLASH_MS = 1050; // matches wreathFlash
 const HOLD_MS = 300;   // beat after lock-on
@@ -35,7 +36,9 @@ export default function AureliusStartup({ children }: { children: React.ReactNod
         phase === "dissolve" ? "animate-bootFade" : ""
       }`}
     >
-      <div className="absolute inset-0 bg-wreath bg-center bg-no-repeat bg-[length:75vmin] animate-wreathFlash opacity-0" />
+      <div className="absolute inset-0 flex items-center justify-center animate-wreathFlash opacity-0">
+        <LaurelWreath size="105vmin" />
+      </div>
     </div>
   );
 

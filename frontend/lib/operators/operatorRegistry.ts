@@ -25,6 +25,16 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     path: "/today",
     description: "Cole's lane — today's plan, tasks, habits, capture",
   },
+  inbox: {
+    name: "Inbox",
+    path: "/inbox",
+    description: "Triage — everything captured or proposed",
+  },
+  calendar: {
+    name: "Calendar",
+    path: "/calendar",
+    description: "The week as a resource",
+  },
   projects: {
     name: "Projects",
     path: "/projects",
@@ -44,6 +54,11 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     name: "Aurelius",
     path: "/aurelius",
     description: "What the system is doing in the background",
+  },
+  tools: {
+    name: "Tools",
+    path: "/tools",
+    description: "Aurelius's hands — live and planned integrations",
   },
   corpus: {
     name: "Corpus",

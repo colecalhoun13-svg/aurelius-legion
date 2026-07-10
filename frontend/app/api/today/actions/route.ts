@@ -51,6 +51,10 @@ export async function POST(request: Request) {
         return NextResponse.json(
           await createProject({ name: body.name, domain: body.domain, targetDate: body.targetDate })
         );
+      case "routeTask": {
+        const { updateTask } = await import("../../../../../aurelius/productivity/service");
+        return NextResponse.json(await updateTask(body.id, { status: body.status }));
+      }
       case "ackSignal":
         return NextResponse.json(await ackBridgeSignal(body.id, body.status ?? "acknowledged"));
       default:
