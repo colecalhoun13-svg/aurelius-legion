@@ -55,6 +55,62 @@ const openaiEmbeddingAdapter: EmbeddingAdapter = {
   },
 };
 
+// ── Gemini adapter (free tier) ──────────────────────────────────────
+// gemini-embedding-001 supports Matryoshka output sizing — we request
+// exactly EMBEDDING_DIMS so the pgvector column works unchanged. Vectors
+// at reduced dimensionality come back unnormalized; we L2-normalize.
+// Free-tier rate limits are real: one retry with backoff on 429.
+
+const geminiEmbeddingAdapter: EmbeddingAdapter = {
+  name: "gemini",
+  model: "gemini-embedding-001",
+  dims: EMBEDDING_DIMS,
+  async embed(texts: string[]): Promise<number[][]> {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) throw new Error("GEMINI_API_KEY not set — embeddings unavailable");
+
+    const body = JSON.stringify({
+      requests: texts.map((t) => ({
+        model: `models/${this.model}`,
+        content: { parts: [{ text: t }] },
+        outputDimensionality: EMBEDDING_DIMS,
+      })),
+    });
+
+    const call = () =>
+      fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:batchEmbedContents?key=${key}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body }
+      );
+
+    let res = await call();
+    if (res.status === 429) {
+      // free-tier rate limit — back off once and retry
+      await new Promise((r) => setTimeout(r, 5000));
+      res = await call();
+    }
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`Gemini embeddings failed (${res.status}): ${errBody.slice(0, 200)}`);
+    }
+
+    const json: any = await res.json();
+    const embeddings: number[][] = (json.embeddings ?? []).map(
+      (e: any) => e.values as number[]
+    );
+    if (embeddings.length !== texts.length) {
+      throw new Error(
+        `Gemini returned ${embeddings.length} embeddings for ${texts.length} inputs`
+      );
+    }
+    // L2-normalize (required when outputDimensionality < native size)
+    return embeddings.map((v) => {
+      const norm = Math.sqrt(v.reduce((acc, x) => acc + x * x, 0)) || 1;
+      return v.map((x) => x / norm);
+    });
+  },
+};
+
 // ── Mock adapter (tests / keyless environments) ─────────────────────
 // Deterministic: same text → same vector. Similar texts do NOT map to
 // similar vectors (it's a hash, not a model) — fine for pipeline tests,
@@ -103,6 +159,9 @@ export function getEmbeddingAdapter(): EmbeddingAdapter | null {
   if (provider === "mock") return mockEmbeddingAdapter;
   if (provider === "openai") {
     return process.env.OPENAI_API_KEY ? openaiEmbeddingAdapter : null;
+  }
+  if (provider === "gemini") {
+    return process.env.GEMINI_API_KEY ? geminiEmbeddingAdapter : null;
   }
   // Future: "ollama" adapter slots in here (Mac Mini phase).
   console.warn(`[embeddings] unknown EMBEDDINGS_PROVIDER "${provider}" — retrieval disabled`);
