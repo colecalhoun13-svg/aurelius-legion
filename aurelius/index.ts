@@ -918,6 +918,10 @@ import("./wiki/livingDocs.ts")
   .catch((err) => console.error("[livingDocs] seed failed:", err));
 // Dormant without TELEGRAM_BOT_TOKEN; wakes the moment the token lands.
 startTelegramBridge();
+// Dormant without PAPERLESS_URL/TOKEN; wakes on the Mini.
+import("./corpus/paperlessPoller.ts")
+  .then((m) => m.startPaperlessPoller())
+  .catch((err) => console.error("[paperless] init failed:", err));
 
 // Market pulse at 06:30 — crypto/equities/macro digest into the wealth
 // corpus before the day starts. Signals only; Cole makes the calls.
@@ -927,6 +931,16 @@ nodeSchedule.scheduleJob("30 6 * * *", async () => {
     await runMarketPulse();
   } catch (err) {
     console.error("[wealth] market pulse failed:", err);
+  }
+});
+// RSS standing feeds at 06:00 — reading digests into the corpus. Dormant
+// until research.rss_feeds exists in Living Knowledge.
+nodeSchedule.scheduleJob("0 6 * * *", async () => {
+  try {
+    const { pollRssOnce } = await import("./corpus/rssIngest.ts");
+    await pollRssOnce();
+  } catch (err) {
+    console.error("[rss] poll failed:", err);
   }
 });
 // Morning briefing at 07:00 — the day opens with a push, not a blank page.
