@@ -20,6 +20,7 @@ const DEFAULT_SOURCES: EmbeddingSourceType[] = [
   "memory",
   "reasoning_cache",
   "note",
+  "task",
   "corpus_doc",
 ];
 

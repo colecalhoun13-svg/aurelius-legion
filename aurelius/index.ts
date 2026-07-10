@@ -52,6 +52,7 @@ registerAllTools();
 // Routers
 import { engineTestRouter } from "./router/index.ts";
 import { autonomyRouter } from "./router/autonomyRouter.ts";
+import { productivityRouter } from "./router/productivityRouter.ts";
 
 const app = express();
 app.use(express.json());
@@ -75,6 +76,7 @@ console.log("===================================================");
 
 app.use("/api", engineTestRouter);
 app.use("/api/autonomy", autonomyRouter);
+app.use("/api/productivity", productivityRouter);
 
 app.get("/", (req: Request, res: Response) => {
   res.send("Aurelius OS backend is running");
