@@ -15,6 +15,11 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     path: "/",
     description: "Primary operator overview",
   },
+  today: {
+    name: "Today",
+    path: "/today",
+    description: "Cole's lane — today's plan, tasks, habits, capture",
+  },
   corpus: {
     name: "Corpus",
     path: "/corpus",
