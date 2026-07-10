@@ -277,3 +277,28 @@ Engine · Systems/SOP · Workflow · Client Engine · Analytics · Brand
 list, and outreach flow once he supplies them. The research lane and
 Business OS living document are live in the meantime and will have
 compounded context by then.
+
+## State update — 2026-07-10 (calendar engine, PR #4)
+
+**Landed:** the Calendar engine (OG doc Part VIII), end to end.
+- One-time OAuth connect flow for Desktop-app credentials
+  (`/api/calendar/auth` → Google consent → loopback callback → refresh
+  token persisted server-side, never indexed/embedded). Auto-refreshing
+  access tokens; a dead refresh token disconnects loudly, never loops.
+- Sync engine: primary calendar → `CalendarEvent` mirror every 15 min
+  (60 days ahead, 7 back), recurring events expanded, Google-side
+  deletions pruned. Everything downstream reads the DB — briefings,
+  Today, deck, planning — and never blocks on Google.
+- `google_calendar` registered tool: read_events · find_availability ·
+  create_event (conversation-only, Cole-in-the-loop) · sync.
+- Availability scanner: free blocks in the 08:00–21:00 waking window.
+- Planning upgraded in place: `detect_overload` capacity now shrinks on
+  calendar-busy days (90-min-per-task heuristic, floor 1); weekly
+  planning skeleton carries the week's event shape. Same contracts —
+  calendar absent means v1 baseline math, unchanged.
+- Calendar page renders the real week (own `/api/calendar` range route),
+  with the connect link surfaced until OAuth is done.
+- Smoke suite grew to 18 checks (honest-fail + gap math). All green;
+  `tsc` clean both sides; prod `next build` green.
+
+**Blocked on Cole:** clicking the one authorization link.

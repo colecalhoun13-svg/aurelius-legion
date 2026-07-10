@@ -16,7 +16,7 @@ import {
 export const planningAdapter: ToolAdapter = {
   name: "planning",
   description:
-    "Planning & scheduling (calendar-less v1): analyze the week, detect overload, decompose goals into proposed tasks, run the weekly planning session.",
+    "Planning & scheduling: analyze the week, detect overload (calendar-aware when synced), decompose goals into proposed tasks, run the weekly planning session.",
   actions: [
     {
       name: "analyze_week",
@@ -25,7 +25,8 @@ export const planningAdapter: ToolAdapter = {
     },
     {
       name: "detect_overload",
-      description: "Due-task load vs daily capacity for the next 7 days, plus overdue backlog.",
+      description:
+        "Due-task load vs daily capacity for the next 7 days, plus overdue backlog. Capacity shrinks on calendar-busy days when the sync is live.",
       dataSchema: "{} (no fields)",
     },
     {

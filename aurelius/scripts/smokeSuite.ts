@@ -94,6 +94,29 @@ async function main() {
   const init2 = await runInitiativePulse();
   check("initiative dedups on rerun", init2.proposed.length === 0 || init2.proposed.length < init1.proposed.length + 1);
 
+  console.log("── calendar (unauthed: fails honestly; math runs on the mirror) ──");
+  const { googleCalendarAdapter } = await import("../tools/adapters/googleCalendar.ts");
+  const { isCalendarConnected } = await import("../calendar/googleAuth.ts");
+  const { findAvailability } = await import("../calendar/engine.ts");
+  if (!(await isCalendarConnected())) {
+    const calRead = await googleCalendarAdapter.run("read_events", {});
+    check("calendar tool fails honestly when unauthed", !calRead.ok && /calendar\/auth/.test(calRead.error ?? ""));
+  } else {
+    const calRead = await googleCalendarAdapter.run("read_events", {});
+    check("calendar tool reads when connected", calRead.ok);
+  }
+  const calDay = new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
+  await prisma.calendarEvent.createMany({
+    data: [
+      { externalId: `${TAG}_cal_1`, title: "smoke A", startAt: new Date(`${calDay}T09:00:00Z`), endAt: new Date(`${calDay}T10:30:00Z`), raw: { allDay: false } },
+      { externalId: `${TAG}_cal_2`, title: "smoke B", startAt: new Date(`${calDay}T14:00:00Z`), endAt: new Date(`${calDay}T16:00:00Z`), raw: { allDay: false } },
+    ],
+    skipDuplicates: true,
+  });
+  const avail = (await findAvailability({ days: 2, minMinutes: 60 })).find((d) => d.date === calDay);
+  check("availability gap math (3 slots, 210 busy min)", avail?.slots.length === 3 && avail?.busyMinutes === 210);
+  await prisma.calendarEvent.deleteMany({ where: { externalId: { startsWith: TAG } } });
+
   // ── cleanup (smoke artifacts only) ──
   await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });
   await prisma.corpusDocument.delete({ where: { id: doc.id } });

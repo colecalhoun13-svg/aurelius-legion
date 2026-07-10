@@ -6,12 +6,13 @@
 import { registerTool } from "./toolRegistry.ts";
 import { planningAdapter } from "./adapters/planning.ts";
 import { googleSheetsAdapter } from "./adapters/googleSheets.ts";
+import { googleCalendarAdapter } from "./adapters/googleCalendar.ts";
 
 export function registerAllTools(): void {
   registerTool(googleSheetsAdapter);
   registerTool(planningAdapter);
+  registerTool(googleCalendarAdapter);
 
   // Future tools register here:
-  //   registerTool(googleCalendarAdapter);   // Phase 5
   //   registerTool(instagramAdapter);        // Phase 6
 }
