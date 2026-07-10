@@ -3,11 +3,27 @@
 // ===============================================
 
 import "./globals.css";
+import type { Viewport } from "next";
 import AureliusStartup from "../components/identity/AureliusStartup";
 
 export const metadata = {
-  title: "Aurelius OS v3.4",
-  description: "Operate with discipline.",
+  title: "Aurelius OS",
+  description: "Operator-class second mind. Operate with discipline.",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent" as const,
+    title: "Aurelius",
+  },
+  icons: {
+    apple: "/icons/apple-touch-icon.png",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0a0a0a",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
