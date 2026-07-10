@@ -21,7 +21,7 @@ export default function BackgroundWreath() {
             src="/crest/aurelius-wreath.png"
             alt=""
             className="w-full h-full object-contain"
-            style={{ filter: "sepia(0.5) saturate(0.62) brightness(0.68)", opacity: 0.55 }}
+            style={{ filter: "sepia(0.5) saturate(0.6) brightness(0.55)", opacity: 0.35 }}
           />
         </div>
       </div>
