@@ -947,6 +947,13 @@ nodeSchedule.scheduleJob("0 9 * * 0", async () => {
 nodeSchedule.scheduleJob("0 20 * * 0", () => {
   computeWeeklySnapshot().catch((err) => console.error("[scoreboard] failed:", err));
 });
+// Initiative — 08:00 daily, after the briefing: Aurelius scans its own
+// state and proposes missions. Proposed only; Cole launches.
+import("./autonomy/initiative.ts").then(({ runInitiativePulse }) => {
+  nodeSchedule.scheduleJob("0 8 * * *", () => {
+    runInitiativePulse().catch((err) => console.error("[initiative] failed:", err));
+  });
+});
 
 const PORT = Number(process.env.PORT) || 3001;
 app.listen(PORT, "0.0.0.0", () => {

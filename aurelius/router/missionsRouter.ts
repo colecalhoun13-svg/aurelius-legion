@@ -40,6 +40,16 @@ missionsRouter.post("/", async (req: Request, res: Response) => {
   }
 });
 
+// Static route BEFORE /:id — Express matches in order.
+missionsRouter.post("/initiative/run", async (_req: Request, res: Response) => {
+  try {
+    const { runInitiativePulse } = await import("../autonomy/initiative.ts");
+    res.json(await runInitiativePulse());
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
 missionsRouter.get("/:id", async (req: Request, res: Response) => {
   try {
     const mission = await getMission(String(req.params.id));

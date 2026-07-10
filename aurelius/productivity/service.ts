@@ -567,6 +567,7 @@ export async function getAureliusActivity() {
           title: true,
           status: true,
           domain: true,
+          origin: true,
           planSummary: true,
           createdAt: true,
           finishedAt: true,

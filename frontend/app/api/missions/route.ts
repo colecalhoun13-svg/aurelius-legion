@@ -16,6 +16,13 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
+    // Launch an already-proposed mission (Aurelius-initiated ones wait
+    // for exactly this): fire-and-forget, the page watches it move.
+    if (body.run && typeof body.run === "string") {
+      const { runMission } = await import("../../../../aurelius/missions/engine");
+      runMission(body.run).catch((err: any) => console.error("Mission run crashed:", err));
+      return NextResponse.json({ started: body.run });
+    }
     if (!body.objective || typeof body.objective !== "string") {
       return NextResponse.json({ error: "objective required" }, { status: 400 });
     }

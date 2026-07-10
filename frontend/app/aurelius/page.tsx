@@ -13,6 +13,7 @@ type Mission = {
   title: string;
   status: string;
   domain: string;
+  origin?: string;
   planSummary: string | null;
   createdAt: string;
   finishedAt: string | null;
@@ -117,10 +118,33 @@ export default function AureliusPage() {
                 }`}
               >
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-sm font-medium flex-1">{m.title}</span>
-                  <span className={`text-xs font-semibold ${STATUS_COLOR[m.status] ?? "text-neutral-500"}`}>
-                    {m.status}
+                  <span className="text-sm font-medium flex-1">
+                    {m.title}
+                    {m.origin === "aurelius_proposed" && (
+                      <span className="ml-2 text-[10px] uppercase tracking-wider text-sky-300 border border-sky-400/40 rounded px-1.5 py-0.5">
+                        aurelius proposed
+                      </span>
+                    )}
                   </span>
+                  {m.status === "proposed" ? (
+                    <button
+                      onClick={async () => {
+                        await fetch("/api/missions", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ run: m.id }),
+                        });
+                        await load();
+                      }}
+                      className="text-xs border border-emerald-500/40 rounded px-2.5 py-0.5 text-emerald-400 hover:bg-emerald-500/15"
+                    >
+                      Run ▸
+                    </button>
+                  ) : (
+                    <span className={`text-xs font-semibold ${STATUS_COLOR[m.status] ?? "text-neutral-500"}`}>
+                      {m.status}
+                    </span>
+                  )}
                 </div>
                 {m.planSummary && <p className="text-xs text-neutral-500 mt-1">{m.planSummary}</p>}
                 {m.steps.length > 0 && (
