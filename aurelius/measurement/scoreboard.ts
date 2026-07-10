@@ -35,6 +35,8 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
     ritualsFired,
     ingestionRuns,
     missions,
+    llmCalls,
+    cacheReuses,
   ] = await Promise.all([
     prisma.task.count({ where: { status: "done", completedAt: window } }),
     prisma.task.count({ where: { createdAt: window } }),
@@ -57,6 +59,12 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
       by: ["status"],
       where: { createdAt: window },
       _count: { id: true },
+    }),
+    prisma.logEntry.count({ where: { type: "llm_call", createdAt: window } }),
+    // Compiled entries REUSED this week (created earlier, touched now) —
+    // the numerator of independence.
+    prisma.reasoningCacheEntry.count({
+      where: { updatedAt: window, createdAt: { lt: weekStart } },
     }),
   ]);
 
@@ -83,6 +91,14 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
     missions: missionCounts,
     // Trust loop — corrections are signal, not failure
     corrections,
+    // The DoD metric: share of reasoning that still needed the base LLM.
+    // Falls as compiled understanding takes over. null until there's data.
+    llmCalls,
+    cacheReuses,
+    llmDependenceRate:
+      llmCalls + cacheReuses > 0
+        ? Math.round((llmCalls / (llmCalls + cacheReuses)) * 100)
+        : null,
   };
 
   // Not an upsert: Prisma can't address a compound unique when a member is
@@ -108,6 +124,9 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
         `**Week of ${week}**`,
         `Your lane: ${tasksDone} tasks done (${tasksCreated} created) · ${habitCompletions} habit completions · follow-through ${metrics.followThrough ?? "n/a"}% over ${gaps.length} measured days`,
         `Aurelius's lane: ${corpusDocs.length} documents absorbed · ${memoriesWritten} memories · ${missionsRun} missions · ${ritualsFired} rituals fired`,
+        metrics.llmDependenceRate !== null
+          ? `LLM dependence: ${metrics.llmDependenceRate}% (${llmCalls} LLM calls vs ${cacheReuses} compiled reuses) — lower is smarter.`
+          : "",
         corrections > 0 ? `${corrections} corrections logged — the trust loop is working.` : "",
       ]
         .filter(Boolean)
