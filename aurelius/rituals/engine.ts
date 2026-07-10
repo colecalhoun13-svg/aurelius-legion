@@ -50,8 +50,13 @@ async function voiceOver(skeleton: string, instruction: string): Promise<string>
 }
 
 async function fileInstance(ritualName: string, outputText: string, structured?: any) {
-  const ritual = await prisma.ritual.findUnique({ where: { name: ritualName } });
-  if (!ritual) throw new Error(`ritual "${ritualName}" not seeded — call ensureRituals()`);
+  let ritual = await prisma.ritual.findUnique({ where: { name: ritualName } });
+  if (!ritual) {
+    // Callers outside the server process (Next API routes, CLI) may hit
+    // this before index.ts has seeded — self-heal instead of throwing.
+    await ensureRituals();
+    ritual = await prisma.ritual.findUniqueOrThrow({ where: { name: ritualName } });
+  }
 
   const instance = await prisma.ritualInstance.create({
     data: {
@@ -112,7 +117,7 @@ export async function generateMorningBriefing(dateStr?: string) {
     lines.push("Signals worth a look:");
     for (const s of attention.slice(0, 3)) lines.push(`  ⇄ ${s.title}`);
   }
-  if (today.stats) {
+  if (today.stats?.followThrough !== null && today.stats?.followThrough !== undefined) {
     lines.push(`Follow-through last 7 days: ${today.stats.followThrough}%`);
   }
   const skeleton = lines.join("\n");

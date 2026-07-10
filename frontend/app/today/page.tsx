@@ -64,6 +64,38 @@ export default function TodayPage() {
   const [focusDraft, setFocusDraft] = useState("");
   const [editingFocus, setEditingFocus] = useState(false);
   const [captured, setCaptured] = useState(false);
+  const [briefing, setBriefing] = useState<string | null>(null);
+  const [briefingAt, setBriefingAt] = useState<string | null>(null);
+  const [briefingBusy, setBriefingBusy] = useState(false);
+
+  const loadBriefing = useCallback(async () => {
+    try {
+      const res = await fetch("/api/rituals");
+      if (!res.ok) return;
+      const latest = await res.json();
+      if (latest.morning_briefing?.outputText) {
+        setBriefing(latest.morning_briefing.outputText);
+        setBriefingAt(latest.morning_briefing.firedAt);
+      }
+    } catch {
+      // briefing is a bonus, never a blocker
+    }
+  }, []);
+
+  const briefMe = async () => {
+    if (briefingBusy) return;
+    setBriefingBusy(true);
+    try {
+      const res = await fetch("/api/rituals", { method: "POST" });
+      if (res.ok) {
+        const json = await res.json();
+        setBriefing(json.briefing);
+        setBriefingAt(new Date().toISOString());
+      }
+    } finally {
+      setBriefingBusy(false);
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -80,7 +112,8 @@ export default function TodayPage() {
 
   useEffect(() => {
     load();
-  }, [load]);
+    loadBriefing();
+  }, [load, loadBriefing]);
 
   const act = useCallback(
     async (payload: Record<string, any>) => {
@@ -149,6 +182,34 @@ export default function TodayPage() {
             </span>
           </div>
         </header>
+
+        {/* Morning briefing — the push. Aurelius opens the day. */}
+        <section className="aurelius-panel-frame p-5">
+          <div className="flex items-baseline justify-between mb-2">
+            <h2 className="aurelius-heading text-base">Briefing</h2>
+            <button
+              onClick={briefMe}
+              disabled={briefingBusy}
+              className="text-xs text-aurelius-gold/80 border border-aurelius-gold/30 rounded px-2.5 py-1 hover:border-aurelius-gold/60 disabled:opacity-40"
+            >
+              {briefingBusy ? "Composing…" : "Brief me"}
+            </button>
+          </div>
+          {briefing ? (
+            <>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap text-neutral-300">{briefing}</p>
+              {briefingAt && (
+                <p className="text-[11px] text-neutral-600 mt-2">
+                  {new Date(briefingAt).toLocaleString()}
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-neutral-600 italic text-sm">
+              The morning briefing fires at 07:00 — or ask for one now.
+            </p>
+          )}
+        </section>
 
         {/* Focus */}
         <section className="aurelius-panel-frame p-5">
