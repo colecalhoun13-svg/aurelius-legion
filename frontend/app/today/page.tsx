@@ -117,7 +117,7 @@ export default function TodayPage() {
 
   if (error) {
     return (
-      <main className="min-h-screen bg-aurelius-bg text-aurelius-text p-8">
+      <main className="text-aurelius-text p-8">
         <p className="text-red-400">{error}</p>
       </main>
     );
@@ -125,19 +125,19 @@ export default function TodayPage() {
 
   if (!data) {
     return (
-      <main className="min-h-screen bg-aurelius-bg text-aurelius-text p-8">
+      <main className="text-aurelius-text p-8">
         <p className="text-neutral-500">Loading today…</p>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-aurelius-bg text-aurelius-text">
-      <div className="max-w-3xl mx-auto p-6 space-y-8">
+    <main className="text-aurelius-text">
+      <div className="max-w-3xl mx-auto space-y-8">
         {/* Header */}
         <header className="flex items-baseline justify-between border-b border-aurelius-border pb-4">
           <div>
-            <h1 className="text-2xl font-semibold text-aurelius-gold tracking-wide">Today</h1>
+            <h1 className="aurelius-heading text-3xl">Today</h1>
             <p className="text-sm text-neutral-400">{data.date}</p>
           </div>
           <div className="text-sm text-neutral-400 space-x-4">
@@ -151,8 +151,8 @@ export default function TodayPage() {
         </header>
 
         {/* Focus */}
-        <section className="border border-aurelius-border bg-aurelius-panel rounded-lg p-5">
-          <h2 className="text-xs uppercase tracking-widest text-neutral-500 mb-2">Focus</h2>
+        <section className="aurelius-panel-frame p-5">
+          <h2 className="aurelius-heading text-base mb-2">Focus</h2>
           {editingFocus ? (
             <div className="flex gap-2">
               <input
@@ -184,8 +184,8 @@ export default function TodayPage() {
 
         {/* Bridge signals (only when Aurelius has something for Cole) */}
         {data.bridgeSignals.length > 0 && (
-          <section className="border border-aurelius-gold/40 bg-aurelius-panel rounded-lg p-5">
-            <h2 className="text-xs uppercase tracking-widest text-aurelius-gold mb-3">
+          <section className="aurelius-panel-frame p-5 !border-aurelius-gold/50">
+            <h2 className="aurelius-heading text-base mb-3">
               From Aurelius
             </h2>
             <ul className="space-y-2">
@@ -200,8 +200,8 @@ export default function TodayPage() {
 
         {/* Overdue */}
         {data.overdue.length > 0 && (
-          <section className="border border-red-900/60 bg-aurelius-panel rounded-lg p-5">
-            <h2 className="text-xs uppercase tracking-widest text-red-400 mb-3">
+          <section className="aurelius-panel-frame p-5 !border-red-900/60">
+            <h2 className="aurelius-heading text-base mb-3 !text-red-400">
               Overdue — {data.overdue.length}
             </h2>
             <ul className="space-y-2">
@@ -223,8 +223,8 @@ export default function TodayPage() {
         )}
 
         {/* Tasks */}
-        <section className="border border-aurelius-border bg-aurelius-panel rounded-lg p-5">
-          <h2 className="text-xs uppercase tracking-widest text-neutral-500 mb-3">
+        <section className="aurelius-panel-frame p-5">
+          <h2 className="aurelius-heading text-base mb-3">
             Tasks — {data.tasks.length}
           </h2>
           <ul className="space-y-2 mb-4">
@@ -268,8 +268,8 @@ export default function TodayPage() {
         </section>
 
         {/* Habits */}
-        <section className="border border-aurelius-border bg-aurelius-panel rounded-lg p-5">
-          <h2 className="text-xs uppercase tracking-widest text-neutral-500 mb-3">Habits</h2>
+        <section className="aurelius-panel-frame p-5">
+          <h2 className="aurelius-heading text-base mb-3">Habits</h2>
           {data.habits.length === 0 ? (
             <p className="text-neutral-600 italic text-sm">No habits yet.</p>
           ) : (
@@ -294,8 +294,8 @@ export default function TodayPage() {
         </section>
 
         {/* Quick capture */}
-        <section className="border border-aurelius-border bg-aurelius-panel rounded-lg p-5">
-          <h2 className="text-xs uppercase tracking-widest text-neutral-500 mb-3">
+        <section className="aurelius-panel-frame p-5">
+          <h2 className="aurelius-heading text-base mb-3">
             Capture {captured && <span className="text-aurelius-gold normal-case">— saved ✓</span>}
           </h2>
           <div className="flex gap-2">

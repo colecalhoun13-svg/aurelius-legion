@@ -1,35 +1,50 @@
 // ===============================================
-// AURELIUS OS 3.4 — STARTUP SCREEN
-// The wreath drops from above, settles with a gold
-// glow, holds a beat — then the OS chrome reveals.
-// Runs once per full page load (layout mount).
+// AURELIUS OS 3.4 — STARTUP SEQUENCE
+// The wreath flashes into existence center-stage (same size and
+// position as the background watermark), holds a beat — then the
+// overlay fades and the OS dissolves in around it, so the wreath
+// reads as settling INTO the dashboard.
 // ===============================================
 
 "use client";
 
 import { useEffect, useState } from "react";
-import AureliusCrest from "./AureliusCrest";
 
-const DROP_MS = 1100; // matches crestDrop duration
-const HOLD_MS = 700;  // beat after the wreath settles
+const FLASH_MS = 1050; // matches wreathFlash
+const HOLD_MS = 300;   // beat after lock-on
+const FADE_MS = 900;   // overlay fade / content dissolve
+
+type Phase = "boot" | "dissolve" | "done";
 
 export default function AureliusStartup({ children }: { children: React.ReactNode }) {
-  const [phase, setPhase] = useState<"boot" | "reveal">("boot");
+  const [phase, setPhase] = useState<Phase>("boot");
 
   useEffect(() => {
-    const timer = setTimeout(() => setPhase("reveal"), DROP_MS + HOLD_MS);
-    return () => clearTimeout(timer);
+    const t1 = setTimeout(() => setPhase("dissolve"), FLASH_MS + HOLD_MS);
+    const t2 = setTimeout(() => setPhase("done"), FLASH_MS + HOLD_MS + FADE_MS);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, []);
 
-  if (phase === "boot") {
-    return (
-      <div className="w-full h-screen flex flex-col items-center justify-center bg-black overflow-hidden">
-        <div className="animate-crestDrop opacity-0">
-          <AureliusCrest size={180} />
-        </div>
-      </div>
-    );
-  }
+  // Boot overlay: black field + wreath at watermark size/position.
+  const overlay = phase !== "done" && (
+    <div
+      className={`fixed inset-0 z-50 bg-black flex items-center justify-center pointer-events-none ${
+        phase === "dissolve" ? "animate-bootFade" : ""
+      }`}
+    >
+      <div className="absolute inset-0 bg-wreath bg-center bg-no-repeat bg-[length:75vmin] animate-wreathFlash opacity-0" />
+    </div>
+  );
 
-  return <div className="animate-chromeReveal">{children}</div>;
+  return (
+    <>
+      {overlay}
+      {phase !== "boot" && (
+        <div className={phase === "dissolve" ? "animate-contentDissolve" : ""}>{children}</div>
+      )}
+    </>
+  );
 }
