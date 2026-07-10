@@ -19,6 +19,7 @@ import { prisma } from "../core/db/prisma.ts";
 import { setKnowledge, getKnowledge } from "./store.ts";
 import { writeCache } from "../compiled/cache.ts";
 import { getIntentClass } from "./intentClasses.ts";
+import { isAutoApproved } from "./escalation.ts";
 import type { KnowledgeSourceType } from "./types.ts";
 import type { TaggedSignature } from "../compiled/types.ts";
 
@@ -135,7 +136,37 @@ export async function createProposal(
     console.error("[proposals] failed to log proposal to cache (non-fatal):", err);
   }
 
-  return fromRow({ ...row, cacheEntryId });
+  const proposal = fromRow({ ...row, cacheEntryId });
+
+  // Escalation matrix: if Cole granted standing auto-apply for this
+  // operator × intent class, resolve immediately — and surface it on
+  // the Bridge. Authorized automation is never silent.
+  try {
+    if (await isAutoApproved(input.operatorId, input.intentClassId, input.scope)) {
+      const resolved = await resolveProposal({
+        operatorId: input.operatorId,
+        proposalId: proposal.id,
+        decision: "confirmed",
+        coleResponseText: "auto-applied per standing escalation opt-in",
+      });
+      await prisma.bridgeSignal.create({
+        data: {
+          kind: "background_result",
+          domain: "personal",
+          sourceType: "reasoning_output",
+          sourceId: proposal.id,
+          severity: "notice",
+          title: `Auto-applied: ${input.scope}.${input.key} (${input.intentClassId})`,
+          body: `Standing opt-in for ${input.operatorName} × ${input.intentClassId}.\nApplied: ${JSON.stringify(input.proposedValue).slice(0, 200)}\nRevoke anytime: clear autonomy.auto_apply_intents.`,
+        },
+      });
+      return resolved ?? proposal;
+    }
+  } catch (err) {
+    console.error("[proposals] escalation check failed — staying pending:", err);
+  }
+
+  return proposal;
 }
 
 export async function getPendingProposals(
