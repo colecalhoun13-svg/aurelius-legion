@@ -25,6 +25,7 @@ import { formatIntentClassesForPrompt } from "../knowledge/intentClasses.ts";
 import { formatPendingProposalsForPrompt } from "../knowledge/proposals.ts";
 import { semanticRecall, formatRecallForPrompt } from "../retrieval/retrieve.ts";
 import { resolveOperatorId } from "../knowledge/store.ts";
+import { getCorpusAwareness } from "../corpus/ingest.ts";
 import { IDENTITY } from "../identity/index.ts";
 import {
   loadMemoriesForOperator,
@@ -286,6 +287,17 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
   // Layer 1: Base persona
   parts.push(BASE_PERSONA_PROMPT);
 
+  // Layer 1.5: Operator state — score + learned calibration, one voice.
+  // No modes: the register modulates from live state and from persona.*
+  // entries Cole has confirmed, never from a persona switch.
+  try {
+    const { getOperatorStateBlock } = await import("../measurement/operatorScore.ts");
+    const stateBlock = await getOperatorStateBlock();
+    if (stateBlock) parts.push("\n" + stateBlock);
+  } catch (err) {
+    console.warn("[router] operator state block failed (non-fatal):", err);
+  }
+
   // Layer 2: Identity
   parts.push("\n" + formatIdentityForPrompt());
 
@@ -345,6 +357,16 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     console.warn("[ROUTER] semantic recall failed (non-fatal):", err);
   }
 
+  // Layer 5.75: Corpus awareness — Aurelius knows what it has ingested,
+  // unprompted. The contents surface via recall; this is the table of
+  // contents of its own mind.
+  try {
+    const awareness = await getCorpusAwareness();
+    if (awareness) parts.push("\n" + awareness);
+  } catch (err) {
+    console.warn("[ROUTER] corpus awareness failed (non-fatal):", err);
+  }
+
   // Layer 6: Tool catalog (auto-generated from registered tool adapters)
   try {
     const toolCatalog = buildToolCatalog();
@@ -376,7 +398,7 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
       knowledgeLines.push(intentClassesSection);
     }
 
-    const pendingSection = formatPendingProposalsForPrompt(operatorId);
+    const pendingSection = await formatPendingProposalsForPrompt(operatorId);
     if (pendingSection) {
       knowledgeLines.push("");
       knowledgeLines.push(pendingSection);

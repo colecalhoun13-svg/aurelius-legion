@@ -2,8 +2,10 @@
 
 export type AutonomyContext = {
   operator: string;
-  goal: string;
-  history: AutonomyEvent[];
+  goal?: string;
+  history?: AutonomyEvent[];
+  autonomyMode?: string;
+  maxDepth?: number;
 };
 
 export type AutonomyEvent = {

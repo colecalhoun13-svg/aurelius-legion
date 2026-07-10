@@ -235,3 +235,45 @@ discipline is a continuous bar, not a finish line.
 
 *This doc is canonical for direction. Update it as decisions change; reconcile
 CLAUDE.md to it, not the other way around.*
+
+---
+
+## State update — 2026-07-10 (PR #2, pre-merge)
+
+**Landed and verified on this branch:**
+- Second brain, auto-aware: four-write ingestion (vector + memory +
+  registry + Bridge), Layer 5.75 awareness in every prompt, `/ask` with
+  citations, Second Brain page, ⌘K routing.
+- Missions execute: plan (LLM, deterministic fallback) → recall /
+  research / synthesize → report auto-ingests into the corpus. Keyless
+  synthesis fails honestly.
+- Rituals push: morning briefing 07:00, nightly debrief 21:30 —
+  deterministic facts always, LLM voice on top.
+- The Wiki: one living synthesis page per domain, auto-rewritten on
+  ingestion and Sundays, revisions kept, pages feed recall.
+- Learning loop durable: proposals persist in Postgres; the Bridge
+  opens with the review bench (confirm/deny).
+- Initiative pulse (08:00): Aurelius scans gaps, stale/thin domains,
+  at-risk projects → proposes missions. Never runs them.
+- Research topics steer through Living Knowledge
+  (research.standing_topics) — conversation → confirmation → next sweep.
+- Weekly scoreboard (Sun 20:00) across both lanes; weekend sweep
+  findings ingest into the corpus.
+- Telegram bridge built, dormant until TELEGRAM_BOT_TOKEN.
+- Prod `next build` green; PWA installable; Engines page live;
+  full motion-language visual pass; wreath letterform removed in-asset.
+
+**Blocked on Cole:** merge + `prisma migrate deploy` on Neon (4
+additive migrations), funded LLM keys (voiced everything), Telegram
+token, Google Calendar OAuth, finance-plane go/no-go.
+
+**Next candidates:** calendar engine, finance plane v1, Mac Mini deploy
+runbook, corrections capture UX, engineRouter consolidation, tests.
+
+**Parked for a Cole working session (do not build speculatively):**
+Business Engine buildout — Offer Engine · Lead Generation · Content
+Engine · Systems/SOP · Workflow · Client Engine · Analytics · Brand
+(OG doc Part XI). Build around Cole's real offers, pricing, client
+list, and outreach flow once he supplies them. The research lane and
+Business OS living document are live in the meantime and will have
+compounded context by then.

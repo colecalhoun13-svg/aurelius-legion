@@ -12,6 +12,9 @@ module.exports = {
         "aurelius-border": "#2a2a2a",
         "aurelius-gold": "#d4af37",
       },
+      backgroundImage: {
+        wreath: "url('/crest/aurelius-crest.png')",
+      },
     },
   },
   plugins: [],

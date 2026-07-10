@@ -28,7 +28,7 @@ export async function runAutonomyLoop(
     events.push({
       type: "task",
       timestamp: new Date().toISOString(),
-      detail: `Research completed with ${research.length} insights.`,
+      detail: `Research completed with ${research.insights.length} insights.`,
     });
   }
 
@@ -56,7 +56,7 @@ export async function runAutonomyLoop(
   }
 
   if (decision.action === "reflect") {
-    const reflection = reflectOnOutcome(events);
+    const reflection = await reflectOnOutcome(events);
 
     events.push({
       type: "reflection",

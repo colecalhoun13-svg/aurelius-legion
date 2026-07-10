@@ -52,6 +52,12 @@ registerAllTools();
 // Routers
 import { engineTestRouter } from "./router/index.ts";
 import { autonomyRouter } from "./router/autonomyRouter.ts";
+import { productivityRouter } from "./router/productivityRouter.ts";
+import { corpusRouter } from "./router/corpusRouter.ts";
+import { missionsRouter } from "./router/missionsRouter.ts";
+import { ritualsRouter } from "./router/ritualsRouter.ts";
+import { proposalsRouter } from "./router/proposalsRouter.ts";
+import { wikiRouter } from "./router/wikiRouter.ts";
 
 const app = express();
 app.use(express.json());
@@ -75,6 +81,12 @@ console.log("===================================================");
 
 app.use("/api", engineTestRouter);
 app.use("/api/autonomy", autonomyRouter);
+app.use("/api/productivity", productivityRouter);
+app.use("/api/corpus", corpusRouter);
+app.use("/api/missions", missionsRouter);
+app.use("/api/rituals", ritualsRouter);
+app.use("/api/proposals", proposalsRouter);
+app.use("/api/wiki", wikiRouter);
 
 app.get("/", (req: Request, res: Response) => {
   res.send("Aurelius OS backend is running");
@@ -752,7 +764,7 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
         knowledgeProposalsCreated: knowledgeProposalsCreated.length,
         knowledgeProposalsResolved: knowledgeProposalsResolved.length,
         pendingProposalsAfter: primaryOperatorId
-          ? getPendingProposals(primaryOperatorId).length
+          ? (await getPendingProposals(primaryOperatorId)).length
           : 0,
       },
       tools: executedTools.map((e) => ({
@@ -882,6 +894,79 @@ app.post("/api/aurelius/register-sheet", async (req: Request, res: Response) => 
       detail: err?.message ?? String(err),
     });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// The Pulse — scheduled background loops (nervous system v1)
+// Nightly at 21:30: close the day, compute intent-vs-action gap.
+// Sunday 09:00: weekend research pass → proposals for Monday review.
+// ═══════════════════════════════════════════════════════════════════
+import nodeSchedule from "node-schedule";
+import { runWeekendPulse } from "./autonomy/pulse.ts";
+import {
+  ensureRituals,
+  generateMorningBriefing,
+  generateNightlyDebrief,
+} from "./rituals/engine.ts";
+import { computeWeeklySnapshot } from "./measurement/scoreboard.ts";
+import { startTelegramBridge, sendToCole } from "./telegram/bot.ts";
+
+ensureRituals().catch((err) => console.error("[rituals] seed failed:", err));
+// The five living documents exist from first boot (founding editions).
+import("./wiki/livingDocs.ts")
+  .then((m) => m.ensureLivingDocuments())
+  .catch((err) => console.error("[livingDocs] seed failed:", err));
+// Dormant without TELEGRAM_BOT_TOKEN; wakes the moment the token lands.
+startTelegramBridge();
+
+// Market pulse at 06:30 — crypto/equities/macro digest into the wealth
+// corpus before the day starts. Signals only; Cole makes the calls.
+nodeSchedule.scheduleJob("30 6 * * *", async () => {
+  try {
+    const { runMarketPulse } = await import("./wealth/engine.ts");
+    await runMarketPulse();
+  } catch (err) {
+    console.error("[wealth] market pulse failed:", err);
+  }
+});
+// Morning briefing at 07:00 — the day opens with a push, not a blank page.
+nodeSchedule.scheduleJob("0 7 * * *", async () => {
+  try {
+    const { briefing } = await generateMorningBriefing();
+    await sendToCole(briefing);
+  } catch (err) {
+    console.error("[rituals] morning failed:", err);
+  }
+});
+// Nightly debrief at 21:30 — wraps the deterministic pulse (gap math) in voice.
+nodeSchedule.scheduleJob("30 21 * * *", async () => {
+  try {
+    const { debrief } = await generateNightlyDebrief();
+    await sendToCole(debrief);
+  } catch (err) {
+    console.error("[rituals] nightly failed:", err);
+  }
+});
+nodeSchedule.scheduleJob("0 9 * * 0", async () => {
+  try {
+    await runWeekendPulse();
+    // After the research pass lands, the wiki absorbs the week.
+    const { synthesizeAllDomains } = await import("./wiki/engine.ts");
+    await synthesizeAllDomains("weekend_pulse");
+  } catch (err) {
+    console.error("[pulse] weekend failed:", err);
+  }
+});
+// Weekly scoreboard — Sunday 20:00, one honest snapshot of both lanes.
+nodeSchedule.scheduleJob("0 20 * * 0", () => {
+  computeWeeklySnapshot().catch((err) => console.error("[scoreboard] failed:", err));
+});
+// Initiative — 08:00 daily, after the briefing: Aurelius scans its own
+// state and proposes missions. Proposed only; Cole launches.
+import("./autonomy/initiative.ts").then(({ runInitiativePulse }) => {
+  nodeSchedule.scheduleJob("0 8 * * *", () => {
+    runInitiativePulse().catch((err) => console.error("[initiative] failed:", err));
+  });
 });
 
 const PORT = Number(process.env.PORT) || 3001;

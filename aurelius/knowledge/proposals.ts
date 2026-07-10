@@ -1,23 +1,25 @@
 // aurelius/knowledge/proposals.ts
 //
-// Phase 4.5 — Knowledge update proposal lifecycle.
+// Phase 4.5 — Knowledge update proposal lifecycle. DURABLE.
 //
 // Flow:
 //   1. LLM emits [KNOWLEDGE_UPDATE_PROPOSE: ...]
-//   2. Chat endpoint calls createProposal() → status="pending"
+//   2. Chat endpoint calls createProposal() → status="pending" (persisted)
 //   3. Proposal logged to ReasoningCacheEntry (domain="taxonomy_update")
 //      for voice compilation
-//   4. Cole responds with natural language (or explicit confirm)
-//   5. Next turn's LLM emits [KNOWLEDGE_UPDATE_CONFIRM: ...]
-//   6. Chat endpoint calls resolveProposal() → applies or discards
-//   7. Resolution logged to cache
+//   4. Cole responds — in chat (natural language → next turn's LLM emits
+//      [KNOWLEDGE_UPDATE_CONFIRM: ...]) or on the Bridge review surface
+//   5. resolveProposal() applies or discards; resolution logged to cache
 //
-// Pending proposals live in-memory (ephemeral, per operator).
-// Resolutions persist to KnowledgeEntry + ReasoningCacheEntry.
+// v1 kept pending proposals in an in-memory Map — they died on restart,
+// which made the learning loop untrustworthy. Now every proposal lives in
+// Postgres until Cole resolves it.
 
+import { prisma } from "../core/db/prisma.ts";
 import { setKnowledge, getKnowledge } from "./store.ts";
 import { writeCache } from "../compiled/cache.ts";
 import { getIntentClass } from "./intentClasses.ts";
+import { isAutoApproved } from "./escalation.ts";
 import type { KnowledgeSourceType } from "./types.ts";
 import type { TaggedSignature } from "../compiled/types.ts";
 
@@ -44,7 +46,24 @@ export type KnowledgeProposal = {
   cacheEntryId: string | null;
 };
 
-const pendingProposals = new Map<string, KnowledgeProposal[]>();
+function fromRow(row: any): KnowledgeProposal {
+  return {
+    id: row.id,
+    operatorId: row.operatorId,
+    operatorName: row.operatorName,
+    intentClassId: row.intentClassId,
+    scope: row.scope,
+    key: row.key,
+    proposedValue: row.proposedValue,
+    priorValue: row.priorValue ?? null,
+    rationale: row.rationale,
+    coleNaturalLanguage: row.coleNaturalLanguage,
+    status: row.status as ProposalStatus,
+    createdAt: row.createdAt,
+    resolvedAt: row.resolvedAt,
+    cacheEntryId: row.cacheEntryId,
+  };
+}
 
 export type CreateProposalInput = {
   operatorId: string;
@@ -70,26 +89,19 @@ export async function createProposal(
   });
   const priorValue = existing?.value ?? null;
 
-  const proposal: KnowledgeProposal = {
-    id: `prop_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    operatorId: input.operatorId,
-    operatorName: input.operatorName,
-    intentClassId: input.intentClassId,
-    scope: input.scope,
-    key: input.key,
-    proposedValue: input.proposedValue,
-    priorValue,
-    rationale: input.rationale,
-    coleNaturalLanguage: input.coleNaturalLanguage,
-    status: "pending",
-    createdAt: new Date(),
-    resolvedAt: null,
-    cacheEntryId: null,
-  };
-
-  const existingProposals = pendingProposals.get(input.operatorId) ?? [];
-  existingProposals.push(proposal);
-  pendingProposals.set(input.operatorId, existingProposals);
+  const row = await prisma.knowledgeProposal.create({
+    data: {
+      operatorId: input.operatorId,
+      operatorName: input.operatorName,
+      intentClassId: input.intentClassId,
+      scope: input.scope,
+      key: input.key,
+      proposedValue: input.proposedValue,
+      priorValue: priorValue ?? undefined,
+      rationale: input.rationale,
+      coleNaturalLanguage: input.coleNaturalLanguage,
+    },
+  });
 
   // Log to cache for voice compilation
   const proposalSignature: TaggedSignature = {
@@ -103,6 +115,7 @@ export async function createProposal(
     raw: { coleNaturalLanguage: input.coleNaturalLanguage },
   };
 
+  let cacheEntryId: string | null = null;
   try {
     const cacheEntry = await writeCache({
       operatorId: input.operatorId,
@@ -114,37 +127,85 @@ export async function createProposal(
       reasoningSummary: `Proposal: ${input.coleNaturalLanguage} → ${input.scope}.${input.key} = ${JSON.stringify(input.proposedValue).slice(0, 120)}`,
       sourceMemoryIds: [],
     });
-    proposal.cacheEntryId = cacheEntry.id;
+    cacheEntryId = cacheEntry.id;
+    await prisma.knowledgeProposal.update({
+      where: { id: row.id },
+      data: { cacheEntryId },
+    });
   } catch (err) {
     console.error("[proposals] failed to log proposal to cache (non-fatal):", err);
+  }
+
+  const proposal = fromRow({ ...row, cacheEntryId });
+
+  // Escalation matrix: if Cole granted standing auto-apply for this
+  // operator × intent class, resolve immediately — and surface it on
+  // the Bridge. Authorized automation is never silent.
+  try {
+    if (await isAutoApproved(input.operatorId, input.intentClassId, input.scope)) {
+      const resolved = await resolveProposal({
+        operatorId: input.operatorId,
+        proposalId: proposal.id,
+        decision: "confirmed",
+        coleResponseText: "auto-applied per standing escalation opt-in",
+      });
+      await prisma.bridgeSignal.create({
+        data: {
+          kind: "background_result",
+          domain: "personal",
+          sourceType: "reasoning_output",
+          sourceId: proposal.id,
+          severity: "notice",
+          title: `Auto-applied: ${input.scope}.${input.key} (${input.intentClassId})`,
+          body: `Standing opt-in for ${input.operatorName} × ${input.intentClassId}.\nApplied: ${JSON.stringify(input.proposedValue).slice(0, 200)}\nRevoke anytime: clear autonomy.auto_apply_intents.`,
+        },
+      });
+      return resolved ?? proposal;
+    }
+  } catch (err) {
+    console.error("[proposals] escalation check failed — staying pending:", err);
   }
 
   return proposal;
 }
 
-export function getPendingProposals(operatorId: string): KnowledgeProposal[] {
-  return (pendingProposals.get(operatorId) ?? []).filter(
-    (p) => p.status === "pending"
-  );
+export async function getPendingProposals(
+  operatorId: string
+): Promise<KnowledgeProposal[]> {
+  const rows = await prisma.knowledgeProposal.findMany({
+    where: { operatorId, status: "pending" },
+    orderBy: { createdAt: "asc" },
+  });
+  return rows.map(fromRow);
 }
 
-export function getProposalById(
+/** Every pending proposal across all operators — the Bridge review surface. */
+export async function getAllPendingProposals(): Promise<KnowledgeProposal[]> {
+  const rows = await prisma.knowledgeProposal.findMany({
+    where: { status: "pending" },
+    orderBy: { createdAt: "asc" },
+  });
+  return rows.map(fromRow);
+}
+
+export async function getProposalById(
   operatorId: string,
   proposalId: string
-): KnowledgeProposal | null {
-  return (
-    (pendingProposals.get(operatorId) ?? []).find(
-      (p) => p.id === proposalId
-    ) ?? null
-  );
+): Promise<KnowledgeProposal | null> {
+  const row = await prisma.knowledgeProposal.findFirst({
+    where: { id: proposalId, operatorId },
+  });
+  return row ? fromRow(row) : null;
 }
 
 /**
  * Format pending proposals for LLM prompt (Layer 7.5).
  * LLM sees what's in flight so it can detect natural confirmation/denial.
  */
-export function formatPendingProposalsForPrompt(operatorId: string): string {
-  const pending = getPendingProposals(operatorId);
+export async function formatPendingProposalsForPrompt(
+  operatorId: string
+): Promise<string> {
+  const pending = await getPendingProposals(operatorId);
   if (pending.length === 0) return "";
 
   const lines: string[] = [
@@ -177,7 +238,7 @@ export type ResolveProposalInput = {
 export async function resolveProposal(
   input: ResolveProposalInput
 ): Promise<KnowledgeProposal | null> {
-  const proposal = getProposalById(input.operatorId, input.proposalId);
+  const proposal = await getProposalById(input.operatorId, input.proposalId);
   if (!proposal) {
     console.warn(`[proposals] resolve called for unknown proposal: ${input.proposalId}`);
     return null;
@@ -186,9 +247,6 @@ export async function resolveProposal(
     console.warn(`[proposals] proposal ${input.proposalId} already ${proposal.status}`);
     return proposal;
   }
-
-  proposal.status = input.decision;
-  proposal.resolvedAt = new Date();
 
   const valueToApply =
     input.decision === "corrected" ? input.correctedValue : proposal.proposedValue;
@@ -210,6 +268,14 @@ export async function resolveProposal(
       throw err;
     }
   }
+
+  const resolvedAt = new Date();
+  await prisma.knowledgeProposal.update({
+    where: { id: proposal.id },
+    data: { status: input.decision, resolvedAt },
+  });
+  proposal.status = input.decision;
+  proposal.resolvedAt = resolvedAt;
 
   // Log resolution to cache
   const resolutionSignature: TaggedSignature = {
@@ -243,14 +309,4 @@ export async function resolveProposal(
   }
 
   return proposal;
-}
-
-/**
- * Cleanup for stale pending proposals. v1 no-op.
- */
-export function expireOldProposals(
-  _operatorId: string,
-  _maxAgeMs: number = 1000 * 60 * 30
-): number {
-  return 0;
 }

@@ -1,6 +1,6 @@
 // aurelius/self/selfUpgradeEngine.ts
 
-import { appendMemoryWrite } from "../memory/memoryWriter.ts";
+import { saveMemory } from "../memory/memoryService.ts";
 import { OperatorCore, evolveCore } from "./upgrades/coreEvolution.ts";
 import { runResearch } from "../research/researchEngine.ts";
 import { getOperatorProfile } from "../core/operatorProfiles.ts"; // adjust path if needed
@@ -46,7 +46,7 @@ export async function runSelfUpgrade(
       depth,
     });
 
-    const insights = fused.map((f) => f.insight);
+    const insights = fused.insights;
     allResearchInsights.push(...insights);
   }
 
@@ -60,10 +60,11 @@ export async function runSelfUpgrade(
   });
 
   // --- 4) Log the upgrade ----------------------------------------------------
-  await appendMemoryWrite({
-    domain: "self-upgrade",
-    source: "selfUpgradeEngine",
-    summary: `Self-upgrade completed for operator '${operator}'. Insights added: ${filteredInsights.length}.`,
+  await saveMemory({
+    operator,
+    category: "events",
+    value: `Self-upgrade completed for operator '${operator}'. Insights added: ${filteredInsights.length}.`,
+    metadata: { kind: "self_upgrade" },
   });
 
   return {

@@ -13,7 +13,10 @@ export type EmbeddingSourceType =
   | "memory"
   | "reasoning_cache"
   | "note"
-  | "corpus_doc";
+  | "task"
+  | "project"
+  | "corpus_doc"
+  | "wiki_page";
 
 export type UpsertEmbeddingArgs = {
   sourceType: EmbeddingSourceType;
