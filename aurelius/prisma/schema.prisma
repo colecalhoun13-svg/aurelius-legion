@@ -23,6 +23,13 @@ model Operator {
   reasoningCacheEntries ReasoningCacheEntry[]
   compiledPatterns      CompiledPattern[]
   knowledgeEntries      KnowledgeEntry[]
+  projects              Project[]
+  goals                 Goal[]
+  habits                Habit[]
+  notes                 Note[]
+  dailyPlans            DailyPlan[]
+  calendarEvents        CalendarEvent[]
+  bridgeSignals         BridgeSignal[]
 }
 
 model Memory {
@@ -36,15 +43,39 @@ model Memory {
   updatedAt  DateTime @updatedAt
 }
 
+// Extended in place from the Phase-0 stub (data-preserving: legacy rows keep
+// operatorId/title/status/metadata and pick up defaults for the new fields).
+// operatorId is nullable — personal tasks ("call mom") have no operator lens.
 model Task {
-  id         String   @id @default(cuid())
-  operatorId String
-  operator   Operator @relation(fields: [operatorId], references: [id])
-  title      String
-  status     String
-  metadata   Json?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id               String    @id @default(cuid())
+  operatorId       String?
+  operator         Operator? @relation(fields: [operatorId], references: [id])
+  projectId        String?
+  project          Project?  @relation(fields: [projectId], references: [id])
+  goalId           String?
+  goal             Goal?     @relation(fields: [goalId], references: [id])
+  domain           String    @default("personal")
+  title            String
+  description      String?
+  status           String // "inbox" | "today" | "next" | "later" | "waiting" | "done" | "abandoned" (legacy rows keep their strings)
+  priority         String    @default("normal") // "critical" | "high" | "normal" | "low"
+  estimatedMinutes Int?
+  actualMinutes    Int?
+  dueDate          DateTime?
+  scheduledFor     DateTime? // when Cole plans to do it
+  completedAt      DateTime?
+  origin           String    @default("cole") // "cole" | "aurelius_proposed" | "ritual_generated"
+  originContext    Json? // for proposed tasks: why Aurelius suggested it
+  metadata         Json? // legacy field, preserved
+  parentTaskId     String?
+  parent           Task?     @relation("SubTasks", fields: [parentTaskId], references: [id])
+  subtasks         Task[]    @relation("SubTasks")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([operatorId, status])
+  @@index([status, scheduledFor])
+  @@index([status, dueDate])
 }
 
 model AutonomyGoal {
@@ -145,6 +176,205 @@ model CompiledPattern {
   @@index([operatorId, domain, entityKey])
   @@index([operatorId, status])
   @@index([domain])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PRODUCTIVITY PLANE — Cole's lane
+// The whole-life second-brain entities: what Cole is executing, distinct
+// from what Aurelius is doing in the background. operatorId is nullable
+// throughout — personal items have no operator lens. AutonomyGoal (above)
+// stays Aurelius's objectives; Goal here is Cole's. Consolidation of the
+// two is deferred to the autonomy-engine rebuild, which owns that code.
+// BridgeSignal is where the two lanes meet.
+// ═══════════════════════════════════════════════════════════════════
+
+model Project {
+  id          String    @id @default(cuid())
+  operatorId  String?
+  operator    Operator? @relation(fields: [operatorId], references: [id])
+  domain      String    @default("personal") // "coaching_business" | "coaching_platform" | "school" | "finance" | "content" | "personal" | "cole_training"
+  name        String
+  description String?
+  status      String    @default("active") // "active" | "paused" | "shipped" | "abandoned"
+  priority    String    @default("normal") // "critical" | "high" | "normal" | "backburner"
+  targetDate  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  goals Goal[]
+  tasks Task[]
+
+  @@index([status, priority])
+  @@index([domain, status])
+}
+
+model Goal {
+  id          String    @id @default(cuid())
+  operatorId  String?
+  operator    Operator? @relation(fields: [operatorId], references: [id])
+  projectId   String?
+  project     Project?  @relation(fields: [projectId], references: [id])
+  domain      String    @default("personal")
+  name        String
+  description String?
+  measure     Json? // { type: "count" | "boolean" | "value" | "date_hit", target, current }
+  horizon     String    @default("quarter") // "quarter" | "year" | "life"
+  status      String    @default("active") // "active" | "hit" | "missed" | "revised"
+  targetDate  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tasks Task[]
+
+  @@index([status, horizon])
+}
+
+model Habit {
+  id             String    @id @default(cuid())
+  operatorId     String?
+  operator       Operator? @relation(fields: [operatorId], references: [id])
+  domain         String    @default("personal")
+  name           String
+  cadence        String    @default("daily") // "daily" | "weekly" | "custom_cron"
+  cronExpression String?
+  active         Boolean   @default(true)
+  streak         Int       @default(0)
+  longestStreak  Int       @default(0)
+  createdAt      DateTime  @default(now())
+
+  completions HabitCompletion[]
+
+  @@index([active])
+}
+
+model HabitCompletion {
+  id          String   @id @default(cuid())
+  habitId     String
+  habit       Habit    @relation(fields: [habitId], references: [id])
+  completedAt DateTime @default(now())
+  note        String?
+
+  @@index([habitId, completedAt])
+}
+
+model Note {
+  id               String    @id @default(cuid())
+  operatorId       String?
+  operator         Operator? @relation(fields: [operatorId], references: [id])
+  domain           String    @default("personal")
+  title            String?
+  content          String // markdown
+  captureContext   String? // "quick_capture" | "meeting" | "reading" | "voice"
+  linkedTaskIds    String[]
+  linkedProjectIds String[]
+  linkedMemoryIds  String[]
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([createdAt])
+}
+
+model DailyPlan {
+  id          String    @id @default(cuid())
+  date        DateTime  @unique // day this plan is for (midnight UTC)
+  operatorId  String?
+  operator    Operator? @relation(fields: [operatorId], references: [id])
+  generatedBy String    @default("cole_manual") // "morning_briefing" | "cole_manual" | "revised"
+  headline    String? // briefing summary sentence
+  focus       String? // 1-3 sentences: what today is about
+  taskIds     String[] // ordered Task.id list for today
+  ritualIds   String[] // linked RitualInstance ids
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Ritual {
+  id            String   @id @default(cuid())
+  name          String   @unique // "morning_briefing" | "nightly_debrief" | "weekly_planning" | "midday_check"
+  cadence       String // "daily_morning" | "daily_night" | "weekly_sunday" | "on_demand"
+  scheduledTime String // "07:00" | "21:30" | "sunday_09:00"
+  active        Boolean  @default(true)
+  templateJson  Json?
+  createdAt     DateTime @default(now())
+
+  instances RitualInstance[]
+}
+
+model RitualInstance {
+  id               String    @id @default(cuid())
+  ritualId         String
+  ritual           Ritual    @relation(fields: [ritualId], references: [id])
+  scheduledFor     DateTime
+  firedAt          DateTime?
+  status           String    @default("scheduled") // "scheduled" | "generated" | "delivered" | "acknowledged" | "skipped" | "revoked"
+  outputText       String?
+  outputStructured Json?
+  deliveredVia     String? // "push" | "in_app" | "email"
+  acknowledgedAt   DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([ritualId, scheduledFor])
+  @@index([status, scheduledFor])
+}
+
+model CalendarEvent {
+  id            String    @id @default(cuid())
+  externalId    String    @unique // Google event id
+  operatorId    String?
+  operator      Operator? @relation(fields: [operatorId], references: [id])
+  domain        String    @default("personal")
+  title         String
+  description   String?
+  startAt       DateTime
+  endAt         DateTime
+  location      String?
+  attendees     Json?
+  linkedTaskIds String[]
+  syncedAt      DateTime  @default(now())
+  raw           Json?
+
+  @@index([startAt])
+}
+
+// The core two-lane surface. Aurelius's background work surfaces here;
+// Cole's steering writes here too (kind="cole_steer").
+model BridgeSignal {
+  id         String    @id @default(cuid())
+  kind       String // "background_result" | "cole_steer" | "gap_alert" | "proposal_batch" | "opportunity" | "risk"
+  operatorId String?
+  operator   Operator? @relation(fields: [operatorId], references: [id])
+  domain     String?
+  sourceType String // "research_ingestion" | "compiled_pattern" | "reasoning_output" | "cole_message" | "ritual"
+  sourceId   String?
+  severity   String    @default("info") // "info" | "notice" | "attention" | "critical"
+  title      String
+  body       String // markdown
+  actions    Json? // [{ label, action, payload }]
+  status     String    @default("pending") // "pending" | "surfaced" | "acknowledged" | "acted" | "dismissed" | "expired"
+  surfacedAt DateTime?
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([status, createdAt])
+  @@index([kind, status])
+}
+
+// The push foundation: what Cole said mattered vs what actually happened.
+model IntentActionGap {
+  id          String   @id @default(cuid())
+  goalId      String?
+  projectId   String?
+  domain      String
+  windowStart DateTime
+  windowEnd   DateTime
+  intent      String
+  action      String
+  gapScore    Float // 0.0 = perfect alignment, 1.0 = complete miss
+  gapSummary  String
+  computedAt  DateTime @default(now())
+
+  @@index([domain, computedAt])
 }
 
 // ═══════════════════════════════════════════════════════════════════
