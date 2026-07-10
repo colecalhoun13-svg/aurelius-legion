@@ -886,6 +886,21 @@ app.post("/api/aurelius/register-sheet", async (req: Request, res: Response) => 
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// The Pulse — scheduled background loops (nervous system v1)
+// Nightly at 21:30: close the day, compute intent-vs-action gap.
+// Sunday 09:00: weekend research pass → proposals for Monday review.
+// ═══════════════════════════════════════════════════════════════════
+import nodeSchedule from "node-schedule";
+import { runNightlyPulse, runWeekendPulse } from "./autonomy/pulse.ts";
+
+nodeSchedule.scheduleJob("30 21 * * *", () => {
+  runNightlyPulse().catch((err) => console.error("[pulse] nightly failed:", err));
+});
+nodeSchedule.scheduleJob("0 9 * * 0", () => {
+  runWeekendPulse().catch((err) => console.error("[pulse] weekend failed:", err));
+});
+
 const PORT = Number(process.env.PORT) || 3001;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Aurelius server running on port ${PORT}`);

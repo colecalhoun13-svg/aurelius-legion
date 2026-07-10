@@ -286,6 +286,13 @@ export async function getToday(dateStr?: string) {
     where: { status: "done", completedAt: { gte: start, lte: end } },
   });
 
+  // Trackers + the Aurelius lane, in the same payload (one page fetch)
+  const [stats, goals, activity] = await Promise.all([
+    getProductivityStats(dstr),
+    listGoals(),
+    getAureliusActivity(),
+  ]);
+
   return {
     date: dstr,
     plan,
@@ -296,6 +303,9 @@ export async function getToday(dateStr?: string) {
     habits,
     calendarEvents: events,
     bridgeSignals: bridge,
+    stats,
+    goals,
+    activity,
   };
 }
 
@@ -306,4 +316,257 @@ export async function ackBridgeSignal(id: string, status: "acknowledged" | "acte
     where: { id },
     data: { status },
   });
+}
+
+// ── Goals ────────────────────────────────────────────────────────────
+// measure: { type: "count", target, current } — v1 supports counted goals;
+// "big" vs "small" is the horizon field (life/year/quarter vs week-scale).
+
+export async function createGoal(input: {
+  name: string;
+  domain?: string;
+  horizon?: string;
+  target?: number;
+  unit?: string;
+  targetDate?: string;
+  projectId?: string;
+  operatorId?: string;
+}) {
+  return prisma.goal.create({
+    data: {
+      name: input.name,
+      domain: input.domain ?? "personal",
+      horizon: input.horizon ?? "quarter",
+      targetDate: input.targetDate ? new Date(input.targetDate) : null,
+      projectId: input.projectId ?? null,
+      operatorId: input.operatorId ?? null,
+      measure: {
+        type: "count",
+        target: input.target ?? 1,
+        current: 0,
+        unit: input.unit ?? null,
+      },
+    },
+  });
+}
+
+export async function listGoals(status: string = "active") {
+  const goals = await prisma.goal.findMany({
+    where: { status },
+    orderBy: [{ horizon: "asc" }, { createdAt: "asc" }],
+  });
+  return goals.map((g) => {
+    const m = (g.measure as any) ?? {};
+    const target = Number(m.target ?? 1) || 1;
+    const current = Number(m.current ?? 0);
+    return { ...g, progressPct: Math.min(100, Math.round((current / target) * 100)) };
+  });
+}
+
+/** Bump a counted goal's progress. Marks "hit" when target reached. */
+export async function bumpGoal(id: string, delta: number = 1) {
+  const goal = await prisma.goal.findUnique({ where: { id } });
+  if (!goal) throw new Error(`goal not found: ${id}`);
+  const m = (goal.measure as any) ?? { type: "count", target: 1, current: 0 };
+  const current = Math.max(0, Number(m.current ?? 0) + delta);
+  const target = Number(m.target ?? 1) || 1;
+  return prisma.goal.update({
+    where: { id },
+    data: {
+      measure: { ...m, current },
+      status: current >= target ? "hit" : "active",
+    },
+  });
+}
+
+// ── Productivity stats (the trackers) ────────────────────────────────
+
+export async function getProductivityStats(dateStr?: string) {
+  const { start, end } = dayRange(dateStr);
+  const weekAgo = new Date(start.getTime() - 6 * 24 * 3600 * 1000);
+
+  const [doneToday, doneWeek, capturesWeek, habits, gaps] = await Promise.all([
+    prisma.task.count({ where: { status: "done", completedAt: { gte: start, lte: end } } }),
+    prisma.task.count({ where: { status: "done", completedAt: { gte: weekAgo, lte: end } } }),
+    prisma.note.count({ where: { createdAt: { gte: weekAgo, lte: end } } }),
+    prisma.habit.findMany({ where: { active: true }, select: { name: true, streak: true } }),
+    prisma.intentActionGap.findMany({
+      where: { computedAt: { gte: weekAgo } },
+      orderBy: { computedAt: "desc" },
+      take: 7,
+    }),
+  ]);
+
+  const bestStreak = habits.reduce((mx, h) => Math.max(mx, h.streak), 0);
+  const avgGap =
+    gaps.length > 0 ? gaps.reduce((s, g) => s + g.gapScore, 0) / gaps.length : null;
+
+  return {
+    doneToday,
+    doneWeek,
+    capturesWeek,
+    bestStreak,
+    // 1 = perfect follow-through on stated intent this week; null = no data yet
+    followThrough: avgGap !== null ? Math.round((1 - avgGap) * 100) : null,
+  };
+}
+
+// ── Projects ─────────────────────────────────────────────────────────
+// Each project rolls up its tasks: progress %, how long it's been alive,
+// runway to target, and "what it needs" = its open tasks (deterministic
+// v1 — the LLM-suggested "what's missing" pass comes with the autonomy
+// engine).
+
+export async function createProject(input: {
+  name: string;
+  description?: string;
+  domain?: string;
+  priority?: string;
+  targetDate?: string;
+  operatorId?: string;
+}) {
+  const project = await prisma.project.create({
+    data: {
+      name: input.name,
+      description: input.description ?? null,
+      domain: input.domain ?? "personal",
+      priority: input.priority ?? "normal",
+      targetDate: input.targetDate ? new Date(input.targetDate) : null,
+      operatorId: input.operatorId ?? null,
+    },
+  });
+  embedSourceSafe({
+    sourceType: "project",
+    sourceId: project.id,
+    text: [project.name, project.description].filter(Boolean).join(" — "),
+    operatorId: project.operatorId,
+    domain: project.domain,
+  });
+  return project;
+}
+
+export async function listProjectsWithProgress() {
+  const projects = await prisma.project.findMany({
+    where: { status: { in: ["active", "paused"] } },
+    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+    include: {
+      tasks: {
+        select: { id: true, title: true, status: true, priority: true },
+      },
+    },
+  });
+
+  const now = Date.now();
+  return projects.map((p) => {
+    const total = p.tasks.length;
+    const done = p.tasks.filter((t) => t.status === "done").length;
+    const open = p.tasks.filter((t) => !["done", "abandoned"].includes(t.status));
+    const daysActive = Math.max(1, Math.round((now - p.createdAt.getTime()) / 86400000));
+    const daysToTarget = p.targetDate
+      ? Math.round((p.targetDate.getTime() - now) / 86400000)
+      : null;
+    return {
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      domain: p.domain,
+      status: p.status,
+      priority: p.priority,
+      progressPct: total > 0 ? Math.round((done / total) * 100) : 0,
+      tasksDone: done,
+      tasksTotal: total,
+      daysActive,
+      daysToTarget,
+      needs: open.slice(0, 3).map((t) => t.title), // "what it needs" v1
+    };
+  });
+}
+
+// ── Command Deck assembly ────────────────────────────────────────────
+// Everything the deck renders, one call. Hero metrics CONFRONT — they
+// tell Cole where he's behind, not how big the database is.
+
+export async function getDeck(dateStr?: string) {
+  const { start, dstr } = dayRange(dateStr);
+
+  const [today, projects, pendingSignals] = await Promise.all([
+    getToday(dstr),
+    listProjectsWithProgress(),
+    prisma.bridgeSignal.findMany({
+      where: { status: { in: ["pending", "surfaced"] } },
+      orderBy: [{ createdAt: "desc" }],
+      take: 12,
+    }),
+  ]);
+
+  // Hero metrics — the confrontation row
+  const behindProjects = projects.filter(
+    (p) => p.daysToTarget !== null && p.daysToTarget < 7 && p.progressPct < 80
+  );
+  const hero = {
+    overdue: today.overdue.length,
+    openToday: today.tasks.length,
+    doneToday: today.doneToday,
+    followThrough: today.stats.followThrough, // % of stated intent executed (7d)
+    inbox: today.inboxCount,
+    projectsAtRisk: behindProjects.map((p) => ({
+      name: p.name,
+      daysToTarget: p.daysToTarget,
+      progressPct: p.progressPct,
+    })),
+    attentionSignals: pendingSignals.filter((s) =>
+      ["attention", "critical"].includes(s.severity)
+    ).length,
+  };
+
+  return {
+    date: dstr,
+    hero,
+    plan: today.plan,
+    tasks: today.tasks,
+    overdue: today.overdue,
+    habits: today.habits,
+    goals: today.goals,
+    stats: today.stats,
+    projects,
+    bridge: pendingSignals,
+    activity: today.activity,
+  };
+}
+
+// ── Aurelius activity (what the background is doing) ─────────────────
+
+export async function getAureliusActivity() {
+  const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
+
+  const [memories24h, reasoningRuns24h, patterns, researchRecent, signals] = await Promise.all([
+    prisma.memory.count({ where: { createdAt: { gte: dayAgo } } }),
+    prisma.reasoningCacheEntry.count({ where: { createdAt: { gte: dayAgo } } }),
+    prisma.compiledPattern.findMany({
+      orderBy: { updatedAt: "desc" },
+      take: 3,
+      select: { patternType: true, status: true, supportCount: true, domain: true, updatedAt: true },
+    }),
+    prisma.memory.findMany({
+      where: { category: "research" },
+      orderBy: { createdAt: "desc" },
+      take: 3,
+      select: { value: true, createdAt: true },
+    }),
+    prisma.bridgeSignal.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: { kind: true, severity: true, title: true, status: true, createdAt: true },
+    }),
+  ]);
+
+  return {
+    counts: { memories24h, reasoningRuns24h },
+    recentPatterns: patterns,
+    recentResearch: researchRecent.map((r) => ({
+      summary: r.value.slice(0, 140),
+      at: r.createdAt,
+    })),
+    recentSignals: signals,
+  };
 }

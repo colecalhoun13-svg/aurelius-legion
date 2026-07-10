@@ -16,7 +16,16 @@ import {
   upsertTodayPlan,
   getToday,
   ackBridgeSignal,
+  createGoal,
+  listGoals,
+  bumpGoal,
+  getProductivityStats,
+  getAureliusActivity,
+  createProject,
+  listProjectsWithProgress,
+  getDeck,
 } from "../productivity/service.ts";
+import { runNightlyPulse, runWeekendPulse } from "../autonomy/pulse.ts";
 
 export const productivityRouter = Router();
 
@@ -119,6 +128,104 @@ productivityRouter.post("/habits", async (req: Request, res: Response) => {
 productivityRouter.post("/habits/:id/complete", async (req: Request, res: Response) => {
   try {
     res.json(await completeHabit(String(req.params.id), req.body?.date));
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+// ── Command Deck ─────────────────────────────────────────────────────
+
+productivityRouter.get("/deck", async (req: Request, res: Response) => {
+  try {
+    const date = typeof req.query.date === "string" ? req.query.date : undefined;
+    res.json(await getDeck(date));
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+// ── Projects ─────────────────────────────────────────────────────────
+
+productivityRouter.get("/projects", async (_req: Request, res: Response) => {
+  try {
+    res.json(await listProjectsWithProgress());
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+productivityRouter.post("/projects", async (req: Request, res: Response) => {
+  try {
+    if (!req.body?.name || typeof req.body.name !== "string") {
+      return res.status(400).json({ error: "name is required" });
+    }
+    res.json(await createProject(req.body));
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+// ── Goals ────────────────────────────────────────────────────────────
+
+productivityRouter.get("/goals", async (_req: Request, res: Response) => {
+  try {
+    res.json(await listGoals());
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+productivityRouter.post("/goals", async (req: Request, res: Response) => {
+  try {
+    if (!req.body?.name || typeof req.body.name !== "string") {
+      return res.status(400).json({ error: "name is required" });
+    }
+    res.json(await createGoal(req.body));
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+productivityRouter.post("/goals/:id/bump", async (req: Request, res: Response) => {
+  try {
+    res.json(await bumpGoal(String(req.params.id), req.body?.delta ?? 1));
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+// ── Trackers + Aurelius activity ─────────────────────────────────────
+
+productivityRouter.get("/stats", async (req: Request, res: Response) => {
+  try {
+    const date = typeof req.query.date === "string" ? req.query.date : undefined;
+    res.json(await getProductivityStats(date));
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+productivityRouter.get("/activity", async (_req: Request, res: Response) => {
+  try {
+    res.json(await getAureliusActivity());
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+// ── Pulse (manual triggers — the scheduler fires these on its own) ───
+
+productivityRouter.post("/pulse/nightly", async (req: Request, res: Response) => {
+  try {
+    res.json(await runNightlyPulse(req.body?.date));
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+productivityRouter.post("/pulse/weekend", async (_req: Request, res: Response) => {
+  try {
+    res.json(await runWeekendPulse());
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? String(err) });
   }

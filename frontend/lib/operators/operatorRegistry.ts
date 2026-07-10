@@ -15,6 +15,11 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     path: "/",
     description: "Primary operator overview",
   },
+  deck: {
+    name: "Command Deck",
+    path: "/deck",
+    description: "The three-lane view — your day, the bridge, Aurelius's work",
+  },
   today: {
     name: "Today",
     path: "/today",

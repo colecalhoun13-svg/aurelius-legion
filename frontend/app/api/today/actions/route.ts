@@ -6,6 +6,10 @@ import {
   completeHabit,
   createHabit,
   upsertTodayPlan,
+  createGoal,
+  bumpGoal,
+  createProject,
+  ackBridgeSignal,
 } from "../../../../../aurelius/productivity/service";
 
 // DB-backed — never statically evaluate at build time.
@@ -37,6 +41,18 @@ export async function POST(request: Request) {
         return NextResponse.json(
           await upsertTodayPlan({ date: body.date, focus: body.focus })
         );
+      case "createGoal":
+        return NextResponse.json(
+          await createGoal({ name: body.name, target: body.target, horizon: body.horizon, domain: body.domain })
+        );
+      case "bumpGoal":
+        return NextResponse.json(await bumpGoal(body.id, body.delta ?? 1));
+      case "createProject":
+        return NextResponse.json(
+          await createProject({ name: body.name, domain: body.domain, targetDate: body.targetDate })
+        );
+      case "ackSignal":
+        return NextResponse.json(await ackBridgeSignal(body.id, body.status ?? "acknowledged"));
       default:
         return NextResponse.json({ error: `unknown action: ${body.action}` }, { status: 400 });
     }

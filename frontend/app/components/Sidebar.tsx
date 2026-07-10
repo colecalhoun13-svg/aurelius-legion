@@ -7,6 +7,7 @@ import { operatorRegistry, OperatorDefinition } from "../../lib/operators/operat
 
 const NAV_GLYPHS: Record<string, string> = {
   Dashboard: "◈",
+  "Command Deck": "❂",
   Today: "☀",
   Corpus: "❖",
   Engines: "⚙",
