@@ -16,7 +16,7 @@ const NAV_GLYPHS: Record<string, string> = {
   Goals: "◎",
   Bridge: "⇄",
   Aurelius: "♛",
-  Corpus: "❖",
+  "Second Brain": "❈",
   Engines: "⚙",
   Settings: "✦",
 };

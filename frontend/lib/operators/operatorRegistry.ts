@@ -61,9 +61,9 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     description: "Aurelius's hands — live and planned integrations",
   },
   corpus: {
-    name: "Corpus",
+    name: "Second Brain",
     path: "/corpus",
-    description: "Knowledge ingestion, preview, and management",
+    description: "The library — ask it, feed it, it stays aware",
   },
   engines: {
     name: "Engines",
