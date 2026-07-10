@@ -25,6 +25,7 @@ import { formatIntentClassesForPrompt } from "../knowledge/intentClasses.ts";
 import { formatPendingProposalsForPrompt } from "../knowledge/proposals.ts";
 import { semanticRecall, formatRecallForPrompt } from "../retrieval/retrieve.ts";
 import { resolveOperatorId } from "../knowledge/store.ts";
+import { getCorpusAwareness } from "../corpus/ingest.ts";
 import { IDENTITY } from "../identity/index.ts";
 import {
   loadMemoriesForOperator,
@@ -343,6 +344,16 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     }
   } catch (err) {
     console.warn("[ROUTER] semantic recall failed (non-fatal):", err);
+  }
+
+  // Layer 5.75: Corpus awareness — Aurelius knows what it has ingested,
+  // unprompted. The contents surface via recall; this is the table of
+  // contents of its own mind.
+  try {
+    const awareness = await getCorpusAwareness();
+    if (awareness) parts.push("\n" + awareness);
+  } catch (err) {
+    console.warn("[ROUTER] corpus awareness failed (non-fatal):", err);
   }
 
   // Layer 6: Tool catalog (auto-generated from registered tool adapters)

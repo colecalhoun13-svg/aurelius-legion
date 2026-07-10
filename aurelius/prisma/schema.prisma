@@ -30,6 +30,7 @@ model Operator {
   dailyPlans            DailyPlan[]
   calendarEvents        CalendarEvent[]
   bridgeSignals         BridgeSignal[]
+  corpusDocuments       CorpusDocument[]
 }
 
 model Memory {
@@ -375,6 +376,71 @@ model IntentActionGap {
   computedAt  DateTime @default(now())
 
   @@index([domain, computedAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SECOND BRAIN — CORPUS + MEASUREMENT
+// CorpusDocument: everything ingested, registered so Aurelius is AWARE
+// of what it knows (inventory injects into every prompt). Correction /
+// MeasurementSnapshot / IngestionRun: the scoreboard + decay substrate.
+// ═══════════════════════════════════════════════════════════════════
+
+model CorpusDocument {
+  id          String    @id @default(cuid())
+  title       String
+  sourceType  String    @default("note") // "upload" | "url" | "note" | "research"
+  sourceUrl   String?
+  domain      String    @default("personal")
+  operatorId  String?
+  operator    Operator? @relation(fields: [operatorId], references: [id])
+  summary     String // short synopsis — what Aurelius "remembers" about it
+  contentText String // full extracted text
+  chunkCount  Int       @default(0)
+  createdAt   DateTime  @default(now())
+
+  @@index([domain, createdAt])
+  @@index([createdAt])
+}
+
+model Correction {
+  id             String   @id @default(cuid())
+  operatorId     String?
+  targetType     String // "compiled_pattern" | "knowledge_entry" | "reasoning_output"
+  targetId       String
+  correctionType String // "value_wrong" | "pattern_wrong" | "context_wrong" | "should_have_asked"
+  before         Json?
+  after          Json?
+  reason         String?
+  createdAt      DateTime @default(now())
+
+  @@index([targetType, targetId])
+  @@index([createdAt])
+}
+
+model MeasurementSnapshot {
+  id         String   @id @default(cuid())
+  weekStart  DateTime
+  operatorId String?
+  metrics    Json // { llmDependenceRate, patternHitRate, correctionRate, coverage, gapAlignment, ... }
+  createdAt  DateTime @default(now())
+
+  @@unique([weekStart, operatorId])
+}
+
+model IngestionRun {
+  id               String    @id @default(cuid())
+  runType          String // "weekend_deep" | "targeted_gap" | "ad_hoc" | "corpus_upload"
+  operatorName     String?
+  startedAt        DateTime  @default(now())
+  finishedAt       DateTime?
+  status           String    @default("running") // "running" | "completed" | "failed"
+  sourcesQueried   Json?
+  findingsCount    Int       @default(0)
+  proposalsCreated Int       @default(0)
+  errors           Json?
+  triggeredBy      String    @default("schedule") // "schedule" | "cole" | "self_directed"
+
+  @@index([startedAt])
 }
 
 // ═══════════════════════════════════════════════════════════════════
