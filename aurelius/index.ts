@@ -56,6 +56,7 @@ import { productivityRouter } from "./router/productivityRouter.ts";
 import { corpusRouter } from "./router/corpusRouter.ts";
 import { missionsRouter } from "./router/missionsRouter.ts";
 import { ritualsRouter } from "./router/ritualsRouter.ts";
+import { proposalsRouter } from "./router/proposalsRouter.ts";
 
 const app = express();
 app.use(express.json());
@@ -83,6 +84,7 @@ app.use("/api/productivity", productivityRouter);
 app.use("/api/corpus", corpusRouter);
 app.use("/api/missions", missionsRouter);
 app.use("/api/rituals", ritualsRouter);
+app.use("/api/proposals", proposalsRouter);
 
 app.get("/", (req: Request, res: Response) => {
   res.send("Aurelius OS backend is running");
@@ -760,7 +762,7 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
         knowledgeProposalsCreated: knowledgeProposalsCreated.length,
         knowledgeProposalsResolved: knowledgeProposalsResolved.length,
         pendingProposalsAfter: primaryOperatorId
-          ? getPendingProposals(primaryOperatorId).length
+          ? (await getPendingProposals(primaryOperatorId)).length
           : 0,
       },
       tools: executedTools.map((e) => ({

@@ -1,15 +1,34 @@
 "use client";
 
 // THE BRIDGE — where Aurelius's background work meets Cole.
-// Every signal, full body, inline actions.
+// Top: the review bench — knowledge proposals awaiting his ruling.
+// Nothing enters Living Knowledge without passing this (or an explicit
+// in-chat confirmation). Below: every signal, full body, inline actions.
 
 import { useCallback, useEffect, useState } from "react";
 
 type Signal = { id: string; kind: string; severity: string; title: string; body: string; createdAt: string };
+type Proposal = {
+  id: string;
+  operatorName: string;
+  intentClassId: string;
+  scope: string;
+  key: string;
+  proposedValue: any;
+  priorValue: any | null;
+  rationale: string;
+  coleNaturalLanguage: string;
+  createdAt: string;
+};
 
 function localDate(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function showValue(v: any): string {
+  const s = typeof v === "string" ? v : JSON.stringify(v);
+  return s.length > 160 ? s.slice(0, 160) + "…" : s;
 }
 
 const SEV: Record<string, string> = {
@@ -21,10 +40,13 @@ const SEV: Record<string, string> = {
 
 export default function BridgePage() {
   const [signals, setSignals] = useState<Signal[] | null>(null);
+  const [proposals, setProposals] = useState<Proposal[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/deck");
-    if (res.ok) setSignals((await res.json()).bridge);
+    const [deckRes, propRes] = await Promise.all([fetch("/api/deck"), fetch("/api/proposals")]);
+    if (deckRes.ok) setSignals((await deckRes.json()).bridge);
+    if (propRes.ok) setProposals((await propRes.json()).proposals);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -38,14 +60,90 @@ export default function BridgePage() {
     await load();
   };
 
+  const rule = async (id: string, decision: "confirmed" | "denied") => {
+    if (busy) return;
+    setBusy(id);
+    try {
+      await fetch("/api/proposals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, decision }),
+      });
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const pendingCount = (signals?.length ?? 0) + (proposals?.length ?? 0);
+
   return (
     <main className="text-aurelius-text max-w-3xl mx-auto space-y-6 aurelius-stagger">
       <header className="flex items-baseline justify-between aurelius-rule">
         <h1 className="aurelius-heading text-4xl">The Bridge</h1>
-        <span className="text-sm text-neutral-500">{signals?.length ?? "…"} pending</span>
+        <span className="text-sm text-neutral-500">
+          {signals === null && proposals === null ? "…" : `${pendingCount} pending`}
+        </span>
       </header>
 
-      {signals && signals.length === 0 && (
+      {/* THE REVIEW BENCH — proposals await Cole's ruling */}
+      {proposals && proposals.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="aurelius-heading text-lg">Awaiting your ruling</h2>
+          {proposals.map((p) => (
+            <div key={p.id} className="aurelius-panel-frame p-5 border border-sky-400/40">
+              <div className="flex items-start justify-between gap-3">
+                <span className="font-medium text-sm">
+                  <span className="text-aurelius-gold">{p.scope}.{p.key}</span>
+                  <span className="text-neutral-500"> · {p.operatorName} · {p.intentClassId.replace(/_/g, " ")}</span>
+                </span>
+                <span className="text-[10px] uppercase tracking-wider text-sky-300 border border-sky-400/40 rounded px-1.5 py-0.5 shrink-0">
+                  proposal
+                </span>
+              </div>
+
+              <div className="mt-3 text-sm space-y-1.5">
+                {p.priorValue !== null && (
+                  <p className="text-neutral-500">
+                    <span className="text-[11px] uppercase tracking-wider mr-2">now</span>
+                    <span className="line-through decoration-neutral-600">{showValue(p.priorValue)}</span>
+                  </p>
+                )}
+                <p className="text-neutral-200">
+                  <span className="text-[11px] uppercase tracking-wider text-aurelius-gold/70 mr-2">proposed</span>
+                  {showValue(p.proposedValue)}
+                </p>
+                {p.rationale && <p className="text-xs text-neutral-500 mt-2">{p.rationale}</p>}
+                {p.coleNaturalLanguage && (
+                  <p className="text-xs text-neutral-600 italic">from: “{p.coleNaturalLanguage}”</p>
+                )}
+              </div>
+
+              <div className="flex gap-2 mt-4">
+                <button
+                  onClick={() => rule(p.id, "confirmed")}
+                  disabled={busy === p.id}
+                  className="text-sm border border-emerald-500/40 rounded-lg px-4 py-1 hover:bg-emerald-500/15 text-emerald-400 disabled:opacity-40"
+                >
+                  Confirm
+                </button>
+                <button
+                  onClick={() => rule(p.id, "denied")}
+                  disabled={busy === p.id}
+                  className="text-sm border border-red-500/40 rounded-lg px-4 py-1 hover:bg-red-500/15 text-red-400 disabled:opacity-40"
+                >
+                  Deny
+                </button>
+                <span className="text-[11px] text-neutral-600 self-center ml-2">
+                  applies to Living Knowledge only on confirm
+                </span>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {signals && signals.length === 0 && (proposals?.length ?? 0) === 0 && (
         <p className="text-neutral-600 italic text-center py-16">
           Quiet. When Aurelius finishes something in the background — a research pass,
           a closed-out day, a pattern worth confirming — it lands here.

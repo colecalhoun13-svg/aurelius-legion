@@ -444,6 +444,32 @@ model IngestionRun {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// KNOWLEDGE PROPOSALS — the propose→confirm loop, durable.
+// Was in-memory in v1 (died on restart); now every proposal survives
+// until Cole resolves it, and the Bridge review surface reads from here.
+// ═══════════════════════════════════════════════════════════════════
+
+model KnowledgeProposal {
+  id                  String    @id @default(cuid())
+  operatorId          String
+  operatorName        String
+  intentClassId       String
+  scope               String
+  key                 String
+  proposedValue       Json
+  priorValue          Json?
+  rationale           String    @default("")
+  coleNaturalLanguage String    @default("")
+  status              String    @default("pending") // "pending" | "confirmed" | "denied" | "corrected"
+  cacheEntryId        String?
+  createdAt           DateTime  @default(now())
+  resolvedAt          DateTime?
+
+  @@index([operatorId, status])
+  @@index([status, createdAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MISSIONS — the autonomy loop that actually executes.
 // Cole (or a schedule) states an objective; Aurelius plans discrete
 // steps, runs them (research / recall / synthesize), and files a

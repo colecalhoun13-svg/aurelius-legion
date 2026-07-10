@@ -387,7 +387,7 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
       knowledgeLines.push(intentClassesSection);
     }
 
-    const pendingSection = formatPendingProposalsForPrompt(operatorId);
+    const pendingSection = await formatPendingProposalsForPrompt(operatorId);
     if (pendingSection) {
       knowledgeLines.push("");
       knowledgeLines.push(pendingSection);
