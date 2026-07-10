@@ -124,6 +124,22 @@ export async function runWeekendPulse() {
         insights: r.insights.length,
         proposals: r.proposalsCreated,
       });
+
+      // Real findings join the corpus — the brain grows from its own
+      // sweeps (all four auto-awareness writes fire, wiki refreshes).
+      if (r.synthesis && r.insights.length > 0) {
+        const { ingestDocument } = await import("../corpus/ingest.ts");
+        await ingestDocument({
+          title: `Research: ${topic}`,
+          content: [r.synthesis, "", ...r.insights.map((i) => `- ${i}`)].join("\n"),
+          sourceType: "research",
+          domain: "cole_training",
+          operatorName: "training",
+          triggeredBy: "schedule",
+        }).catch((err: any) =>
+          console.warn("[pulse] corpus ingestion of findings failed (non-fatal):", err)
+        );
+      }
     } catch (err: any) {
       results.push({ topic, insights: 0, proposals: 0, error: err?.message ?? String(err) });
     }

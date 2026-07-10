@@ -156,13 +156,17 @@ export async function listCorpus(limit = 50) {
  * what's in its own library without being asked.
  */
 export async function getCorpusAwareness(): Promise<string> {
-  const [total, byDomain, recent] = await Promise.all([
+  const [total, byDomain, recent, wikiPages] = await Promise.all([
     prisma.corpusDocument.count(),
     prisma.corpusDocument.groupBy({ by: ["domain"], _count: { id: true } }),
     prisma.corpusDocument.findMany({
       orderBy: { createdAt: "desc" },
       take: 5,
       select: { title: true, domain: true, createdAt: true },
+    }),
+    prisma.wikiPage.findMany({
+      orderBy: { updatedAt: "desc" },
+      select: { domain: true, revision: true },
     }),
   ]);
 
@@ -173,7 +177,16 @@ export async function getCorpusAwareness(): Promise<string> {
     `${total} documents: ${byDomain.map((d) => `${d.domain} ${d._count.id}`).join(" · ")}`,
     "Most recent:",
     ...recent.map((r) => `  — "${r.title}" (${r.domain}, ${r.createdAt.toISOString().slice(0, 10)})`),
-    "Reference these naturally when relevant. Their contents surface via semantic recall.",
   ];
+  if (wikiPages.length > 0) {
+    lines.push(
+      `Your syntheses (wiki pages YOU maintain): ${wikiPages
+        .map((w) => `${w.domain} (rev ${w.revision})`)
+        .join(" · ")}`
+    );
+  }
+  lines.push(
+    "Reference these naturally when relevant. Their contents surface via semantic recall."
+  );
   return lines.join("\n");
 }
