@@ -138,10 +138,26 @@ export function startTelegramBridge() {
   running = true;
 
   const chat = allowedChat();
-  console.log(`[telegram] bridge live${chat ? "" : " (TELEGRAM_CHAT_ID unset — will echo chat ids only)"}`);
 
   let offset = 0;
   (async () => {
+    // Validate the token before polling — a bad token 404s forever, and
+    // "getUpdates failed: Not Found" tells nobody anything.
+    try {
+      const me = await api("getMe", {});
+      console.log(
+        `[telegram] bridge live as @${me.username}${chat ? "" : " (TELEGRAM_CHAT_ID unset — will echo chat ids only)"}`
+      );
+    } catch {
+      console.error(
+        "[telegram] TOKEN REJECTED — Telegram returned Not Found for this bot token.\n" +
+          "  Check TELEGRAM_BOT_TOKEN in .env: format is <digits>:<~35 chars>, no quotes,\n" +
+          "  no spaces, no 'bot' prefix. Re-copy it from @BotFather → /mybots → API Token.\n" +
+          "  Bridge is DISABLED until the token is fixed and the server restarts."
+      );
+      running = false;
+      return;
+    }
     while (running) {
       try {
         const updates: any[] = await api("getUpdates", { timeout: 50, offset });

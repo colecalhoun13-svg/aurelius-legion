@@ -4,10 +4,12 @@
 // Call registerAllTools() once at startup to populate the tool registry.
 
 import { registerTool } from "./toolRegistry.ts";
+import { planningAdapter } from "./adapters/planning.ts";
 import { googleSheetsAdapter } from "./adapters/googleSheets.ts";
 
 export function registerAllTools(): void {
   registerTool(googleSheetsAdapter);
+  registerTool(planningAdapter);
 
   // Future tools register here:
   //   registerTool(googleCalendarAdapter);   // Phase 5

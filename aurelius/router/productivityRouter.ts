@@ -249,6 +249,24 @@ productivityRouter.post("/pulse/nightly", async (req: Request, res: Response) =>
   }
 });
 
+productivityRouter.post("/pulse/midday", async (req: Request, res: Response) => {
+  try {
+    const { runMiddayCheck } = await import("../planning/tools.ts");
+    res.json(await runMiddayCheck(req.body?.date));
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+productivityRouter.post("/plan/week", async (_req: Request, res: Response) => {
+  try {
+    const { planWeekLite } = await import("../planning/tools.ts");
+    res.json(await planWeekLite());
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
 productivityRouter.post("/pulse/market", async (req: Request, res: Response) => {
   try {
     const { runMarketPulse } = await import("../wealth/engine.ts");

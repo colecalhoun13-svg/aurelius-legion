@@ -82,3 +82,36 @@ curl localhost:3000/api/deck    # frontend + DB
 # Telegram: /status → numbers; /brief → briefing in voice
 # UI: boot flash → deck; Second Brain ask returns cited answer
 ```
+
+## 9. Local stack (reviewed from Copilot's list — install during deploy)
+Accepted, in install order:
+1. **Homebrew** — first command on the fresh Mini; everything below flows from it.
+2. **Syncthing** (`brew install syncthing`) — sync VAULT_DIR + backups across
+   Mini ↔ UGREEN ↔ laptop. Point it at the vault share.
+3. **Paperless-ngx** (Docker on the Mini or UGREEN container station) — PDFs
+   in, OCR'd tagged text out. Integration: a small poller hits Paperless's
+   REST API for new documents → `ingestDocument` (four-write pipeline, wiki
+   refresh included). Build the poller at deploy time (~40 lines).
+4. **Hammerspoon** (`brew install --cask hammerspoon`) — macOS hands, GATED:
+   Aurelius may only trigger an allowlisted script set Cole approves, wired
+   as a Tool Engine adapter with the escalation matrix in front of it.
+5. **Zotero** (optional) — if Cole uses it for reading, poll its local
+   SQLite for new items → corpus.
+6. **Ollama** (`brew install ollama`) — local embeddings (swap
+   EMBEDDINGS_PROVIDER when ready; NORTH_STAR names this as the Gemini
+   swap-in) and local inference for the fast tier. Sovereignty upgrade.
+7. **whisper.cpp** (`brew install whisper-cpp`) — local audio/video
+   transcription → corpus ingestion. Athlete film + voice notes.
+8. **Docker Compose** — carries Paperless-ngx (and anything else
+   containerized) on the Mini or the UGREEN's container station.
+9. **Caddy** (`brew install caddy`) — reverse proxy with auto-HTTPS in
+   front of the PWA on the tailnet.
+10. **Restic** (`brew install restic`) — upgrade §5's plain pg_dump gzip
+    to encrypted, deduplicated snapshots targeting the UGREEN repo
+    (pg_dump | restic backup --stdin). Keep the monthly restore test.
+
+Rejected (recorded so we stop relitigating): n8n/Huginn (Aurelius IS the
+workflow+trigger engine — no second brainstem), MinIO (Postgres + NAS
+filesystem suffice), Logseq (vault is Obsidian-format; one markdown brain).
+Parked: Immich (revisit with the athlete-video pipeline). Already live:
+Google Sheets, Postgres, Obsidian-via-vault.
