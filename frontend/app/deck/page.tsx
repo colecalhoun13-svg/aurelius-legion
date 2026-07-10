@@ -31,7 +31,8 @@ function greeting(): string {
   return "Evening";
 }
 
-// A fresh quote every load — Stoics only.
+// A fresh quote every load — the persona's warrior-philosopher lineage
+// (aureliusPersona.ts): tested through action, written with brutal economy.
 const QUOTES: [string, string][] = [
   ["You have power over your mind — not outside events. Realize this, and you will find strength.", "Marcus Aurelius"],
   ["Waste no more time arguing about what a good man should be. Be one.", "Marcus Aurelius"],
@@ -54,6 +55,18 @@ const QUOTES: [string, string][] = [
   ["Dwell on the beauty of life. Watch the stars, and see yourself running with them.", "Marcus Aurelius"],
   ["Think of yourself as dead. You have lived your life. Now take what's left and live it properly.", "Marcus Aurelius"],
   ["When you arise in the morning, think of what a precious privilege it is to be alive.", "Marcus Aurelius"],
+  ["In the midst of chaos, there is also opportunity.", "Sun Tzu"],
+  ["The supreme art of war is to subdue the enemy without fighting.", "Sun Tzu"],
+  ["Victorious warriors win first and then go to war.", "Sun Tzu"],
+  ["Do nothing that is of no use.", "Miyamoto Musashi"],
+  ["You must understand that there is more than one path to the top of the mountain.", "Miyamoto Musashi"],
+  ["Today is victory over yourself of yesterday.", "Miyamoto Musashi"],
+  ["Nature does not hurry, yet everything is accomplished.", "Lao Tzu"],
+  ["A journey of a thousand miles begins with a single step.", "Lao Tzu"],
+  ["Mastering others is strength. Mastering yourself is true power.", "Lao Tzu"],
+  ["Character is destiny.", "Heraclitus"],
+  ["No man ever steps in the same river twice.", "Heraclitus"],
+  ["There is surely nothing other than the single purpose of the present moment.", "Hagakure"],
 ]
 
 
