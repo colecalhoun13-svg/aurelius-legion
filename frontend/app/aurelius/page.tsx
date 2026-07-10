@@ -74,11 +74,11 @@ export default function AureliusPage() {
   const missions = activity?.missions ?? [];
 
   return (
-    <main className="text-aurelius-text max-w-3xl mx-auto space-y-6">
-      <header className="flex items-baseline justify-between border-b border-aurelius-gold/35 pb-3">
+    <main className="text-aurelius-text max-w-3xl mx-auto space-y-6 aurelius-stagger">
+      <header className="flex items-baseline justify-between aurelius-rule">
         <h1 className="aurelius-heading text-4xl">Aurelius</h1>
-        <span className="flex items-center gap-2 text-sm text-neutral-500">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+        <span className="flex items-center gap-2.5 text-sm text-neutral-500">
+          <span className="aurelius-live-dot w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
           pulse armed
         </span>
       </header>
@@ -110,7 +110,12 @@ export default function AureliusPage() {
         ) : (
           <div className="space-y-2.5">
             {missions.map((m) => (
-              <div key={m.id} className="border border-aurelius-gold/15 rounded-lg px-4 py-3 bg-black/30">
+              <div
+                key={m.id}
+                className={`border rounded-lg px-4 py-3 bg-black/30 transition-colors hover:border-aurelius-gold/40 ${
+                  m.status === "running" ? "border-aurelius-gold/40 aurelius-working" : "border-aurelius-gold/15"
+                }`}
+              >
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="text-sm font-medium flex-1">{m.title}</span>
                   <span className={`text-xs font-semibold ${STATUS_COLOR[m.status] ?? "text-neutral-500"}`}>

@@ -42,8 +42,8 @@ export default function GoalsPage() {
   })).filter((g) => g.items.length > 0);
 
   return (
-    <main className="text-aurelius-text max-w-3xl mx-auto space-y-8">
-      <header className="border-b border-aurelius-gold/35 pb-3">
+    <main className="text-aurelius-text max-w-3xl mx-auto space-y-8 aurelius-stagger">
+      <header className="aurelius-rule">
         <h1 className="aurelius-heading text-4xl">Goals</h1>
       </header>
 
@@ -65,7 +65,7 @@ export default function GoalsPage() {
                     </span>
                   </div>
                   <div className="h-2.5 bg-black/60 rounded-full overflow-hidden border border-aurelius-gold/15">
-                    <div className="h-full rounded-full bg-gradient-to-r from-aurelius-gold/70 to-aurelius-gold transition-all duration-500" style={{ width: `${g.progressPct}%` }} />
+                    <div className="h-full rounded-full aurelius-bar-fill transition-all duration-500" style={{ width: `${g.progressPct}%` }} />
                   </div>
                 </div>
               );

@@ -166,9 +166,9 @@ export default function TodayPage() {
 
   return (
     <main className="text-aurelius-text">
-      <div className="max-w-3xl mx-auto space-y-8">
+      <div className="max-w-3xl mx-auto space-y-8 aurelius-stagger">
         {/* Header */}
-        <header className="flex items-baseline justify-between border-b border-aurelius-gold/35 pb-4">
+        <header className="flex items-baseline justify-between aurelius-rule">
           <div>
             <h1 className="aurelius-heading text-4xl">Today</h1>
             <p className="text-sm text-neutral-400">{data.date}</p>
@@ -197,7 +197,7 @@ export default function TodayPage() {
           </div>
           {briefing ? (
             <>
-              <p className="text-sm leading-relaxed whitespace-pre-wrap text-neutral-300">{briefing}</p>
+              <p className="aurelius-voice aurelius-resolve text-[15px] whitespace-pre-wrap text-neutral-200">{briefing}</p>
               {briefingAt && (
                 <p className="text-[11px] text-neutral-600 mt-2">
                   {new Date(briefingAt).toLocaleString()}

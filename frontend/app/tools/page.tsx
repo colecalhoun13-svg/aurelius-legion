@@ -38,8 +38,8 @@ export default function ToolsPage() {
   }, []);
 
   return (
-    <main className="text-aurelius-text max-w-4xl mx-auto space-y-6">
-      <header className="border-b border-aurelius-gold/35 pb-3">
+    <main className="text-aurelius-text max-w-4xl mx-auto space-y-6 aurelius-stagger">
+      <header className="aurelius-rule">
         <h1 className="aurelius-heading text-4xl">Tools</h1>
         <p className="text-sm text-neutral-500 mt-1">
           Aurelius's hands. Read broadly, write narrowly — anything outward goes through propose → confirm.

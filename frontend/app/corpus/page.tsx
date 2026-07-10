@@ -120,8 +120,8 @@ export default function CorpusPage() {
   const visible = (docs ?? []).filter((d) => !domainFilter || d.domain === domainFilter);
 
   return (
-    <main className="text-aurelius-text max-w-5xl mx-auto space-y-6">
-      <header className="flex items-baseline justify-between border-b border-aurelius-gold/35 pb-3">
+    <main className="text-aurelius-text max-w-5xl mx-auto space-y-6 aurelius-stagger">
+      <header className="flex items-baseline justify-between aurelius-rule">
         <h1 className="aurelius-heading text-4xl">Second Brain</h1>
         <span className="text-sm text-neutral-500">
           {docs === null ? "…" : `${docs.length} documents · ${docs.reduce((n, d) => n + d.chunkCount, 0)} chunks in recall`}
@@ -129,7 +129,7 @@ export default function CorpusPage() {
       </header>
 
       {/* ASK — the front door */}
-      <section className="aurelius-panel-frame p-5 space-y-3">
+      <section className={`aurelius-panel-frame p-5 space-y-3 ${asking ? "aurelius-working" : ""}`}>
         <span className="aurelius-heading text-base">Ask</span>
         <div className="flex gap-3 items-start">
           <textarea
@@ -158,16 +158,19 @@ export default function CorpusPage() {
         {askError && <p className="text-sm text-red-400/90">{askError}</p>}
 
         {result && (
-          <div className="border-t border-aurelius-gold/15 pt-3 space-y-3">
-            <p className="text-sm leading-relaxed whitespace-pre-wrap">{result.answer}</p>
+          <div className="border-t border-aurelius-gold/15 pt-3 space-y-3 aurelius-resolve">
+            <p className="aurelius-voice text-[15px] whitespace-pre-wrap text-neutral-200">{result.answer}</p>
             {result.sources.length > 0 && (
-              <div className="text-xs text-neutral-500 space-y-1">
+              <div className="text-xs text-neutral-500 space-y-1.5">
                 <span className="aurelius-heading text-xs">Drawn from</span>
                 {result.sources.map((s, i) => (
-                  <div key={i} className="flex gap-2">
+                  <div key={i} className="flex items-center gap-2.5">
                     <span className="text-aurelius-gold/70 w-4">{i + 1}</span>
                     <span className="flex-1 truncate">{s.title}</span>
-                    <span className="text-neutral-600">{s.sourceType} · {(s.similarity * 100).toFixed(0)}%</span>
+                    <span className="text-neutral-600">{s.sourceType}</span>
+                    <span className="aurelius-meter" title={`${(s.similarity * 100).toFixed(0)}% match`}>
+                      <span style={{ width: `${Math.max(6, Math.round(s.similarity * 100))}%` }} />
+                    </span>
                   </div>
                 ))}
               </div>

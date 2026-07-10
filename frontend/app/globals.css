@@ -208,9 +208,220 @@
 }
 
 /* ===============================================
+   AURELIUS — MOTION LANGUAGE
+   Content never pops in; it rises and resolves.
+   =============================================== */
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+/* Put .aurelius-stagger on a page's <main>: its direct children rise
+   in sequence — the page assembles itself instead of appearing. */
+.aurelius-stagger > * {
+  opacity: 0;
+  animation: riseIn 0.65s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.aurelius-stagger > *:nth-child(1) { animation-delay: 0.05s; }
+.aurelius-stagger > *:nth-child(2) { animation-delay: 0.13s; }
+.aurelius-stagger > *:nth-child(3) { animation-delay: 0.21s; }
+.aurelius-stagger > *:nth-child(4) { animation-delay: 0.29s; }
+.aurelius-stagger > *:nth-child(5) { animation-delay: 0.37s; }
+.aurelius-stagger > *:nth-child(6) { animation-delay: 0.45s; }
+.aurelius-stagger > *:nth-child(7) { animation-delay: 0.53s; }
+.aurelius-stagger > *:nth-child(n + 8) { animation-delay: 0.6s; }
+
+/* Fresh content (answers, reports, briefings) resolves from blur. */
+.aurelius-resolve {
+  animation: riseIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Live work — a slow gold sweep across anything currently running. */
+@keyframes goldSweep {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+.aurelius-working {
+  background-image: linear-gradient(
+    100deg,
+    transparent 30%,
+    rgba(212, 175, 55, 0.08) 50%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  animation: goldSweep 2.6s linear infinite;
+}
+
+/* Progress bars gleam — a highlight travels the filled portion. */
+@keyframes barGleam {
+  from { background-position: -100% 0; }
+  to { background-position: 200% 0; }
+}
+.aurelius-bar-fill {
+  background-image: linear-gradient(
+    90deg,
+    rgba(212, 175, 55, 0.75),
+    #e8c964 45%,
+    rgba(255, 240, 190, 0.95) 50%,
+    #e8c964 55%,
+    rgba(212, 175, 55, 0.75)
+  );
+  background-size: 300% 100%;
+  animation: barGleam 3.2s ease-in-out infinite;
+  box-shadow: 0 0 10px rgba(212, 175, 55, 0.35);
+}
+
+/* Status dot with a slow radar ring — "alive", not blinking. */
+.aurelius-live-dot {
+  position: relative;
+}
+.aurelius-live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  border: 1px solid rgba(52, 211, 153, 0.7);
+  animation: liveRing 2.4s ease-out infinite;
+}
+@keyframes liveRing {
+  0% { transform: scale(0.6); opacity: 0.9; }
+  70% { transform: scale(1.9); opacity: 0; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+
+/* ===============================================
+   AURELIUS — MATERIAL DETAILS
+   The small things that make it feel machined.
+   =============================================== */
+
+/* Serif long-form voice — briefings, answers, reports. */
+.aurelius-voice {
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 1.75;
+  letter-spacing: 0.01em;
+}
+.aurelius-voice::first-letter {
+  color: var(--aurelius-gold);
+  font-size: 1.35em;
+  line-height: 1;
+}
+
+/* Gradient hairline — headers taper into the dark instead of a flat rule. */
+.aurelius-rule {
+  border-bottom: none !important;
+  position: relative;
+  padding-bottom: 0.75rem;
+}
+.aurelius-rule::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(212, 175, 55, 0.7),
+    rgba(212, 175, 55, 0.25) 55%,
+    transparent 95%
+  );
+}
+
+/* Inputs breathe on focus — gold hairline blooms. */
+input,
+textarea {
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+input:focus,
+textarea:focus {
+  box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.25), 0 0 18px rgba(212, 175, 55, 0.08);
+}
+
+/* Buttons acknowledge the press. */
+button {
+  transition: transform 0.15s ease, box-shadow 0.2s ease, opacity 0.2s ease,
+    border-color 0.2s ease, background-color 0.2s ease;
+}
+button:active {
+  transform: scale(0.97);
+}
+
+/* Similarity / confidence meter — a sliver of gold, not a raw percent. */
+.aurelius-meter {
+  height: 3px;
+  width: 3rem;
+  border-radius: 9999px;
+  background: rgba(212, 175, 55, 0.12);
+  overflow: hidden;
+}
+.aurelius-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, rgba(212, 175, 55, 0.5), #e8c964);
+}
+
+/* ===============================================
    GLOBAL BODY STYLING
    =============================================== */
 body {
   background: var(--aurelius-bg);
   color: var(--aurelius-text);
+}
+
+/* Text selection is part of the theme. */
+::selection {
+  background: rgba(212, 175, 55, 0.3);
+  color: #fdf6df;
+}
+
+/* Thin machined scrollbar. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(212, 175, 55, 0.28) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(212, 175, 55, 0.22);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(212, 175, 55, 0.45);
+  background-clip: content-box;
+}
+
+/* Keyboard focus is gold, everywhere. */
+:focus-visible {
+  outline: 1px solid rgba(212, 175, 55, 0.6);
+  outline-offset: 2px;
+}
+
+/* Respect users who turn motion off. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .aurelius-stagger > * {
+    opacity: 1;
+  }
 }

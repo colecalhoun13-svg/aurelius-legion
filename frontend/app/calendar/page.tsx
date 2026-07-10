@@ -50,8 +50,8 @@ export default function CalendarPage() {
     setWeekStart(new Date(weekStart.getTime() + weeks * 7 * 86400000));
 
   return (
-    <main className="text-aurelius-text max-w-6xl mx-auto space-y-6">
-      <header className="flex items-center justify-between border-b border-aurelius-gold/35 pb-3">
+    <main className="text-aurelius-text max-w-6xl mx-auto space-y-6 aurelius-stagger">
+      <header className="flex items-center justify-between aurelius-rule">
         <h1 className="aurelius-heading text-4xl">Calendar</h1>
         <div className="flex items-center gap-3 text-sm">
           <button onClick={() => shift(-1)} className="border border-aurelius-gold/40 rounded-lg px-3 py-1 hover:bg-aurelius-gold/15 text-aurelius-gold">←</button>

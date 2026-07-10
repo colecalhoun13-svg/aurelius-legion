@@ -18,7 +18,7 @@ function localDate(): string {
 function GoldBar({ pct }: { pct: number }) {
   return (
     <div className="h-2 bg-black/60 rounded-full overflow-hidden border border-aurelius-gold/15">
-      <div className="h-full rounded-full bg-gradient-to-r from-aurelius-gold/70 to-aurelius-gold transition-all duration-500" style={{ width: `${pct}%` }} />
+      <div className="h-full rounded-full aurelius-bar-fill transition-all duration-500" style={{ width: `${pct}%` }} />
     </div>
   );
 }
@@ -52,8 +52,8 @@ export default function ProjectsPage() {
   };
 
   return (
-    <main className="text-aurelius-text max-w-5xl mx-auto space-y-6">
-      <header className="flex items-baseline justify-between border-b border-aurelius-gold/35 pb-3">
+    <main className="text-aurelius-text max-w-5xl mx-auto space-y-6 aurelius-stagger">
+      <header className="flex items-baseline justify-between aurelius-rule">
         <h1 className="aurelius-heading text-4xl">Projects</h1>
         <span className="text-sm text-neutral-500">{projects?.length ?? "…"} active</span>
       </header>
