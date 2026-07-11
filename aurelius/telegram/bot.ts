@@ -171,22 +171,46 @@ export function startTelegramBridge() {
 
   let offset = 0;
   (async () => {
-    // Validate the token before polling — a bad token 404s forever, and
-    // "getUpdates failed: Not Found" tells nobody anything.
-    try {
-      const me = await api("getMe", {});
-      console.log(
-        `[telegram] bridge live as @${me.username}${chat ? "" : " (TELEGRAM_CHAT_ID unset — will echo chat ids only)"}`
+    // Validate the token before polling — but distinguish a REAL rejection
+    // (Telegram answered 401/404 → bad token) from a transient network blip
+    // at boot. The old code disabled the bridge on ANY error and lied that
+    // it was a bad token; a one-second hiccup killed two-way chat until the
+    // next restart. Retry a few times; only a definitive auth rejection
+    // disables the bridge — transient failures fall through to polling,
+    // which has its own retry loop and where sending already works.
+    let validated = false;
+    let lastErr = "";
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const me = await api("getMe", {});
+        console.log(
+          `[telegram] bridge live as @${me.username}${chat ? "" : " (TELEGRAM_CHAT_ID unset — will echo chat ids only)"}`
+        );
+        validated = true;
+        break;
+      } catch (err: any) {
+        lastErr = err?.message ?? String(err);
+        // A real bad-token response names the rejection; a network error doesn't.
+        if (/not found|unauthorized|401|404/i.test(lastErr)) {
+          console.error(
+            "[telegram] TOKEN REJECTED — Telegram rejected this bot token.\n" +
+              "  Fix TELEGRAM_BOT_TOKEN: format is <digits>:<~35 chars>, no quotes/spaces/'bot' prefix.\n" +
+              "  Re-copy from @BotFather → /mybots → API Token. Bridge disabled until fixed + restart."
+          );
+          running = false;
+          return;
+        }
+        console.warn(`[telegram] getMe attempt ${attempt}/3 failed (${lastErr}) — retrying`);
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
+      }
+    }
+    if (!validated) {
+      // Never got a clean getMe, but it was never a definitive rejection
+      // either. The token likely works (sends already do). Poll anyway —
+      // getUpdates has its own 10s retry, so a real bad token surfaces there.
+      console.warn(
+        `[telegram] getMe didn't confirm (last: ${lastErr}) — proceeding to poll anyway (token likely fine; sends work independently)`
       );
-    } catch {
-      console.error(
-        "[telegram] TOKEN REJECTED — Telegram returned Not Found for this bot token.\n" +
-          "  Check TELEGRAM_BOT_TOKEN in .env: format is <digits>:<~35 chars>, no quotes,\n" +
-          "  no spaces, no 'bot' prefix. Re-copy it from @BotFather → /mybots → API Token.\n" +
-          "  Bridge is DISABLED until the token is fixed and the server restarts."
-      );
-      running = false;
-      return;
     }
     while (running) {
       try {
