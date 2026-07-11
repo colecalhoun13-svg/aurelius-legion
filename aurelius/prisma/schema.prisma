@@ -90,6 +90,21 @@ model AutonomyGoal {
   updatedAt   DateTime @updatedAt
 }
 
+// Conversation continuity — every chat turn persists, and the last few
+// flow back into the next prompt (Layer 5.25). Without this, every
+// conversation starts amnesiac and "what we just discussed" dies with
+// the process.
+model ConversationTurn {
+  id           String   @id @default(cuid())
+  role         String // "cole" | "aurelius"
+  content      String
+  operatorName String?
+  engine       String?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 model LogEntry {
   id         String   @id @default(cuid())
   operatorId String

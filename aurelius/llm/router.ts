@@ -76,6 +76,8 @@ export type LLMResponse = {
   model: string;
   tokensUsed: number;
   latencyMs: number;
+  /** Set when the routed provider failed and another served the call. */
+  failedOverFrom?: string;
   reviewed?: {
     reviewer: string;
     model: string;
@@ -92,16 +94,19 @@ export type LLMResponse = {
 const TIERS = {
   fast:          { provider: "groq",      model: "llama-3.3-70b-versatile" },
   structured:    { provider: "openai",    model: "gpt-5.4-mini" },
-  strategic:     { provider: "anthropic", model: "claude-sonnet-4-6" },
-  highLeverage:  { provider: "anthropic", model: "claude-opus-4-7" },
+  strategic:     { provider: "anthropic", model: "claude-sonnet-5" },
+  highLeverage:  { provider: "anthropic", model: "claude-opus-4-8" },
   realtime:      { provider: "xai",       model: "grok-4-1-fast-reasoning" },
   multimodal:    { provider: "gemini",    model: "gemini-2.5-pro" },
   mathCheap:     { provider: "deepseek",  model: "deepseek-reasoner" },
 };
 
 const ENGINE_ALIASES: Record<string, { provider: string; model: string }> = {
-  "claude-opus":   { provider: "anthropic", model: "claude-opus-4-7" },
-  "claude-sonnet": { provider: "anthropic", model: "claude-sonnet-4-6" },
+  "claude-opus":   { provider: "anthropic", model: "claude-opus-4-8" },
+  "claude-sonnet": { provider: "anthropic", model: "claude-sonnet-5" },
+  // Fable 5 is premium-priced ($10/$50 per MTok) — explicit override only,
+  // never auto-routed. For the hardest long-horizon reasoning when Cole asks.
+  "claude-fable":  { provider: "anthropic", model: "claude-fable-5" },
   "gpt":           { provider: "openai",    model: "gpt-5.4-mini" },
   "gpt-pro":       { provider: "openai",    model: "gpt-5.4" },
   "groq":          { provider: "groq",      model: "llama-3.3-70b-versatile" },
@@ -149,7 +154,7 @@ export function chooseModel(task: LLMTask): LLMChoice {
     return { ...TIERS.structured, reason: `Task type "${task.taskType}" → GPT-5.4-mini.` };
   }
 
-  return { ...TIERS.strategic, reason: "Default strategic routing → Claude Sonnet 4.6 (Aurelius default)." };
+  return { ...TIERS.strategic, reason: "Default strategic routing → Claude Sonnet 5 (Aurelius default)." };
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -336,6 +341,16 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     console.warn("[ROUTER] memory load failed:", err);
   }
 
+  // Layer 5.25: Recent conversation — short-term continuity. The last few
+  // persisted turns, so "like we discussed" survives restarts and devices.
+  try {
+    const { recentConversationBlock } = await import("../memory/conversation.ts");
+    const convo = await recentConversationBlock();
+    if (convo) parts.push("\n" + convo);
+  } catch (err) {
+    console.warn("[ROUTER] conversation continuity failed (non-fatal):", err);
+  }
+
   // Layer 5.5 (Phase 4.6): Semantic recall — retrieval-augmented context.
   // Embeds the user's message and surfaces the closest knowledge, memories,
   // and prior reasoning. No-op when embeddings are disabled; never fatal.
@@ -448,6 +463,38 @@ async function runAdapter(
 // ═══════════════════════════════════════════════════════════════════
 // MAIN ENTRY POINT
 // ═══════════════════════════════════════════════════════════════════
+//
+// Provider failover: one provider erroring degrades the model choice,
+// never the answer. On failure (thrown error OR a keyless "not
+// configured" response) the call walks the other CONFIGURED providers
+// in order. All-fail keeps honest failure — one loud line.
+
+const PROVIDER_KEYS: Record<string, string> = {
+  anthropic: "ANTHROPIC_API_KEY",
+  openai: "OPENAI_API_KEY",
+  groq: "GROQ_API_KEY",
+  gemini: "GEMINI_API_KEY",
+  deepseek: "DEEPSEEK_API_KEY",
+  xai: "XAI_API_KEY",
+};
+const FALLBACK_ORDER = ["anthropic", "openai", "groq", "gemini", "deepseek", "xai"];
+const FALLBACK_MODELS: Record<string, string> = {
+  anthropic: "claude-sonnet-5",
+  openai: "gpt-5.4-mini",
+  groq: "llama-3.3-70b-versatile",
+  gemini: "gemini-2.5-pro",
+  deepseek: "deepseek-reasoner",
+  xai: "grok-4-1-fast-reasoning",
+};
+const MAX_ATTEMPTS = 3;
+
+function providerConfigured(p: string): boolean {
+  return !!process.env[PROVIDER_KEYS[p] ?? ""]?.trim();
+}
+
+function engineUnavailableText(text: string): boolean {
+  return /engine is not configured|Missing .*_API_KEY/i.test(text);
+}
 
 export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
   const choice = chooseModel(task);
@@ -460,18 +507,65 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
 
   console.log(`[ROUTER] ${choice.provider}/${choice.model} — ${choice.reason} | operators: ${opCtx}`);
 
-  const primary = await runAdapter(choice.provider, choice.model, systemPrompt, task.input);
+  // Attempt chain: the routed choice, then every OTHER configured
+  // provider in fallback order. A keyless deployment gets a chain of
+  // one — exactly the old behavior, honest failure included.
+  const chain: Array<{ provider: string; model: string }> = [
+    { provider: choice.provider, model: choice.model },
+    ...FALLBACK_ORDER.filter((p) => p !== choice.provider && providerConfigured(p)).map((p) => ({
+      provider: p,
+      model: FALLBACK_MODELS[p],
+    })),
+  ].slice(0, MAX_ATTEMPTS);
+
+  let primary: { text: string; tokensUsed: number; latencyMs: number } | null = null;
+  let served = chain[0];
+  let failedOver = false;
+  let lastFailure = "unknown";
+
+  for (const attempt of chain) {
+    const isLast = attempt === chain[chain.length - 1];
+    try {
+      const result = await runAdapter(attempt.provider, attempt.model, systemPrompt, task.input);
+      if (engineUnavailableText(result.text) && !isLast) {
+        lastFailure = result.text;
+        console.warn(`[ROUTER] ${attempt.provider} unavailable (no key/config) — falling over`);
+        failedOver = true;
+        continue;
+      }
+      primary = result;
+      served = attempt;
+      break;
+    } catch (err) {
+      lastFailure = (err as any)?.message ?? String(err);
+      console.warn(
+        `[ROUTER] ${attempt.provider}/${attempt.model} failed (${lastFailure}) — ${isLast ? "chain exhausted" : "falling over"}`
+      );
+      failedOver = true;
+    }
+  }
+
+  if (!primary) {
+    // Every configured provider threw — honest failure, one loud line.
+    primary = {
+      text: `All configured LLM providers failed (${chain.map((c) => c.provider).join(" → ")}). Last error: ${lastFailure}`,
+      tokensUsed: 0,
+      latencyMs: 0,
+    };
+    served = chain[0];
+  }
 
   const response: LLMResponse = {
     text: primary.text,
-    engine: choice.provider,
-    model: choice.model,
+    engine: served.provider,
+    model: served.model,
     tokensUsed: primary.tokensUsed,
     latencyMs: primary.latencyMs,
+    failedOverFrom: failedOver && served.provider !== choice.provider ? choice.provider : undefined,
   };
 
   if (task.options?.reviewer === "claude-opus") {
-    const reviewerModel = "claude-opus-4-7";
+    const reviewerModel = "claude-opus-4-8";
     const reviewerSystemPrompt = `
 You are Aurelius operating as a high-leverage reviewer. Claude Sonnet (or another primary engine) just produced a response to Cole's request. Your job is to review it.
 

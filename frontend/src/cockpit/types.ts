@@ -128,24 +128,25 @@ export interface KnowledgeGraphEdge {
   label?: string;
 }
 
-export interface ContextWindowSnapshot {
+export interface CompiledSnapshot {
   id: string;
   timestamp: string;
-  tokensUsed: number;
-  tokensAvailable: number;
+  cacheEntries: number;
+  patterns: number;
+  llmCalls: number;
+  cacheReuses: number;
 }
 
 export interface TokenFlowPoint {
-  timestamp: string;
-  tokensIn: number;
-  tokensOut: number;
+  timestamp: string; // day bucket
+  tokens: number;    // total tokens logged by runLLM that day
+  calls: number;
 }
 
-export interface MemoryEmbeddingPoint {
+export interface VectorIndexSlice {
   id: string;
-  x: number;
-  y: number;
-  label?: string;
+  label: string; // embedding sourceType
+  count: number;
 }
 
 export interface AttentionMetric {

@@ -11,6 +11,33 @@ export type RunLLMInput = LLMTask;
 export async function runLLM(params: RunLLMInput): Promise<LLMResponse> {
   const start = Date.now();
 
+  // Compiled understanding, read side: a near-duplicate of a recent
+  // question serves from cache instead of a model. Explicit engine
+  // overrides and reviewer runs always go to the LLM.
+  const primaryName = params.operators?.primary ?? params.operator ?? "strategy";
+  if (!params.options?.engine && !params.options?.reviewer) {
+    try {
+      const { isReusableTask, tryReuseAnswer } = await import("../compiled/semanticReuse.ts");
+      if (isReusableTask(params.taskType, params)) {
+        const { resolveOperatorId } = await import("../knowledge/store.ts");
+        const opId = await resolveOperatorId(primaryName);
+        const reuse = opId ? await tryReuseAnswer({ operatorId: opId, input: params.input }) : null;
+        if (reuse) {
+          console.log(`[AURELIUS][LLM] compiled reuse (${(reuse.similarity * 100).toFixed(1)}% match) — no model call`);
+          return {
+            text: reuse.text,
+            engine: "compiled",
+            model: "reasoning_cache",
+            tokensUsed: 0,
+            latencyMs: Date.now() - start,
+          };
+        }
+      }
+    } catch (err) {
+      console.warn("[runLLM] reuse check failed (non-fatal):", (err as any)?.message ?? err);
+    }
+  }
+
   const response = await routeLLM(params);
 
   const latency = Date.now() - start;
@@ -29,10 +56,33 @@ export async function runLLM(params: RunLLMInput): Promise<LLMResponse> {
         type: "llm_call",
         level: "info",
         message: `${response.engine}/${response.model}`,
-        context: { taskType: params.taskType, tokensUsed: response.tokensUsed ?? 0, latencyMs: latency },
+        context: {
+          taskType: params.taskType,
+          tokensUsed: response.tokensUsed ?? 0,
+          latencyMs: latency,
+          ...(response.failedOverFrom ? { failedOverFrom: response.failedOverFrom } : {}),
+        },
       });
     }
   })().catch(() => {});
+
+  // Compiled understanding, write side: file this answer for future reuse.
+  if (!params.options?.engine && !params.options?.reviewer) {
+    (async () => {
+      const { isReusableTask, recordAnswer } = await import("../compiled/semanticReuse.ts");
+      if (!isReusableTask(params.taskType, params)) return;
+      const { resolveOperatorId } = await import("../knowledge/store.ts");
+      const opId = await resolveOperatorId(primaryName);
+      if (!opId) return;
+      await recordAnswer({
+        operatorId: opId,
+        operatorName: primaryName,
+        taskType: params.taskType,
+        input: params.input,
+        answer: response.text,
+      });
+    })().catch(() => {});
+  }
 
   console.log("[AURELIUS][LLM]", {
     taskType: params.taskType,

@@ -7,7 +7,9 @@
 export type KnowledgeSourceType =
   | "founding_default"
   | "cole_conversation"
+  | "cole_correction"
   | "research_ingestion"
+  | "system"
   | "manual";
 
 export type KnowledgeEntryShape = {

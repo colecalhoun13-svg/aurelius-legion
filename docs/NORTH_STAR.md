@@ -277,3 +277,131 @@ Engine · Systems/SOP · Workflow · Client Engine · Analytics · Brand
 list, and outreach flow once he supplies them. The research lane and
 Business OS living document are live in the meantime and will have
 compounded context by then.
+
+## State update — 2026-07-10 (calendar engine, PR #4)
+
+**Landed:** the Calendar engine (OG doc Part VIII), end to end.
+- One-time OAuth connect flow for Desktop-app credentials
+  (`/api/calendar/auth` → Google consent → loopback callback → refresh
+  token persisted server-side, never indexed/embedded). Auto-refreshing
+  access tokens; a dead refresh token disconnects loudly, never loops.
+- Sync engine: primary calendar → `CalendarEvent` mirror every 15 min
+  (60 days ahead, 7 back), recurring events expanded, Google-side
+  deletions pruned. Everything downstream reads the DB — briefings,
+  Today, deck, planning — and never blocks on Google.
+- `google_calendar` registered tool: read_events · find_availability ·
+  create_event (conversation-only, Cole-in-the-loop) · sync.
+- Availability scanner: free blocks in the 08:00–21:00 waking window.
+- Planning upgraded in place: `detect_overload` capacity now shrinks on
+  calendar-busy days (90-min-per-task heuristic, floor 1); weekly
+  planning skeleton carries the week's event shape. Same contracts —
+  calendar absent means v1 baseline math, unchanged.
+- Calendar page renders the real week (own `/api/calendar` range route),
+  with the connect link surfaced until OAuth is done.
+- Smoke suite grew to 18 checks (honest-fail + gap math). All green;
+  `tsc` clean both sides; prod `next build` green.
+
+**Blocked on Cole:** clicking the one authorization link.
+
+## State update — 2026-07-11 (observability + trust loop)
+
+**Landed:**
+- **Structured tracing** (`core/trace.ts`): every scheduled run and every
+  non-trivial API request leaves a LogEntry trace row (kind, name,
+  duration, ok/error); boot markers give honest uptime. Fire-and-forget —
+  telemetry can never break the traced path.
+- **Cockpit re-wired to reality**: all 22 widget routes now query live
+  Postgres — routing decisions, model latency/token spend from the LLM
+  call log, mission steps, bridge events, vector-index composition,
+  knowledge graph from actual operators/scopes, machine load. The four
+  widgets with no honest data source were replaced (Compiled
+  Understanding, Vector Index, LLM Dependence trend, Operator Attention
+  from real activity share). Zero mock arrays remain.
+- **Knowledge freshness** (block 9's unbuilt half): per-scope half-lives,
+  deterministic staleness scoring, Sunday 19:00 sweep files
+  freshness_recheck proposals for the stalest few (capped 5/week, 30-day
+  cooldown, system scope exempt) + one Bridge summary. Confirming
+  re-anchors; scoreboard now carries staleKnowledge.
+- **Corrections capture** (the trust loop's missing input): the
+  Correction table finally has a write path. "That's wrong" on any Bridge
+  signal records why; knowledge-entry corrections apply immediately with
+  cole_correction provenance (explicit Cole action needs no
+  confirmation); corrected compiled patterns stop steering; every
+  correction feeds recall as a memory. Fixed: scoreboard was counting
+  compiled patterns by statuses that don't exist.
+- Smoke suite: **21 checks**, all green. Both typechecks clean, prod
+  build green.
+
+**Still deliberately deferred:** engineRouter consolidation (§5.3),
+core auto-evolution (block 11), multi-day soak (needs the Mini).
+
+## State update — 2026-07-11 (the learning gaps, closed)
+
+The two gaps between "learns" and "compounds", named in the layer audit
+and closed the same day:
+
+- **Semantic answer reuse** (`compiled/semanticReuse.ts`): compiled
+  understanding's read side now covers EVERY runLLM path, not just
+  training. Reusable answers cache with a question-keyed embedding; a
+  ≥93%-similar repeat within 14 days serves from cache — zero tokens,
+  engine "compiled", usageCount bump feeding llmDependenceRate. Guards:
+  never realtime/multimodal tasks, never explicit engine overrides,
+  never error text, thin exchanges skipped.
+- **Ambient persona observation** (`persona/observer.ts`, Sun 17:00):
+  the one voice now learns from watching, not only from being told.
+  Weekly deterministic signals — message length, active hours,
+  correction rate — become persona.* PROPOSALS on the bench (max 2/run,
+  deduped against pending + current values). Confirmed entries flow
+  into Layer 1.5 through existing machinery. No LLM in the path: it
+  learns keyless from day one.
+
+Smoke suite: **31 checks green** (reuse round-trip, miss isolation,
+scoreboard visibility, observer propose-once-dedupe-rerun).
+
+## State update — 2026-07-11 (resilience research pass)
+
+Researched the 2026 agent-reliability and memory literature, triaged
+against Aurelius's real gaps, built only what closes a proven failure
+mode. All keyless:
+
+- **LLM provider failover** (`llm/router.ts`): the routed model failing
+  (thrown error or keyless response) walks the other CONFIGURED providers
+  in order (max 3 attempts). All-fail keeps honest failure. Which engine
+  actually served + failedOverFrom lands in the call log → cockpit. The
+  field calls single-provider dependence the #1 reliability hole in LLM
+  apps; Aurelius had it.
+- **Missed-schedule catch-up** (`core/catchUp.ts`): on boot, any job
+  whose fire-time passed today with no trace row fires now (time-boxed:
+  midday check expires 16:00; Sunday jobs check the day). Downtime no
+  longer silently eats the morning briefing.
+- **Conversation continuity** (`memory/conversation.ts`, Layer 5.25,
+  migration 14): every chat turn persists; the last few flow into the
+  next prompt. "Like we discussed" now survives restarts and devices —
+  the "memory architecture debt" failure in the 2026 agent-memory
+  reports.
+- **Claude 5 generation** in the router: default strategic tier →
+  Claude Sonnet 5 (near-Opus agentic quality, intro-priced below Sonnet
+  4.6 until Aug 31); high-leverage + reviewer → Opus 4.8; `claude-fable`
+  alias for explicit-only premium calls. Adapter verified clean of the
+  params the new models reject.
+- **Phone surface**: /plan (weekly session) and /cal (next two days)
+  join the Telegram bridge.
+- Fixed en route: a real TOCTOU race in wiki synthesis (two calls on a
+  new domain both hit create — now upsert).
+- Rejected with reasons: external memory frameworks (second brainstem),
+  health-scored load balancing (single-user overkill), AutoDream-style
+  idle consolidation (reflection + Sunday synthesis already cover it).
+
+Smoke suite: **26 checks green.** One migration this round
+(ConversationTurn) — Cole runs `npx prisma migrate deploy` after merge.
+
+**Standing note — Google OAuth consent screen is in Testing mode:**
+- The consent screen shows an "unverified app" warning — click Continue
+  (it's Cole's own app).
+- Testing-mode refresh tokens EXPIRE AFTER ~7 DAYS — the calendar will
+  disconnect weekly until fixed.
+- Permanent fix (2 minutes, no Google verification needed for personal
+  use): Google Cloud console → APIs & Services → OAuth consent screen →
+  **Publish app** (Testing → In production), then re-run
+  `/api/calendar/auth` once. Do this the first time the weekly re-auth
+  gets annoying.

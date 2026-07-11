@@ -14,7 +14,7 @@ export function AttentionWidget({ metrics }: Props) {
 
   return (
     <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
-      <h2 className="text-xl font-semibold mb-2">Attention Metrics</h2>
+      <h2 className="text-xl font-semibold mb-2">Operator Attention (24h)</h2>
 
       <div className="space-y-2 text-sm max-h-64 overflow-y-auto">
         {sorted.map((m, i) => (

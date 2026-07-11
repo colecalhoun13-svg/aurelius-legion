@@ -17,6 +17,25 @@ proposalsRouter.get("/", async (_req: Request, res: Response) => {
   }
 });
 
+// Static routes BEFORE /:param — Express matches in order.
+proposalsRouter.get("/freshness", async (_req: Request, res: Response) => {
+  try {
+    const { listStaleEntries } = await import("../knowledge/freshness.ts");
+    res.json({ stale: await listStaleEntries() });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+proposalsRouter.post("/freshness/run", async (_req: Request, res: Response) => {
+  try {
+    const { runFreshnessSweep } = await import("../knowledge/freshness.ts");
+    res.json(await runFreshnessSweep());
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
 proposalsRouter.post("/:id/resolve", async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id);

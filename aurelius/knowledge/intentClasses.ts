@@ -76,8 +76,49 @@ export const TRAINING_INTENT_CLASSES: IntentClass[] = [
   },
 ];
 
+// Cross-operator intent classes — not tied to one domain's scopes.
+export const GENERAL_INTENT_CLASSES: IntentClass[] = [
+  {
+    id: "freshness_recheck",
+    operator: "any",
+    scope: "any",
+    description:
+      "Re-verification of a knowledge entry that has gone stale (past its scope's half-life). Confirming re-anchors it as current; correcting updates it; denying leaves it untouched.",
+    examplePhrasings: [
+      "yes that still holds",
+      "that's outdated, it's actually ...",
+      "keep it as is",
+    ],
+  },
+  {
+    id: "persona_calibration",
+    operator: "any",
+    scope: "persona",
+    description:
+      "Aurelius observed how Cole communicates (length, hours, corrections) and proposes a voice calibration. Confirming teaches the one voice; denying discards the observation.",
+    examplePhrasings: [
+      "yes, keep it tight like that",
+      "no, I just type short on mobile",
+    ],
+  },
+  {
+    id: "manual_correction",
+    operator: "any",
+    scope: "any",
+    description:
+      "Cole directly corrects something Aurelius said, compiled, or stored. Explicit Cole action — applies without a confirmation round-trip.",
+    examplePhrasings: [
+      "that's wrong — it's actually ...",
+      "you misread that",
+      "correct that entry",
+    ],
+  },
+];
+
+const ALL_INTENT_CLASSES = [...TRAINING_INTENT_CLASSES, ...GENERAL_INTENT_CLASSES];
+
 export function getIntentClass(id: string): IntentClass | null {
-  return TRAINING_INTENT_CLASSES.find((c) => c.id === id) ?? null;
+  return ALL_INTENT_CLASSES.find((c) => c.id === id) ?? null;
 }
 
 export function getIntentClassesForOperator(operator: string): IntentClass[] {

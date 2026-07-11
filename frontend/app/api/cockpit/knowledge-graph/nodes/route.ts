@@ -1,11 +1,27 @@
 import { NextResponse } from "next/server";
-import { KnowledgeGraphNode } from "@/cockpit/types";
+import { prisma } from "../../../../../../aurelius/core/db/prisma";
+
+// Real telemetry — reads the same Postgres the backend writes.
+export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const data: KnowledgeGraphNode[] = [
-    { id: "n1", label: "Cole", type: "operator" },
-    { id: "n2", label: "Aurelius", type: "system" },
-    { id: "n3", label: "Cockpit", type: "module" },
-  ];
-  return NextResponse.json(data);
+  try {
+    const entries = await prisma.knowledgeEntry.findMany({
+      where: { active: true },
+      select: { scope: true, operator: { select: { name: true } } },
+      take: 2000,
+    });
+    const ops = new Set<string>();
+    const scopes = new Set<string>();
+    for (const e of entries) {
+      ops.add(e.operator?.name ?? "unknown");
+      scopes.add(e.scope);
+    }
+    return NextResponse.json([
+      ...[...ops].map((o) => ({ id: `op:${o}`, label: o, type: "operator" })),
+      ...[...scopes].map((s) => ({ id: `scope:${s}`, label: s, type: "scope" })),
+    ]);
+  } catch {
+    return NextResponse.json([]);
+  }
 }

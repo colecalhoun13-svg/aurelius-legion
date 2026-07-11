@@ -121,14 +121,14 @@ ${knBlock || "(none)"}
     knowledgeCount: material.knowledge.length,
   };
 
-  const page = existing
-    ? await prisma.wikiPage.update({
-        where: { id: existing.id },
-        data: { content, sourceRefs, revision: existing.revision + 1 },
-      })
-    : await prisma.wikiPage.create({
-        data: { slug: domain, title: `${domain} — synthesis`, domain, content, sourceRefs },
-      });
+  // Upsert, not find-then-create: two synthesis calls can race on a brand-new
+  // domain (e.g. ingestion's background refresh vs a direct call) and the
+  // loser used to crash on the unique slug.
+  const page = await prisma.wikiPage.upsert({
+    where: { slug: domain },
+    update: { content, sourceRefs, revision: { increment: 1 } },
+    create: { slug: domain, title: `${domain} — synthesis`, domain, content, sourceRefs },
+  });
 
   await prisma.wikiRevision.create({
     data: { pageId: page.id, revision: page.revision, content, reason },

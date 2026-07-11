@@ -19,12 +19,12 @@ import { ErrorHeatmapWidget } from "@/cockpit/widgets/ErrorHeatmapWidget";
 import { ModelLatencyWidget } from "@/cockpit/widgets/ModelLatencyWidget";
 import { AutonomyTimelineWidget } from "@/cockpit/widgets/AutonomyTimelineWidget";
 import { KnowledgeGraphWidget } from "@/cockpit/widgets/KnowledgeGraphWidget";
-import { ContextWindowWidget } from "@/cockpit/widgets/ContextWindowWidget";
+import { CompiledWidget } from "@/cockpit/widgets/CompiledWidget";
 import { TokenFlowWidget } from "@/cockpit/widgets/TokenFlowWidget";
-import { MemoryEmbeddingsWidget } from "@/cockpit/widgets/MemoryEmbeddingsWidget";
+import { VectorIndexWidget } from "@/cockpit/widgets/VectorIndexWidget";
 import { AttentionWidget } from "@/cockpit/widgets/AttentionWidget";
 import { EventStreamWidget } from "@/cockpit/widgets/EventStreamWidget";
-import { CognitiveLoadWidget } from "@/cockpit/widgets/CognitiveLoadWidget";
+import { LlmDependenceWidget } from "@/cockpit/widgets/LlmDependenceWidget";
 
 import { useCockpitData } from "@/cockpit/hooks/useCockpitData";
 
@@ -72,15 +72,15 @@ export default function CockpitPage() {
         </section>
 
         <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <ContextWindowWidget snapshots={data.contextSnapshots} />
+          <CompiledWidget snapshots={data.contextSnapshots} />
           <TokenFlowWidget points={data.tokenFlow} />
-          <MemoryEmbeddingsWidget points={data.memoryEmbeddings} />
+          <VectorIndexWidget slices={data.memoryEmbeddings} />
         </section>
 
         <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <AttentionWidget metrics={data.attentionMetrics} />
           <EventStreamWidget events={data.eventStream} />
-          <CognitiveLoadWidget samples={data.cognitiveLoad} />
+          <LlmDependenceWidget samples={data.cognitiveLoad} />
         </section>
       </div>
     </CockpitLayout>

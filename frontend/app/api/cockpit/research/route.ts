@@ -1,17 +1,27 @@
 import { NextResponse } from "next/server";
-import { ResearchInsight } from "@/cockpit/types";
+import { prisma } from "../../../../../aurelius/core/db/prisma";
+
+// Real telemetry — reads the same Postgres the backend writes.
+export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const insights: ResearchInsight[] = [
-    {
-      id: "ins-1",
-      timestamp: new Date().toISOString(),
-      topic: "Training Efficiency",
-      insight: "Athletes improve 17% faster with micro‑block periodization.",
-      confidence: 0.88,
-      source: "internal-model"
-    }
-  ];
-
-  return NextResponse.json(insights);
+  try {
+    const docs = await prisma.corpusDocument.findMany({
+      where: { sourceType: "research" },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+    });
+    return NextResponse.json(
+      docs.map((d) => ({
+        id: d.id,
+        timestamp: d.createdAt.toISOString(),
+        topic: d.title,
+        insight: d.summary.slice(0, 300),
+        confidence: 1, // ingested = confirmed in the corpus; no invented scores
+        source: d.domain,
+      }))
+    );
+  } catch {
+    return NextResponse.json([]);
+  }
 }

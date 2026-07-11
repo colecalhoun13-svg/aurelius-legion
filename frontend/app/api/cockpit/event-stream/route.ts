@@ -1,21 +1,21 @@
 import { NextResponse } from "next/server";
-import { EventStreamEntry } from "@/cockpit/types";
+import { prisma } from "../../../../../aurelius/core/db/prisma";
+
+// Real telemetry — reads the same Postgres the backend writes.
+export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const data: EventStreamEntry[] = [
-    {
-      id: "ev1",
-      timestamp: new Date().toISOString(),
-      channel: "system",
-      message: "System heartbeat OK",
-    },
-    {
-      id: "ev2",
-      timestamp: new Date().toISOString(),
-      channel: "autonomy",
-      message: "Loop iteration completed",
-    },
-  ];
-
-  return NextResponse.json(data);
+  try {
+    const rows = await prisma.bridgeSignal.findMany({ orderBy: { createdAt: "desc" }, take: 12 });
+    return NextResponse.json(
+      rows.map((s) => ({
+        id: s.id,
+        timestamp: s.createdAt.toISOString(),
+        channel: s.kind,
+        message: s.title,
+      }))
+    );
+  } catch {
+    return NextResponse.json([]);
+  }
 }
