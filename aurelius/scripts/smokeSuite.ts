@@ -117,6 +117,18 @@ async function main() {
   check("availability gap math (3 slots, 210 busy min)", avail?.slots.length === 3 && avail?.busyMinutes === 210);
   await prisma.calendarEvent.deleteMany({ where: { externalId: { startsWith: TAG } } });
 
+  console.log("── weekly planning phase 2: candidate generation ──");
+  const { generateWeekCandidates } = await import("../planning/tools.ts");
+  const overdueTask = await prisma.task.create({
+    data: { title: `${TAG} overdue`, status: "next", dueDate: new Date(Date.now() - 3 * 86400_000) },
+  });
+  const cands = await generateWeekCandidates(10);
+  check(
+    "overdue task surfaces as week candidate with reason",
+    cands.some((c) => c.title === overdueTask.title && /overdue/.test(c.reason))
+  );
+  await prisma.task.delete({ where: { id: overdueTask.id } });
+
   console.log("── freshness + corrections (the trust loop) ──");
   const { stalenessOf, runFreshnessSweep } = await import("../knowledge/freshness.ts");
   check("staleness math (400d / 120d half-life)", stalenessOf(new Date(Date.now() - 400 * 86400_000), "rep_bands") === 3.33);

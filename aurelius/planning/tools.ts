@@ -10,9 +10,11 @@
 //   breakGoalIntoSteps — LLM decomposes a goal into proposed tasks
 //                        (origin aurelius_proposed, land in inbox — Cole
 //                        triages; nothing self-schedules)
-//   planWeekLite       — the six-phase weekly planning session, v1:
-//                        goal review → candidate generation → workload →
-//                        overload → briefing → RitualInstance + signal
+//   planWeekLite       — the six-phase weekly planning session:
+//                        last-week review → goal review → candidate
+//                        generation (deterministic, capacity-capped,
+//                        calendar-slotted) → workload → overload →
+//                        briefing → RitualInstance + signal
 //
 // Hard rules carried: propose, never impose. Generated tasks are
 // suggestions in the inbox; the plan is a briefing, not a fait accompli.
@@ -183,8 +185,82 @@ ${existing.length ? `ALREADY OPEN (don't repeat): ${existing.map((t) => t.title)
 }
 
 /**
- * WEEKLY PLANNING v1 — the six phases, calendar-less. Deterministic
- * facts always; the LLM voices the briefing when an engine exists.
+ * PHASE 2 — CANDIDATE GENERATION. Which tasks should make the week?
+ * Fully deterministic: overdue first (oldest debt is loudest), then
+ * goal-linked open work (the week should serve the goals), then aging
+ * inbox items. Capped at the week's real capacity. When the calendar is
+ * synced, the top candidates get a suggested free block. Proposals in a
+ * briefing — nothing is scheduled for Cole.
+ */
+export async function generateWeekCandidates(weekCapacity: number) {
+  const now = new Date();
+  const openNotDone = { status: { notIn: ["done", "abandoned"] } };
+
+  const [overdue, goalLinked, aging] = await Promise.all([
+    prisma.task.findMany({
+      where: { ...openNotDone, dueDate: { lt: now } },
+      orderBy: { dueDate: "asc" },
+      take: 10,
+      include: { goal: { select: { name: true } } },
+    }),
+    prisma.task.findMany({
+      where: { ...openNotDone, goalId: { not: null }, dueDate: null, scheduledFor: null },
+      orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+      take: 10,
+      include: { goal: { select: { name: true } } },
+    }),
+    prisma.task.findMany({
+      where: { status: "inbox", goalId: null },
+      orderBy: { createdAt: "asc" },
+      take: 5,
+    }),
+  ]);
+
+  const seen = new Set<string>();
+  const candidates: Array<{ id: string; title: string; reason: string }> = [];
+  const push = (t: { id: string; title: string }, reason: string) => {
+    if (seen.has(t.id) || candidates.length >= weekCapacity) return;
+    seen.add(t.id);
+    candidates.push({ id: t.id, title: t.title, reason });
+  };
+  for (const t of overdue) {
+    const days = Math.round((now.getTime() - t.dueDate!.getTime()) / 86400_000);
+    push(t, `overdue ${days}d`);
+  }
+  for (const t of goalLinked) push(t, `goal: ${t.goal?.name ?? "linked"}`);
+  for (const t of aging) {
+    const days = Math.round((now.getTime() - (t as any).createdAt.getTime()) / 86400_000);
+    push(t, `inbox ${days}d — schedule it or toss it`);
+  }
+
+  // Calendar-aware: pair the top candidates with real open blocks.
+  const slotted: Array<{ title: string; reason: string; suggestedSlot?: string }> = candidates.map(
+    (c) => ({ title: c.title, reason: c.reason })
+  );
+  try {
+    const { isCalendarConnected } = await import("../calendar/googleAuth.ts");
+    if (await isCalendarConnected()) {
+      const { findAvailability } = await import("../calendar/engine.ts");
+      const days = await findAvailability({ days: 7, minMinutes: 60 });
+      const blocks = days
+        .flatMap((d) => d.slots.map((s) => ({ ...s, date: d.date })))
+        .sort((a, b) => b.minutes - a.minutes)
+        .slice(0, Math.min(3, slotted.length));
+      blocks.forEach((b, i) => {
+        slotted[i].suggestedSlot = `${b.date} ${b.start.slice(11, 16)}–${b.end.slice(11, 16)} (${b.minutes}m free)`;
+      });
+    }
+  } catch {
+    // calendar unavailable → candidates ship without slots, unchanged
+  }
+
+  return slotted;
+}
+
+/**
+ * WEEKLY PLANNING — the six phases. Deterministic facts always; the LLM
+ * voices the briefing when an engine exists. Candidates are proposals in
+ * the briefing; nothing self-schedules.
  */
 export async function planWeekLite() {
   // 1. Goal review + 3. workload + 5. overload
@@ -203,6 +279,10 @@ export async function planWeekLite() {
       select: { title: true, startAt: true },
     }),
   ]);
+
+  // 2. Candidate generation — what should make the week, within capacity
+  const weekCapacity = overload.days.reduce((n, d) => n + d.capacity, 0);
+  const candidates = await generateWeekCandidates(Math.min(weekCapacity, 15));
 
   // Calendar shape of the week (only when events are actually synced)
   const byDay = new Map<string, number>();
@@ -223,6 +303,12 @@ export async function planWeekLite() {
     overload.overloadedDays.length
       ? `Overloaded days ahead: ${overload.overloadedDays.map((d) => `${d.date} (${d.due} due, capacity ${d.capacity})`).join(", ")}`
       : "No day ahead exceeds capacity.",
+    candidates.length
+      ? `Candidates for the week (${candidates.length}, capacity ${weekCapacity}):\n` +
+        candidates
+          .map((c) => `  • ${c.title} — ${c.reason}${c.suggestedSlot ? ` → ${c.suggestedSlot}` : ""}`)
+          .join("\n")
+      : "",
     overdue.length ? `Oldest overdue: ${overdue.map((t) => t.title).slice(0, 5).join("; ")}` : "",
     analysis.insights.length ? `Signals: ${analysis.insights.join(" ")}` : "",
   ]
