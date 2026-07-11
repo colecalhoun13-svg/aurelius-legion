@@ -57,7 +57,8 @@ awareness · 6 tool catalog · 7 task · 7.5 pending proposals.
 
 06:00 RSS · 06:30 market pulse · 07:00 morning briefing · 08:00 initiative ·
 13:00 midday check (silent when on pace) · 21:30 debrief · Sun 09:00 weekend
-sweep → wiki · Sun 18:00 weekly planning · Sun 19:00 freshness sweep ·
+sweep → wiki · Sun 17:00 persona observer · Sun 18:00 weekly planning ·
+Sun 19:00 freshness sweep ·
 Sun 20:00 scoreboard · every 15 min calendar sync · every 10 min Paperless.
 
 ## Parked (do not build speculatively)

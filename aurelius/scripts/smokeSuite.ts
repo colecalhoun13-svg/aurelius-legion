@@ -185,6 +185,38 @@ async function main() {
     check("voice transcription configured", true);
   }
 
+  console.log("── the learning loops: semantic reuse + persona observation ──");
+  const { recordAnswer, tryReuseAnswer } = await import("../compiled/semanticReuse.ts");
+  const strategyId = (await resolveOperatorId("strategy"))!;
+  const reuseQ = `${TAG} what stops a set in velocity based training`;
+  await recordAnswer({ operatorId: strategyId, operatorName: "strategy", taskType: "chat", input: reuseQ, answer: `${TAG} cut the set when bar speed drops 10% from the best rep of the set.` });
+  await new Promise((r) => setTimeout(r, 600));
+  const reuseHit = await tryReuseAnswer({ operatorId: strategyId, input: reuseQ });
+  check("repeat question serves from compiled understanding", !!reuseHit && reuseHit.text.includes("bar speed"));
+  const reuseMiss = await tryReuseAnswer({ operatorId: strategyId, input: `${TAG} totally unrelated medieval falconry economics` });
+  check("unrelated question goes to the LLM", reuseMiss === null);
+  if (reuseHit) {
+    const reusedEntry = await prisma.reasoningCacheEntry.findUnique({ where: { id: reuseHit.cacheId } });
+    check("reuse bumps usageCount (llmDependenceRate numerator)", reusedEntry?.usageCount === 1);
+    await prisma.vectorEmbedding.deleteMany({ where: { sourceId: reuseHit.cacheId } });
+    await prisma.reasoningCacheEntry.delete({ where: { id: reuseHit.cacheId } });
+  }
+
+  const { observeCommunicationStyle } = await import("../persona/observer.ts");
+  await prisma.conversationTurn.createMany({
+    data: Array.from({ length: 12 }, (_, i) => ({
+      role: "cole", content: `${TAG} short ${i}`, createdAt: new Date(Date.now() - i * 3600_000),
+    })),
+  });
+  const persona1 = await observeCommunicationStyle();
+  const persona2 = await observeCommunicationStyle();
+  check(
+    "persona observer proposes once from real signals, dedupes on rerun",
+    !persona1.skipped && persona1.proposed >= 1 && !persona2.skipped && persona2.proposed === 0
+  );
+  await prisma.conversationTurn.deleteMany({ where: { content: { contains: TAG } } });
+  await prisma.knowledgeProposal.deleteMany({ where: { intentClassId: "persona_calibration" } });
+
   // ── cleanup (smoke artifacts only) ──
   await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });
   await prisma.corpusDocument.delete({ where: { id: doc.id } });

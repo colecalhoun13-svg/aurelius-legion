@@ -91,6 +91,17 @@ export const GENERAL_INTENT_CLASSES: IntentClass[] = [
     ],
   },
   {
+    id: "persona_calibration",
+    operator: "any",
+    scope: "persona",
+    description:
+      "Aurelius observed how Cole communicates (length, hours, corrections) and proposes a voice calibration. Confirming teaches the one voice; denying discards the observation.",
+    examplePhrasings: [
+      "yes, keep it tight like that",
+      "no, I just type short on mobile",
+    ],
+  },
+  {
     id: "manual_correction",
     operator: "any",
     scope: "any",

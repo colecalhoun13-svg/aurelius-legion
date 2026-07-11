@@ -335,6 +335,29 @@ compounded context by then.
 **Still deliberately deferred:** engineRouter consolidation (§5.3),
 core auto-evolution (block 11), multi-day soak (needs the Mini).
 
+## State update — 2026-07-11 (the learning gaps, closed)
+
+The two gaps between "learns" and "compounds", named in the layer audit
+and closed the same day:
+
+- **Semantic answer reuse** (`compiled/semanticReuse.ts`): compiled
+  understanding's read side now covers EVERY runLLM path, not just
+  training. Reusable answers cache with a question-keyed embedding; a
+  ≥93%-similar repeat within 14 days serves from cache — zero tokens,
+  engine "compiled", usageCount bump feeding llmDependenceRate. Guards:
+  never realtime/multimodal tasks, never explicit engine overrides,
+  never error text, thin exchanges skipped.
+- **Ambient persona observation** (`persona/observer.ts`, Sun 17:00):
+  the one voice now learns from watching, not only from being told.
+  Weekly deterministic signals — message length, active hours,
+  correction rate — become persona.* PROPOSALS on the bench (max 2/run,
+  deduped against pending + current values). Confirmed entries flow
+  into Layer 1.5 through existing machinery. No LLM in the path: it
+  learns keyless from day one.
+
+Smoke suite: **31 checks green** (reuse round-trip, miss isolation,
+scoreboard visibility, observer propose-once-dedupe-rerun).
+
 ## State update — 2026-07-11 (resilience research pass)
 
 Researched the 2026 agent-reliability and memory literature, triaged

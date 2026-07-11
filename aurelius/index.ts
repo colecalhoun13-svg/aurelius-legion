@@ -1009,6 +1009,18 @@ nodeSchedule.scheduleJob("0 13 * * *", async () => {
     console.error("[planning] midday check failed:", err);
   }
 });
+// Persona observation — Sunday 17:00: how did Cole actually communicate
+// this week? Calibration proposals land on the bench (propose, never impose).
+nodeSchedule.scheduleJob("0 17 * * 0", async () => {
+  try {
+    await runTraced("schedule", "persona_observer", async () => {
+      const { observeCommunicationStyle } = await import("./persona/observer.ts");
+      return observeCommunicationStyle();
+    });
+  } catch (err) {
+    console.error("[persona] observer failed:", err);
+  }
+});
 // Weekly planning session — Sunday 18:00, after the research pass digests.
 nodeSchedule.scheduleJob("0 18 * * 0", async () => {
   try {

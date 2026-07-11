@@ -76,6 +76,12 @@ const JOBS: CatchUpJob[] = [
     },
   },
   {
+    name: "persona_observer",
+    hour: 17,
+    sundayOnly: true,
+    run: async () => (await import("../persona/observer.ts")).observeCommunicationStyle(),
+  },
+  {
     name: "weekly_planning",
     hour: 18,
     sundayOnly: true,
