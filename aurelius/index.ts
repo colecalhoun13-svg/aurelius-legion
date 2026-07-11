@@ -8,8 +8,6 @@ dotenv.config({ path: "./.env" });
 import express, { type Request, type Response } from "express";
 import cors from "cors";
 
-// Canonical engine routing (legacy, kept for other endpoints)
-import { routeTask } from "./core/engineRouter.ts";
 // Multi-operator routing
 import { routeOperators } from "./router/operatorRouter.ts";
 // Smart LLM routing

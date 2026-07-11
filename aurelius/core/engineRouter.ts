@@ -37,6 +37,3 @@ export async function routeTask(
     mergedCtx
   );
 }
-
-// Temporary alias for backwards compatibility
-export const runWithEngine = routeTask;
