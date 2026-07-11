@@ -1,12 +1,21 @@
 import { NextResponse } from "next/server";
-import { MemoryEmbeddingPoint } from "@/cockpit/types";
+import { prisma } from "../../../../../aurelius/core/db/prisma";
+
+// Real telemetry — reads the same Postgres the backend writes.
+export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const data: MemoryEmbeddingPoint[] = [
-    { id: "e1", x: 0.12, y: 0.88, label: "identity" },
-    { id: "e2", x: 0.45, y: 0.33, label: "operator" },
-    { id: "e3", x: 0.78, y: 0.55, label: "task" },
-  ];
-
-  return NextResponse.json(data);
+  try {
+    const groups = await prisma.vectorEmbedding.groupBy({
+      by: ["sourceType"],
+      _count: { _all: true },
+    });
+    return NextResponse.json(
+      groups
+        .sort((a, b) => b._count._all - a._count._all)
+        .map((g) => ({ id: g.sourceType, label: g.sourceType, count: g._count._all }))
+    );
+  } catch {
+    return NextResponse.json([]);
+  }
 }

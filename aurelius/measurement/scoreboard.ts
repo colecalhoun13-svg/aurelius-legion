@@ -51,7 +51,7 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
     }),
     prisma.memory.count({ where: { createdAt: window } }),
     prisma.reasoningCacheEntry.count({ where: { createdAt: window } }),
-    prisma.compiledPattern.count({ where: { status: { in: ["active", "proposed"] } } }),
+    prisma.compiledPattern.count({ where: { status: { not: "discarded" } } }),
     prisma.correction.count({ where: { createdAt: window } }),
     prisma.ritualInstance.count({ where: { firedAt: window } }),
     prisma.ingestionRun.count({ where: { startedAt: window, status: "completed" } }),
@@ -67,6 +67,10 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
       where: { updatedAt: window, createdAt: { lt: weekStart } },
     }),
   ]);
+
+  // Freshness plane — how much of Living Knowledge is past its half-life.
+  const { listStaleEntries } = await import("../knowledge/freshness.ts");
+  const staleKnowledge = (await listStaleEntries()).length;
 
   const avgGap = gaps.length
     ? gaps.reduce((s, g) => s + g.gapScore, 0) / gaps.length
@@ -91,6 +95,7 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
     missions: missionCounts,
     // Trust loop — corrections are signal, not failure
     corrections,
+    staleKnowledge,
     // The DoD metric: share of reasoning that still needed the base LLM.
     // Falls as compiled understanding takes over. null until there's data.
     llmCalls,
@@ -128,6 +133,7 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
           ? `LLM dependence: ${metrics.llmDependenceRate}% (${llmCalls} LLM calls vs ${cacheReuses} compiled reuses) — lower is smarter.`
           : "",
         corrections > 0 ? `${corrections} corrections logged — the trust loop is working.` : "",
+        staleKnowledge > 0 ? `${staleKnowledge} knowledge entries past their half-life — re-checks queue Sundays.` : "",
       ]
         .filter(Boolean)
         .join("\n"),

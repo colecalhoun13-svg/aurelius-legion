@@ -17,9 +17,9 @@ import {
   AutonomyLoopStep,
   KnowledgeGraphNode,
   KnowledgeGraphEdge,
-  ContextWindowSnapshot,
+  CompiledSnapshot,
   TokenFlowPoint,
-  MemoryEmbeddingPoint,
+  VectorIndexSlice,
   AttentionMetric,
   EventStreamEntry,
   CognitiveLoadSample,
@@ -44,9 +44,9 @@ export function useCockpitData() {
   const [autonomyTimeline, setAutonomyTimeline] = useState<AutonomyLoopStep[]>([]);
   const [kgNodes, setKgNodes] = useState<KnowledgeGraphNode[]>([]);
   const [kgEdges, setKgEdges] = useState<KnowledgeGraphEdge[]>([]);
-  const [contextSnapshots, setContextSnapshots] = useState<ContextWindowSnapshot[]>([]);
+  const [contextSnapshots, setContextSnapshots] = useState<CompiledSnapshot[]>([]);
   const [tokenFlow, setTokenFlow] = useState<TokenFlowPoint[]>([]);
-  const [memoryEmbeddings, setMemoryEmbeddings] = useState<MemoryEmbeddingPoint[]>([]);
+  const [memoryEmbeddings, setMemoryEmbeddings] = useState<VectorIndexSlice[]>([]);
   const [attentionMetrics, setAttentionMetrics] = useState<AttentionMetric[]>([]);
   const [eventStream, setEventStream] = useState<EventStreamEntry[]>([]);
   const [cognitiveLoad, setCognitiveLoad] = useState<CognitiveLoadSample[]>([]);

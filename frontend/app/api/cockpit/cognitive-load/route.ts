@@ -1,19 +1,25 @@
 import { NextResponse } from "next/server";
-import { CognitiveLoadSample } from "@/cockpit/types";
+import { prisma } from "../../../../../aurelius/core/db/prisma";
+
+// Real telemetry — reads the same Postgres the backend writes.
+export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const now = Date.now();
-
-  const data: CognitiveLoadSample[] = [
-    {
-      timestamp: new Date(now - 60000).toISOString(),
-      load: 0.32,
-    },
-    {
-      timestamp: new Date(now).toISOString(),
-      load: 0.58,
-    },
-  ];
-
-  return NextResponse.json(data);
+  try {
+    const snaps = await prisma.measurementSnapshot.findMany({
+      orderBy: { weekStart: "asc" },
+      take: 12,
+    });
+    return NextResponse.json(
+      snaps
+        // llmDependenceRate is an integer percent (0-100), null = no data yet
+        .filter((s) => ((s.metrics ?? {}) as any).llmDependenceRate != null)
+        .map((s) => ({
+          timestamp: s.weekStart.toISOString(),
+          load: ((s.metrics ?? {}) as any).llmDependenceRate / 100,
+        }))
+    );
+  } catch {
+    return NextResponse.json([]);
+  }
 }

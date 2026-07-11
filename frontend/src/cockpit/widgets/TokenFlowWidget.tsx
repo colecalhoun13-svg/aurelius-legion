@@ -7,51 +7,35 @@ interface Props {
   points: TokenFlowPoint[];
 }
 
+// Daily token spend, straight from runLLM's call log.
 export function TokenFlowWidget({ points }: Props) {
-  const sorted = [...points].sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-  );
+  const max = Math.max(...points.map((p) => p.tokens), 1);
 
   return (
     <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
-      <h2 className="text-xl font-semibold mb-2">Token Flow</h2>
-
-      <div className="space-y-3 text-sm max-h-64 overflow-y-auto">
-        {sorted.map((p, i) => (
-          <div key={i} className="p-2 bg-neutral-800 rounded">
-            <div className="flex justify-between">
-              <span className="opacity-70 text-xs">
-                {new Date(p.timestamp).toLocaleTimeString()}
-              </span>
-              <span className="opacity-70 text-xs">Δ {p.tokensIn - p.tokensOut}</span>
-            </div>
-
-            <div className="mt-1">
-              <p><strong>In:</strong> {p.tokensIn.toLocaleString()}</p>
-              <p><strong>Out:</strong> {p.tokensOut.toLocaleString()}</p>
-            </div>
-
-            <div className="mt-2">
-              <div className="h-2 w-full bg-neutral-800 rounded mb-1">
-                <div
-                  className="h-2 bg-emerald-500 rounded"
-                  style={{
-                    width: `${Math.min((p.tokensIn / 2000) * 100, 100)}%`,
-                  }}
-                />
+      <h2 className="text-xl font-semibold mb-2">Token Flow (7d)</h2>
+      {points.length === 0 ? (
+        <p className="text-sm opacity-70">No LLM calls logged this week.</p>
+      ) : (
+        <div className="space-y-2 text-sm max-h-64 overflow-y-auto">
+          {points.map((p) => (
+            <div key={p.timestamp}>
+              <div className="flex justify-between text-xs mb-0.5">
+                <span>{p.timestamp.slice(0, 10)}</span>
+                <span className="opacity-70">
+                  {p.tokens.toLocaleString()} tok · {p.calls} calls
+                </span>
               </div>
               <div className="h-2 w-full bg-neutral-800 rounded">
                 <div
-                  className="h-2 bg-red-500 rounded"
-                  style={{
-                    width: `${Math.min((p.tokensOut / 2000) * 100, 100)}%`,
-                  }}
+                  className="h-2 bg-emerald-500 rounded"
+                  style={{ width: `${Math.max(2, (p.tokens / max) * 100)}%` }}
                 />
               </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

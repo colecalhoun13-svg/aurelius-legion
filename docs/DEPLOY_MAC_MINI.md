@@ -10,6 +10,10 @@ only. This runbook is written to be executed top-to-bottom on a fresh Mini.
 - UGREEN: create an SMB share `aurelius` (or NFS if preferred) and a
   scheduled-backup folder.
 - LLM keys funded (`ANTHROPIC_API_KEY` at minimum; others per Engines page).
+- Google OAuth consent screen **published to Production** (console →
+  APIs & Services → OAuth consent screen → Publish app). Testing-mode
+  refresh tokens die every ~7 days; production ones live until revoked.
+  After publishing, re-auth once at `/api/calendar/auth`.
 
 ## 1. Mount the NAS on the Mini
 ```bash

@@ -60,6 +60,19 @@ export default function BridgePage() {
     await load();
   };
 
+  // The trust loop: "that's wrong" + why → Correction row, memory,
+  // scoreboard signal. The signal dismisses once the correction lands.
+  const correct = async (id: string) => {
+    const reason = window.prompt("What's wrong here? (one line — this teaches Aurelius)");
+    if (!reason?.trim()) return;
+    await fetch("/api/corrections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetType: "bridge_signal", targetId: id, reason: reason.trim() }),
+    });
+    await act(id, "dismissed");
+  };
+
   const rule = async (id: string, decision: "confirmed" | "denied") => {
     if (busy) return;
     setBusy(id);
@@ -167,6 +180,9 @@ export default function BridgePage() {
                 className="text-sm border border-emerald-500/40 rounded-lg px-3 py-1 hover:bg-emerald-500/15 text-emerald-400">Acted on it</button>
               <button onClick={() => act(s.id, "dismissed")}
                 className="text-sm border border-neutral-600 rounded-lg px-3 py-1 hover:bg-neutral-800 text-neutral-400">Dismiss</button>
+              <button onClick={() => correct(s.id)}
+                className="text-sm border border-red-500/30 rounded-lg px-3 py-1 hover:bg-red-500/10 text-red-400/80 ml-auto"
+                title="Record a correction — Aurelius learns from what it gets wrong">That’s wrong</button>
             </div>
           </li>
         ))}

@@ -117,6 +117,32 @@ async function main() {
   check("availability gap math (3 slots, 210 busy min)", avail?.slots.length === 3 && avail?.busyMinutes === 210);
   await prisma.calendarEvent.deleteMany({ where: { externalId: { startsWith: TAG } } });
 
+  console.log("── freshness + corrections (the trust loop) ──");
+  const { stalenessOf, runFreshnessSweep } = await import("../knowledge/freshness.ts");
+  check("staleness math (400d / 120d half-life)", stalenessOf(new Date(Date.now() - 400 * 86400_000), "rep_bands") === 3.33);
+  const freshEntry = await prisma.knowledgeEntry.findFirst({ where: { active: true, scope: { not: "system" } } });
+  if (freshEntry) {
+    await prisma.$executeRaw`UPDATE "KnowledgeEntry" SET "updatedAt" = NOW() - INTERVAL '400 days' WHERE id = ${freshEntry.id}`;
+    const sweep1 = await runFreshnessSweep();
+    const sweep2 = await runFreshnessSweep();
+    check("freshness sweep proposes once, dedupes on rerun", sweep1.proposed >= 1 && sweep2.proposed === 0);
+    const { recordCorrection } = await import("../knowledge/corrections.ts");
+    const corr = await recordCorrection({
+      targetType: "knowledge_entry",
+      targetId: freshEntry.id,
+      reason: `smoke correction ${TAG}`,
+      after: freshEntry.value,
+      operatorName: "global",
+    });
+    const corrected = await prisma.knowledgeEntry.findUnique({ where: { id: freshEntry.id } });
+    check("correction applies with cole_correction provenance", corr.applied && corrected?.sourceType === "cole_correction");
+    // cleanup this block's artifacts
+    await prisma.knowledgeProposal.deleteMany({ where: { intentClassId: "freshness_recheck", key: freshEntry.key } });
+    await prisma.correction.deleteMany({ where: { reason: { contains: TAG } } });
+    await prisma.bridgeSignal.deleteMany({ where: { title: { startsWith: "Knowledge freshness:" } } });
+    await prisma.memory.deleteMany({ where: { value: { contains: TAG } } });
+  }
+
   // ── cleanup (smoke artifacts only) ──
   await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });
   await prisma.corpusDocument.delete({ where: { id: doc.id } });

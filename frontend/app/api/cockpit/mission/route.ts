@@ -1,21 +1,26 @@
 import { NextResponse } from "next/server";
-import { MissionLogEntry } from "@/cockpit/types";
+import { prisma } from "../../../../../aurelius/core/db/prisma";
+
+// Real telemetry — reads the same Postgres the backend writes.
+export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const logs: MissionLogEntry[] = [
-    {
-      id: "log-1",
-      timestamp: new Date().toISOString(),
-      level: "info",
-      message: "Aurelius initialized cockpit data pipeline.",
-    },
-    {
-      id: "log-2",
-      timestamp: new Date().toISOString(),
-      level: "success",
-      message: "Operator and System panels synced successfully.",
-    }
-  ];
-
-  return NextResponse.json(logs);
+  try {
+    const steps = await prisma.missionStep.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 12,
+      include: { mission: { select: { title: true } } },
+    });
+    return NextResponse.json(
+      steps.map((s) => ({
+        id: s.id,
+        timestamp: (s.finishedAt ?? s.startedAt ?? s.createdAt).toISOString(),
+        level: s.status === "failed" ? "error" : s.status === "done" ? "success" : "info",
+        message: `${s.mission.title} — ${s.kind}: ${s.status}`,
+        context: s.error ? { error: s.error } : undefined,
+      }))
+    );
+  } catch {
+    return NextResponse.json([]);
+  }
 }

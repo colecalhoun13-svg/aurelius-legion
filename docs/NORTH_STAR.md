@@ -302,3 +302,46 @@ compounded context by then.
   `tsc` clean both sides; prod `next build` green.
 
 **Blocked on Cole:** clicking the one authorization link.
+
+## State update — 2026-07-11 (observability + trust loop)
+
+**Landed:**
+- **Structured tracing** (`core/trace.ts`): every scheduled run and every
+  non-trivial API request leaves a LogEntry trace row (kind, name,
+  duration, ok/error); boot markers give honest uptime. Fire-and-forget —
+  telemetry can never break the traced path.
+- **Cockpit re-wired to reality**: all 22 widget routes now query live
+  Postgres — routing decisions, model latency/token spend from the LLM
+  call log, mission steps, bridge events, vector-index composition,
+  knowledge graph from actual operators/scopes, machine load. The four
+  widgets with no honest data source were replaced (Compiled
+  Understanding, Vector Index, LLM Dependence trend, Operator Attention
+  from real activity share). Zero mock arrays remain.
+- **Knowledge freshness** (block 9's unbuilt half): per-scope half-lives,
+  deterministic staleness scoring, Sunday 19:00 sweep files
+  freshness_recheck proposals for the stalest few (capped 5/week, 30-day
+  cooldown, system scope exempt) + one Bridge summary. Confirming
+  re-anchors; scoreboard now carries staleKnowledge.
+- **Corrections capture** (the trust loop's missing input): the
+  Correction table finally has a write path. "That's wrong" on any Bridge
+  signal records why; knowledge-entry corrections apply immediately with
+  cole_correction provenance (explicit Cole action needs no
+  confirmation); corrected compiled patterns stop steering; every
+  correction feeds recall as a memory. Fixed: scoreboard was counting
+  compiled patterns by statuses that don't exist.
+- Smoke suite: **21 checks**, all green. Both typechecks clean, prod
+  build green.
+
+**Still deliberately deferred:** engineRouter consolidation (§5.3),
+core auto-evolution (block 11), multi-day soak (needs the Mini).
+
+**Standing note — Google OAuth consent screen is in Testing mode:**
+- The consent screen shows an "unverified app" warning — click Continue
+  (it's Cole's own app).
+- Testing-mode refresh tokens EXPIRE AFTER ~7 DAYS — the calendar will
+  disconnect weekly until fixed.
+- Permanent fix (2 minutes, no Google verification needed for personal
+  use): Google Cloud console → APIs & Services → OAuth consent screen →
+  **Publish app** (Testing → In production), then re-run
+  `/api/calendar/auth` once. Do this the first time the weekly re-auth
+  gets annoying.

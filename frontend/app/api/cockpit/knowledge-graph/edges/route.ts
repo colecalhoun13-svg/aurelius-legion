@@ -11,16 +11,17 @@ export async function GET() {
       select: { scope: true, operator: { select: { name: true } } },
       take: 2000,
     });
-    const ops = new Set<string>();
-    const scopes = new Set<string>();
+    const pairs = new Map<string, number>();
     for (const e of entries) {
-      ops.add(e.operator?.name ?? "unknown");
-      scopes.add(e.scope);
+      const k = `${e.operator?.name ?? "unknown"}→${e.scope}`;
+      pairs.set(k, (pairs.get(k) ?? 0) + 1);
     }
-    return NextResponse.json([
-      ...[...ops].map((o) => ({ id: `op:${o}`, label: o, type: "operator" })),
-      ...[...scopes].map((s) => ({ id: `scope:${s}`, label: s, type: "scope" })),
-    ]);
+    return NextResponse.json(
+      [...pairs.entries()].map(([k, n]) => {
+        const [op, scope] = k.split("→");
+        return { id: k, from: `op:${op}`, to: `scope:${scope}`, label: `${n}` };
+      })
+    );
   } catch {
     return NextResponse.json([]);
   }
