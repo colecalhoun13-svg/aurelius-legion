@@ -74,7 +74,7 @@ async function handleCommand(chatId: string | number, text: string) {
     case "/help":
       await send(
         chatId,
-        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\nAnything else you type goes straight to the inbox."
+        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\nAnything else you type goes straight to the inbox."
       );
       return;
 
@@ -99,6 +99,36 @@ async function handleCommand(chatId: string | number, text: string) {
       if (!arg) return send(chatId, "A mission needs an objective. /mission <objective>");
       const mission = await launchMission({ objective: arg, origin: "cole" });
       await send(chatId, `Mission launched: "${mission.title}". I'll report on the Bridge when it lands.`);
+      return;
+    }
+
+    case "/plan": {
+      await send(chatId, "Running the weekly planning session…");
+      const { planWeekLite } = await import("../planning/tools.ts");
+      const { briefing } = await planWeekLite();
+      await send(chatId, briefing);
+      return;
+    }
+
+    case "/cal": {
+      const { isCalendarConnected } = await import("../calendar/googleAuth.ts");
+      if (!(await isCalendarConnected())) {
+        return send(chatId, "Calendar isn't connected yet — open /api/calendar/auth on the desktop once.");
+      }
+      const { listEventsRange } = await import("../calendar/engine.ts");
+      const events = await listEventsRange(new Date(), new Date(Date.now() + 2 * 86400_000));
+      if (events.length === 0) return send(chatId, "Nothing on the calendar for the next two days.");
+      await send(
+        chatId,
+        events
+          .slice(0, 12)
+          .map((e) => {
+            const day = e.startAt.toISOString().slice(5, 10);
+            const time = (e.raw as any)?.allDay ? "all day" : e.startAt.toISOString().slice(11, 16);
+            return `${day} ${time} — ${e.title}`;
+          })
+          .join("\n")
+      );
       return;
     }
 

@@ -155,6 +155,27 @@ async function main() {
     await prisma.memory.deleteMany({ where: { value: { contains: TAG } } });
   }
 
+  console.log("── resilience: failover chain, catch-up, continuity ──");
+  const { chooseModel } = await import("../llm/router.ts");
+  const routed = chooseModel({ taskType: "chat", input: "x" });
+  check("default routing targets Claude Sonnet 5", routed.model === "claude-sonnet-5");
+  // Keyless env → the failover chain is length one → the old honest failure
+  const { routeLLM } = await import("../llm/router.ts");
+  const llmRes = await routeLLM({ taskType: "chat", operators: { primary: "strategy", secondaries: [] }, input: "smoke" });
+  check(
+    "keyless routeLLM fails honestly (no phantom failover)",
+    /engine is not configured|All configured LLM providers failed/i.test(llmRes.text)
+  );
+  const { runCatchUp } = await import("../core/catchUp.ts");
+  const catchup = await runCatchUp(); // keyless: jobs fire and fail honestly or dedupe on traces
+  check("catch-up sweep runs without throwing", typeof catchup.fired === "number");
+  const { recordTurns, recentConversationBlock } = await import("../memory/conversation.ts");
+  recordTurns({ coleMessage: `${TAG} ping`, aureliusReply: `${TAG} pong`, operatorName: "strategy" });
+  await new Promise((r) => setTimeout(r, 300)); // fire-and-forget write settles
+  const convo = await recentConversationBlock();
+  check("conversation continuity block carries recent turns", convo.includes(`${TAG} pong`));
+  await prisma.conversationTurn.deleteMany({ where: { content: { contains: TAG } } });
+
   // ── cleanup (smoke artifacts only) ──
   await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });
   await prisma.corpusDocument.delete({ where: { id: doc.id } });

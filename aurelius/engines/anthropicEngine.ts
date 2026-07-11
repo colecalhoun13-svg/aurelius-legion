@@ -14,7 +14,7 @@ type RunAnthropicInput = {
 };
 
 async function runAnthropic({
-  model = "claude-sonnet-4-6",
+  model = "claude-sonnet-5",
   systemPrompt,
   userPrompt,
   maxTokens = 4096,

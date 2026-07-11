@@ -335,6 +335,43 @@ compounded context by then.
 **Still deliberately deferred:** engineRouter consolidation (§5.3),
 core auto-evolution (block 11), multi-day soak (needs the Mini).
 
+## State update — 2026-07-11 (resilience research pass)
+
+Researched the 2026 agent-reliability and memory literature, triaged
+against Aurelius's real gaps, built only what closes a proven failure
+mode. All keyless:
+
+- **LLM provider failover** (`llm/router.ts`): the routed model failing
+  (thrown error or keyless response) walks the other CONFIGURED providers
+  in order (max 3 attempts). All-fail keeps honest failure. Which engine
+  actually served + failedOverFrom lands in the call log → cockpit. The
+  field calls single-provider dependence the #1 reliability hole in LLM
+  apps; Aurelius had it.
+- **Missed-schedule catch-up** (`core/catchUp.ts`): on boot, any job
+  whose fire-time passed today with no trace row fires now (time-boxed:
+  midday check expires 16:00; Sunday jobs check the day). Downtime no
+  longer silently eats the morning briefing.
+- **Conversation continuity** (`memory/conversation.ts`, Layer 5.25,
+  migration 14): every chat turn persists; the last few flow into the
+  next prompt. "Like we discussed" now survives restarts and devices —
+  the "memory architecture debt" failure in the 2026 agent-memory
+  reports.
+- **Claude 5 generation** in the router: default strategic tier →
+  Claude Sonnet 5 (near-Opus agentic quality, intro-priced below Sonnet
+  4.6 until Aug 31); high-leverage + reviewer → Opus 4.8; `claude-fable`
+  alias for explicit-only premium calls. Adapter verified clean of the
+  params the new models reject.
+- **Phone surface**: /plan (weekly session) and /cal (next two days)
+  join the Telegram bridge.
+- Fixed en route: a real TOCTOU race in wiki synthesis (two calls on a
+  new domain both hit create — now upsert).
+- Rejected with reasons: external memory frameworks (second brainstem),
+  health-scored load balancing (single-user overkill), AutoDream-style
+  idle consolidation (reflection + Sunday synthesis already cover it).
+
+Smoke suite: **26 checks green.** One migration this round
+(ConversationTurn) — Cole runs `npx prisma migrate deploy` after merge.
+
 **Standing note — Google OAuth consent screen is in Testing mode:**
 - The consent screen shows an "unverified app" warning — click Continue
   (it's Cole's own app).

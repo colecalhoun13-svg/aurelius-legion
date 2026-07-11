@@ -751,6 +751,18 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       }
     }
 
+    // Conversation continuity: persist both turns (fire-and-forget).
+    import("./memory/conversation.ts")
+      .then((m) =>
+        m.recordTurns({
+          coleMessage: message,
+          aureliusReply: cleanedText,
+          operatorName: primary,
+          engine: response.engine,
+        })
+      )
+      .catch(() => {});
+
     return res.json({
       reply: cleanedText,
       operators: { primary, secondaries },
@@ -934,6 +946,11 @@ import("./corpus/paperlessPoller.ts")
 import("./calendar/engine.ts")
   .then((m) => m.startCalendarSync())
   .catch((err) => console.error("[calendar] init failed:", err));
+// Missed-schedule catch-up: on boot, fire anything that was due today
+// and never ran (downtime swallows node-schedule jobs silently).
+import("./core/catchUp.ts")
+  .then((m) => m.startCatchUp())
+  .catch((err) => console.error("[catchup] init failed:", err));
 
 // Market pulse at 06:30 — crypto/equities/macro digest into the wealth
 // corpus before the day starts. Signals only; Cole makes the calls.

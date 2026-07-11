@@ -29,7 +29,12 @@ export async function runLLM(params: RunLLMInput): Promise<LLMResponse> {
         type: "llm_call",
         level: "info",
         message: `${response.engine}/${response.model}`,
-        context: { taskType: params.taskType, tokensUsed: response.tokensUsed ?? 0, latencyMs: latency },
+        context: {
+          taskType: params.taskType,
+          tokensUsed: response.tokensUsed ?? 0,
+          latencyMs: latency,
+          ...(response.failedOverFrom ? { failedOverFrom: response.failedOverFrom } : {}),
+        },
       });
     }
   })().catch(() => {});

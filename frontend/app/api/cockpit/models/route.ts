@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 // Context windows are provider constants (config, not telemetry).
 const CONTEXT_WINDOWS: Record<string, number> = {
-  anthropic: 200_000,
+  anthropic: 1_000_000,
   openai: 128_000,
   groq: 131_072,
   gemini: 1_048_576,
