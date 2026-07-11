@@ -176,6 +176,15 @@ async function main() {
   check("conversation continuity block carries recent turns", convo.includes(`${TAG} pong`));
   await prisma.conversationTurn.deleteMany({ where: { content: { contains: TAG } } });
 
+  console.log("── voice (keyless: fails honestly with the fix) ──");
+  const { transcribeAudio, sttConfigured } = await import("../telegram/voice.ts");
+  if (!sttConfigured()) {
+    const voiceErr = await transcribeAudio(Buffer.from("x")).catch((e) => e.message);
+    check("voice transcription fails honestly without Groq key", /GROQ_API_KEY/.test(voiceErr));
+  } else {
+    check("voice transcription configured", true);
+  }
+
   // ── cleanup (smoke artifacts only) ──
   await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });
   await prisma.corpusDocument.delete({ where: { id: doc.id } });

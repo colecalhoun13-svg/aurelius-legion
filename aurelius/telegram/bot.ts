@@ -74,7 +74,7 @@ async function handleCommand(chatId: string | number, text: string) {
     case "/help":
       await send(
         chatId,
-        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\nAnything else you type goes straight to the inbox."
+        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\nA voice note transcribes and captures the same as text.\nAnything else you type goes straight to the inbox."
       );
       return;
 
@@ -194,7 +194,8 @@ export function startTelegramBridge() {
         for (const u of updates) {
           offset = u.update_id + 1;
           const msg = u.message;
-          if (!msg?.text || !msg.chat?.id) continue;
+          const voice = msg?.voice ?? msg?.audio;
+          if ((!msg?.text && !voice) || !msg.chat?.id) continue;
 
           const chatId = String(msg.chat.id);
           if (!chat || chatId !== chat) {
@@ -204,7 +205,17 @@ export function startTelegramBridge() {
           }
 
           try {
-            await handleCommand(msg.chat.id, msg.text);
+            let text = msg.text;
+            if (!text && voice) {
+              // Voice note → Whisper → the same path as typed words.
+              const { transcribeAudio } = await import("./voice.ts");
+              const file = await api("getFile", { file_id: voice.file_id });
+              const audioRes = await fetch(`${API}/file/bot${token()}/${file.file_path}`);
+              if (!audioRes.ok) throw new Error(`couldn't download the voice note (${audioRes.status})`);
+              text = await transcribeAudio(Buffer.from(await audioRes.arrayBuffer()));
+              await send(msg.chat.id, `Heard: "${text}"`);
+            }
+            await handleCommand(msg.chat.id, text);
           } catch (err: any) {
             console.error("[telegram] command failed:", err);
             await send(msg.chat.id, `That failed: ${err?.message ?? err}`).catch(() => {});
