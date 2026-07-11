@@ -335,6 +335,26 @@ compounded context by then.
 **Still deliberately deferred:** engineRouter consolidation (§5.3),
 core auto-evolution (block 11), multi-day soak (needs the Mini).
 
+## State update — 2026-07-11 (Gmail + FRED — the buildable third-party tools)
+
+Everything third-party that could be built without the Mini or the
+business session, built. Registered tools: 3 → 5.
+
+- **Gmail** (`gmail/engine.ts`, `google/oauth.ts`): read + draft ONLY.
+  The OAuth grant is readonly + compose — there is NO send scope, so
+  "Aurelius emailed someone without me" is impossible by construction.
+  Scan inbox for what needs Cole, read a message, draft a reply into his
+  Gmail drafts for his review. One-time /api/gmail/auth. New shared
+  Google OAuth factory backs it; calendar's own auth left untouched.
+- **FRED** (`wealth/fred.ts`): the Fed's economic data — fed funds, 10yr
+  Treasury, yield curve, CPI, unemployment, mortgage rates. Free key.
+  Folded into the 06:30 market pulse (gives a real digest even keyless —
+  no LLM needed for the numbers) + a `fred` tool. Dormant-honest.
+- Both honest-dormant until their credential; smoke suite → 33 checks.
+
+Blocked on Cole: one Gmail OAuth click, one free FRED key. Everything
+else genuinely waits for the Mac Mini or the business session.
+
 ## State update — 2026-07-11 (the learning gaps, closed)
 
 The two gaps between "learns" and "compounds", named in the layer audit

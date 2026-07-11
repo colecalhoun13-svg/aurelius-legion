@@ -41,6 +41,16 @@ export async function runMarketPulse(dateStr?: string) {
   const errors: string[] = [];
   let totalInsights = 0;
 
+  // Macro ground truth first — FRED gives a real digest even keyless
+  // (no LLM needed for the numbers). Omitted honestly when no key.
+  try {
+    const { fredSnapshot, formatFredForDigest } = await import("./fred.ts");
+    const macro = await fredSnapshot();
+    if (macro) sections.push(formatFredForDigest(macro));
+  } catch (err) {
+    console.warn("[wealth] FRED snapshot failed (non-fatal):", (err as any)?.message ?? err);
+  }
+
   for (const topic of topics) {
     try {
       const r = await runResearch({ query: topic, operator: "wealth", depth: "shallow" });

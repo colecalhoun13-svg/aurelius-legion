@@ -217,6 +217,20 @@ async function main() {
   await prisma.conversationTurn.deleteMany({ where: { content: { contains: TAG } } });
   await prisma.knowledgeProposal.deleteMany({ where: { intentClassId: "persona_calibration" } });
 
+  console.log("── new tools: gmail + fred (keyless: honest connect/config fails) ──");
+  const { gmailAdapter } = await import("../tools/adapters/gmail.ts");
+  const { fredAdapter } = await import("../tools/adapters/fred.ts");
+  const { gmailAuth } = await import("../gmail/engine.ts");
+  if (!(await gmailAuth.isConnected())) {
+    const g = await gmailAdapter.run("read_inbox", {});
+    check("gmail tool fails honestly when unauthed", !g.ok && /gmail\/auth/.test(g.error ?? ""));
+  } else {
+    check("gmail tool reads when connected", (await gmailAdapter.run("read_inbox", {})).ok);
+  }
+  const { fredConfigured } = await import("../wealth/fred.ts");
+  const f = await fredAdapter.run("macro_snapshot", {});
+  check("fred tool honest about config state", fredConfigured() ? f.ok : (!f.ok && /FRED_API_KEY/.test(f.error ?? "")));
+
   // ── cleanup (smoke artifacts only) ──
   await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });
   await prisma.corpusDocument.delete({ where: { id: doc.id } });
