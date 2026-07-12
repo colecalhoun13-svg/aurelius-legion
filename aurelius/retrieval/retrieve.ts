@@ -48,6 +48,10 @@ export async function semanticRecall(args: {
       limit: args.limit ?? 8,
       sourceTypes: args.sourceTypes ?? DEFAULT_SOURCES,
       operatorId: args.operatorId,
+      // Only match rows embedded by the SAME model as this query — mixed
+      // geometries (e.g. leftover OpenAI vectors after a Gemini switch) would
+      // otherwise surface as confident garbage.
+      embeddingModel: adapter.model,
     });
 
     return hits.filter((h) => h.similarity >= MIN_SIMILARITY);
