@@ -30,16 +30,18 @@ export function AureliusChat() {
     setError(null);
 
     try {
-      const res = await fetch(
-        "https://musical-space-doodle-4jxpwg76jwxgcv5j-3001.app.github.dev/api/aurelius",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: userMessage.content })
-        }
-      );
+      // Same-origin route — proxies to the backend over loopback server-side.
+      // No hardcoded Codespaces URL to go stale when the host changes.
+      const res = await fetch("/api/aurelius", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userMessage.content })
+      });
 
-      if (!res.ok) throw new Error(`Aurelius error: ${res.status}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? `Aurelius error: ${res.status}`);
+      }
 
       const data = await res.json();
 
@@ -51,7 +53,7 @@ export function AureliusChat() {
       setMessages((prev) => [...prev, aureliusMessage]);
     } catch (err: any) {
       console.error(err);
-      setError("Aurelius encountered an issue reaching the backend.");
+      setError(err?.message ?? "Aurelius encountered an issue reaching the backend.");
     } finally {
       setLoading(false);
     }
