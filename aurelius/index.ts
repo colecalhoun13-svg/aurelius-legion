@@ -724,6 +724,31 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       cleanedReviewed = { ...response.reviewed, text: r.cleanedText };
     }
 
+    // ── Never return an empty bubble ──
+    // If the model answered with only directives (a silent SAVE/TOOL/
+    // knowledge proposal) the visible text strips to "". Rather than send an
+    // empty reply, acknowledge what actually happened. Also covers a genuinely
+    // empty LLM response (provider hiccup) — we say so instead of going silent.
+    if (!cleanedText || !cleanedText.trim()) {
+      const acks: string[] = [];
+      if (savedExplicit.length || savedAuto.length) acks.push("Noted — I've saved that.");
+      if (executedTools.length) {
+        const ok = executedTools.filter((e) => e.result.ok).length;
+        acks.push(ok === executedTools.length ? "Done." : `Ran ${ok}/${executedTools.length} actions.`);
+      }
+      if (knowledgeProposalsCreated.length) acks.push("I've proposed a knowledge update for your confirmation.");
+      cleanedText =
+        acks.join(" ") ||
+        "I didn't get a response together on that one — mind rephrasing or asking again?";
+      console.warn("[aurelius] empty reply text — used fallback", {
+        tokensUsed: response.tokensUsed,
+        engine: response.engine,
+        saves: savedExplicit.length + savedAuto.length,
+        tools: executedTools.length,
+        proposals: knowledgeProposalsCreated.length,
+      });
+    }
+
     // ── Trigger 2: auto-fire reflection on meaningful memory writes ──
     let reflectionsTriggered = 0;
 
