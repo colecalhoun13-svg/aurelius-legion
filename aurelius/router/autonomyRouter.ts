@@ -97,3 +97,14 @@ autonomyRouter.post("/schedule-protection/run", async (req: Request, res: Respon
     res.status(500).json({ error: err?.message ?? "schedule-protection failed" });
   }
 });
+
+// Run inbox triage on demand — drafts replies, acts if granted else proposes.
+autonomyRouter.post("/inbox-triage/run", async (req: Request, res: Response) => {
+  try {
+    const { runInboxTriage } = await import("../autonomy/workflows/inboxTriage.ts");
+    const result = await runInboxTriage(req.body ?? {});
+    res.json({ ok: true, result });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "inbox-triage failed" });
+  }
+});

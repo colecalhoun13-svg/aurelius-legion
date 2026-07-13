@@ -74,7 +74,7 @@ async function handleCommand(chatId: string | number, text: string) {
     case "/help":
       await send(
         chatId,
-        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\n/grants — what I can act on for you (grant/revoke keyholes)\nA voice note transcribes and captures the same as text.\nAnything else you type goes straight to the inbox."
+        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\n/grants — what I can act on for you (grant/revoke keyholes)\n/protect — hold deep-work time on your calendar\n/triage — draft replies to what needs one\nA voice note transcribes and captures the same as text.\nAnything else you type goes straight to the inbox."
       );
       return;
 
@@ -119,6 +119,21 @@ async function handleCommand(chatId: string | number, text: string) {
         await send(chatId, `Protected ${r.finalized} deep-work block${r.finalized === 1 ? "" : "s"} on your calendar (reversible — delete any you don't want). ${r.gated ? `${r.gated} more are on the Bridge for your OK.` : ""}`.trim());
       } else {
         await send(chatId, `Found ${r.opportunities} day${r.opportunities === 1 ? "" : "s"} with unprotected focus time — proposed holds on the Bridge. Grant calendar.schedule_protection (/grants) and I'll just place them.`);
+      }
+      return;
+    }
+
+    case "/triage": {
+      const { runInboxTriage } = await import("../autonomy/workflows/inboxTriage.ts");
+      const r = await runInboxTriage({ max: 10 });
+      if (!r.connected) {
+        await send(chatId, "Gmail isn't connected yet — open /api/gmail/auth on the desktop once.");
+      } else if (r.needsReply === 0) {
+        await send(chatId, `Scanned ${r.scanned} — nothing needs a reply right now.`);
+      } else if (r.drafted > 0) {
+        await send(chatId, `Drafted ${r.drafted} repl${r.drafted === 1 ? "y" : "ies"} into your Gmail drafts — review and send. ${r.proposed ? `${r.proposed} more on the Bridge.` : ""}`.trim());
+      } else {
+        await send(chatId, `${r.needsReply} message${r.needsReply === 1 ? "" : "s"} need a reply — drafts are on the Bridge (Confirm & do it to drop them in Gmail). Grant inbox.triage_draft and I'll draft them straight into Gmail.`);
       }
       return;
     }

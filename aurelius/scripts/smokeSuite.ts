@@ -317,6 +317,15 @@ async function main() {
     check("schedule-protection dedups — no repeat proposals for already-pending days", sp2.opportunities === 0);
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: "schedule_protection" } });
 
+    // Inbox triage: classifier filters robots; workflow is honest-dormant when
+    // Gmail isn't connected (both testable keyless).
+    const { runInboxTriage, needsReply } = await import("../autonomy/workflows/inboxTriage.ts");
+    const robot = needsReply({ id: "1", threadId: "1", from: "no-reply@stripe.com", subject: "x", snippet: "", date: "", unread: true });
+    const human = needsReply({ id: "2", threadId: "2", from: "Sarah <sarah@gmail.com>", subject: "x", snippet: "", date: "", unread: true });
+    check("inbox triage classifier: drafts for humans, skips robots", human === true && robot === false);
+    const it = await runInboxTriage({ max: 5 });
+    check("inbox triage is honest-dormant when Gmail unconnected", it.connected === false && it.proposed === 0 && it.drafted === 0);
+
     await prisma.bridgeSignal.deleteMany({ where: { title: { contains: TAG } } });
     await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
   }

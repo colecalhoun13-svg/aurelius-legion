@@ -7,6 +7,7 @@
 
 import { registerActionFinalizer } from "./actionRegistry.ts";
 import { finalizeScheduleProtection } from "./workflows/scheduleProtection.ts";
+import { finalizeInboxDraft } from "./workflows/inboxTriage.ts";
 
 let registered = false;
 
@@ -14,4 +15,5 @@ export function registerAllActions(): void {
   if (registered) return;
   registered = true;
   registerActionFinalizer("calendar.schedule_protection", finalizeScheduleProtection);
+  registerActionFinalizer("inbox.triage_draft", finalizeInboxDraft);
 }
