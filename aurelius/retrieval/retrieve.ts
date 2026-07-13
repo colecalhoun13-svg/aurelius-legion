@@ -50,8 +50,9 @@ export async function semanticRecall(args: {
       operatorId: args.operatorId,
       // Only match rows embedded by the SAME model as this query — mixed
       // geometries (e.g. leftover OpenAI vectors after a Gemini switch) would
-      // otherwise surface as confident garbage.
-      embeddingModel: adapter.model,
+      // otherwise surface as confident garbage. Must match the exact string
+      // the write path stores in embedPipeline.ts: `${name}:${model}`.
+      embeddingModel: `${adapter.name}:${adapter.model}`,
     });
 
     return hits.filter((h) => h.similarity >= MIN_SIMILARITY);

@@ -351,14 +351,34 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     console.warn("[ROUTER] conversation continuity failed (non-fatal):", err);
   }
 
+  // Resolve the primary operator's id once — shared by the compiled-pattern
+  // layer (5.4) and semantic recall (5.5).
+  const recallOperatorId =
+    task.knowledgeContext?.operatorId ??
+    (await resolveOperatorId(operators.primary).catch(() => null)) ??
+    undefined;
+
+  // Layer 5.4: Compiled patterns — accumulated understanding.
+  // Closes the learning loop for the MAIN brain: confirmed heuristics that
+  // Aurelius compiled from repeated experience now ground everyday reasoning,
+  // not just the training reasoner. No-op until patterns exist; never fatal.
+  if (recallOperatorId) {
+    try {
+      const { loadOperatorPatternsForPrompt } = await import("../compiled/reasoningHelper.ts");
+      const patternBlock = await loadOperatorPatternsForPrompt({
+        operatorId: recallOperatorId,
+        limit: 10,
+      });
+      if (patternBlock) parts.push("\n" + patternBlock);
+    } catch (err) {
+      console.warn("[ROUTER] compiled-pattern layer failed (non-fatal):", err);
+    }
+  }
+
   // Layer 5.5 (Phase 4.6): Semantic recall — retrieval-augmented context.
   // Embeds the user's message and surfaces the closest knowledge, memories,
   // and prior reasoning. No-op when embeddings are disabled; never fatal.
   try {
-    const recallOperatorId =
-      task.knowledgeContext?.operatorId ??
-      (await resolveOperatorId(operators.primary).catch(() => null)) ??
-      undefined;
     const hits = await semanticRecall({
       query: task.input,
       operatorId: recallOperatorId,
