@@ -12,6 +12,7 @@ import cors from "cors";
 import { routeOperators } from "./router/operatorRouter.ts";
 // Smart LLM routing
 import { runLLM } from "./llm/runLLM.ts";
+import { routeLLM } from "./llm/router.ts";
 // Memory service (multi-operator aware)
 import {
   saveMemory,
@@ -185,6 +186,8 @@ async function executeToolDirectives(
 
     if (!result.ok) {
       console.warn(`[tool-call] FAILED — ${result.error}`);
+    } else {
+      console.log(`[tool-call] ok — ${JSON.stringify(result.output ?? {}).slice(0, 300)}`);
     }
 
     executed.push({ directive, result, resolvedClientId });
@@ -655,9 +658,41 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       const pass2B = await firePass2ForReviewRecent(executedTools);
       pass2Outcomes = [...pass2A, ...pass2B];
 
-      const toolSummary = summarizeToolResults(executedTools);
+      // ── Tool-result feedback: the model READS the results and writes the
+      // answer from them. Without this a search/read tool's output never
+      // reaches the model — it only saw a terse "completed" summary after the
+      // fact, so web.search felt empty even when it worked. One extra LLM turn,
+      // no more tool calls (loop-safe: we strip any directives from it).
+      let synthesized = "";
+      if (executedTools.some((e) => e.result.ok)) {
+        const resultsForModel = executedTools
+          .map((e) => {
+            const head = `${e.directive.tool}.${e.directive.action}`;
+            return e.result.ok
+              ? `[${head}] →\n${JSON.stringify(e.result.output ?? {}, null, 2).slice(0, 7000)}`
+              : `[${head}] FAILED: ${e.result.error}`;
+          })
+          .join("\n\n");
+        try {
+          const synth = await routeLLM({
+            taskType: "chat",
+            operators: { primary, secondaries },
+            input:
+              `${message}\n\n[These are the results of the tool(s) you just ran. Write your answer to Cole USING them — synthesize, be specific, and cite the source links when present. Do NOT call any more tools.]\n\n${resultsForModel}`,
+          });
+          synthesized = extractDirectives(synth.text ?? "").cleanedText.trim();
+        } catch (err) {
+          console.warn("[aurelius] tool-result synthesis failed (non-fatal):", (err as any)?.message ?? err);
+        }
+      }
+
+      if (synthesized) {
+        cleanedText = synthesized; // the real answer replaces the pre-tool preamble
+      } else {
+        const toolSummary = summarizeToolResults(executedTools);
+        if (toolSummary) cleanedText = cleanedText + "\n" + toolSummary;
+      }
       const pass2Summary = summarizePass2(pass2Outcomes);
-      if (toolSummary) cleanedText = cleanedText + "\n" + toolSummary;
       if (pass2Summary) cleanedText = cleanedText + "\n" + pass2Summary;
     }
 
