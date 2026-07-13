@@ -2,9 +2,7 @@
 
 import { ResearchResult } from "../researchTypes.ts";
 import { getOperatorProfile } from "../../core/operatorProfiles.ts"; // adjust path if needed
-import OpenAI from "openai";
-
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || "" });
+import { runLLM } from "../../llm/runLLM.ts";
 
 export async function llmResearch(
   query: string,
@@ -42,24 +40,16 @@ Rules:
 - Respect strict correctness if required.
   `.trim();
 
-  // --- 3) Choose model tier based on operator --------------------------------
-  const model =
-    routing?.preferredModelTier === "premium"
-      ? "gpt-4o"
-      : routing?.preferredModelTier === "balanced"
-      ? "gpt-4o-mini"
-      : "gpt-4o-mini";
-
-  // --- 4) Query the LLM -------------------------------------------------------
-  const completion = await client.chat.completions.create({
-    model,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: query },
-    ],
+  // --- 3+4) Query the LLM through the router (failover chain, not a hardcoded
+  // OpenAI key). Fold the research framing into the input so it survives the
+  // router's own prompt assembly. --------------------------------------------
+  const response = await runLLM({
+    taskType: "research",
+    operator,
+    input: `${systemPrompt}\n\n---\nResearch query:\n${query}`,
   });
 
-  const text = completion.choices[0].message.content || "";
+  const text = response.text || "";
 
   // --- 5) Confidence scoring based on operator --------------------------------
   let confidence = 0.5;
