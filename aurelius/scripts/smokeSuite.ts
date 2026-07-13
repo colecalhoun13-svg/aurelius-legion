@@ -231,6 +231,19 @@ async function main() {
   const f = await fredAdapter.run("macro_snapshot", {});
   check("fred tool honest about config state", fredConfigured() ? f.ok : (!f.ok && /FRED_API_KEY/.test(f.error ?? "")));
 
+  console.log("── multimodal: photo/video in chat (keyless: honest fail) ──");
+  {
+    const { mediaKind, analyzeMedia } = await import("../media/ingestMedia.ts");
+    check(
+      "media kind classifies image/video/other",
+      mediaKind("image/png") === "image" && mediaKind("video/mp4") === "video" && mediaKind("text/plain") === null
+    );
+    let honest = false;
+    try { await analyzeMedia(Buffer.from("not-an-image"), "image/png"); }
+    catch (e: any) { honest = /GEMINI_API_KEY|Gemini/i.test(e?.message ?? ""); }
+    check("media analysis fails honestly without a real Gemini call", honest);
+  }
+
   console.log("── the acting layer: autonomy grants (§2.5 Hybrid Autonomy) ──");
   {
     const { grantAutonomy, revokeAutonomy, isActionGranted } = await import("../autonomy/grants.ts");

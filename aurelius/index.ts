@@ -65,7 +65,7 @@ import { gmailRouter } from "./router/gmailRouter.ts";
 import { runTraced, requestTracer, logBootMarker } from "./core/trace.ts";
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "25mb" })); // room for base64 photos / short clips attached in chat
 app.use(
   cors({
     origin: "*",
@@ -496,7 +496,6 @@ function summarizePass2(outcomes: Pass2Outcome[]): string {
 
 app.post("/api/aurelius", async (req: Request, res: Response) => {
   const {
-    message,
     options,
     taskType,
     urgency,
@@ -504,10 +503,35 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
     needsRealtime,
     hasMultimodal,
     save: explicitSave,
+    media, // { mimeType, data (base64), kind?, filename? } — attached in chat
   } = req.body;
 
-  if (!message || typeof message !== "string") {
-    return res.status(400).json({ error: "Message is required" });
+  let message: string = typeof req.body?.message === "string" ? req.body.message : "";
+
+  if (!message.trim() && !media) {
+    return res.status(400).json({ error: "Message or media is required" });
+  }
+
+  // Multimodal chat: Cole attached a photo/video. Aurelius "sees" it — the
+  // analysis is folded into the message so the model reasons over it in
+  // conversation — and remembers it in the second brain (fire-and-forget).
+  if (media?.data && media?.mimeType) {
+    try {
+      const { analyzeMedia, captureMediaNote } = await import("./media/ingestMedia.ts");
+      const { kind, analysis } = await analyzeMedia(
+        Buffer.from(media.data, "base64"),
+        media.mimeType,
+        message.trim() || undefined
+      );
+      message =
+        (message.trim() ? message.trim() + "\n\n" : "") +
+        `[Cole attached a ${kind}. What I can see in it:]\n${analysis}`;
+      captureMediaNote({ kind, analysis, caption: req.body?.message, filename: media.filename }).catch(() => {});
+    } catch (err: any) {
+      message =
+        (message.trim() ? message.trim() + "\n\n" : "") +
+        `[Cole attached a file but I couldn't read it: ${err?.message ?? err}]`;
+    }
   }
 
   try {

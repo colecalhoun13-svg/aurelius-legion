@@ -32,6 +32,24 @@ function allowedChat(): string | null {
   return process.env.TELEGRAM_CHAT_ID?.trim() || null;
 }
 
+/** Pull an attached photo/video out of a Telegram message, if any. */
+function mediaFromMessage(
+  msg: any
+): { fileId: string; mime: string; kind: "image" | "video" } | null {
+  if (msg?.photo?.length) {
+    // photo is an array of sizes — take the largest (last).
+    return { fileId: msg.photo[msg.photo.length - 1].file_id, mime: "image/jpeg", kind: "image" };
+  }
+  if (msg?.video) {
+    return { fileId: msg.video.file_id, mime: msg.video.mime_type ?? "video/mp4", kind: "video" };
+  }
+  const doc = msg?.document;
+  if (doc?.mime_type && /^(image|video)\//.test(doc.mime_type)) {
+    return { fileId: doc.file_id, mime: doc.mime_type, kind: doc.mime_type.startsWith("image/") ? "image" : "video" };
+  }
+  return null;
+}
+
 async function api(method: string, payload: Record<string, any>): Promise<any> {
   const t = token();
   if (!t) throw new Error("telegram token missing");
@@ -285,7 +303,8 @@ export function startTelegramBridge() {
           offset = u.update_id + 1;
           const msg = u.message;
           const voice = msg?.voice ?? msg?.audio;
-          if ((!msg?.text && !voice) || !msg.chat?.id) continue;
+          const media = mediaFromMessage(msg);
+          if ((!msg?.text && !voice && !media) || !msg.chat?.id) continue;
 
           const chatId = String(msg.chat.id);
           if (!chat || chatId !== chat) {
@@ -295,17 +314,38 @@ export function startTelegramBridge() {
           }
 
           try {
-            let text = msg.text;
-            if (!text && voice) {
-              // Voice note → Whisper → the same path as typed words.
-              const { transcribeAudio } = await import("./voice.ts");
-              const file = await api("getFile", { file_id: voice.file_id });
-              const audioRes = await fetch(`${API}/file/bot${token()}/${file.file_path}`);
-              if (!audioRes.ok) throw new Error(`couldn't download the voice note (${audioRes.status})`);
-              text = await transcribeAudio(Buffer.from(await audioRes.arrayBuffer()));
-              await send(msg.chat.id, `Heard: "${text}"`);
+            if (media) {
+              // Photo / video → Aurelius sees it, talks about it, remembers it.
+              const { analyzeMedia, captureMediaNote } = await import("../media/ingestMedia.ts");
+              const f = await api("getFile", { file_id: media.fileId });
+              const dl = await fetch(`${API}/file/bot${token()}/${f.file_path}`);
+              if (!dl.ok) throw new Error(`couldn't download the ${media.kind} (${dl.status})`);
+              const { kind, analysis } = await analyzeMedia(
+                Buffer.from(await dl.arrayBuffer()),
+                media.mime,
+                msg.caption
+              );
+              captureMediaNote({ kind, analysis, caption: msg.caption }).catch(() => {});
+              if (msg.caption?.trim()) {
+                const { ask } = await import("../corpus/ask.ts");
+                const result = await ask(`${msg.caption}\n\n[Cole attached a ${kind}. What's in it:]\n${analysis}`);
+                await send(msg.chat.id, result.answer);
+              } else {
+                await send(msg.chat.id, `Saw your ${kind}:\n\n${analysis}`);
+              }
+            } else {
+              let text = msg.text;
+              if (!text && voice) {
+                // Voice note → Whisper → the same path as typed words.
+                const { transcribeAudio } = await import("./voice.ts");
+                const file = await api("getFile", { file_id: voice.file_id });
+                const audioRes = await fetch(`${API}/file/bot${token()}/${file.file_path}`);
+                if (!audioRes.ok) throw new Error(`couldn't download the voice note (${audioRes.status})`);
+                text = await transcribeAudio(Buffer.from(await audioRes.arrayBuffer()));
+                await send(msg.chat.id, `Heard: "${text}"`);
+              }
+              await handleCommand(msg.chat.id, text);
             }
-            await handleCommand(msg.chat.id, text);
           } catch (err: any) {
             console.error("[telegram] command failed:", err);
             await send(msg.chat.id, `That failed: ${err?.message ?? err}`).catch(() => {});
