@@ -82,6 +82,7 @@ export async function searchSimilar(args: {
   limit?: number;
   sourceTypes?: EmbeddingSourceType[];
   operatorId?: string;
+  embeddingModel?: string;
 }): Promise<SimilarChunk[]> {
   const vec = toVectorLiteral(args.embedding);
   const limit = Math.min(args.limit ?? 8, 50);
@@ -89,6 +90,16 @@ export async function searchSimilar(args: {
   const conditions: string[] = [`"embedding" IS NOT NULL`];
   const params: any[] = [vec];
   let p = 2;
+
+  // Never cosine-compare across embedding models — different models produce
+  // incompatible vector geometries, so a query embedded by model A must only
+  // match rows embedded by model A. Without this, switching providers (e.g.
+  // OpenAI → Gemini) silently returns nonsense until every row is re-embedded.
+  if (args.embeddingModel) {
+    conditions.push(`"embeddingModel" = $${p}`);
+    params.push(args.embeddingModel);
+    p++;
+  }
 
   if (args.sourceTypes && args.sourceTypes.length > 0) {
     conditions.push(`"sourceType" = ANY($${p}::text[])`);

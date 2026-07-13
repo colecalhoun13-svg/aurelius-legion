@@ -58,13 +58,14 @@ import { proposalsRouter } from "./router/proposalsRouter.ts";
 import { wikiRouter } from "./router/wikiRouter.ts";
 import { calendarRouter } from "./router/calendarRouter.ts";
 import { correctionsRouter } from "./router/correctionsRouter.ts";
+import { gmailRouter } from "./router/gmailRouter.ts";
 
 // Structured tracing — every request and scheduled run leaves a LogEntry
 // row the cockpit can read. Telemetry is fire-and-forget by design.
 import { runTraced, requestTracer, logBootMarker } from "./core/trace.ts";
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "25mb" })); // room for base64 photos / short clips attached in chat
 app.use(
   cors({
     origin: "*",
@@ -94,6 +95,7 @@ app.use("/api/proposals", proposalsRouter);
 app.use("/api/wiki", wikiRouter);
 app.use("/api/calendar", calendarRouter);
 app.use("/api/corrections", correctionsRouter);
+app.use("/api/gmail", gmailRouter);
 
 app.get("/", (req: Request, res: Response) => {
   res.send("Aurelius OS backend is running");
@@ -494,7 +496,6 @@ function summarizePass2(outcomes: Pass2Outcome[]): string {
 
 app.post("/api/aurelius", async (req: Request, res: Response) => {
   const {
-    message,
     options,
     taskType,
     urgency,
@@ -502,10 +503,35 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
     needsRealtime,
     hasMultimodal,
     save: explicitSave,
+    media, // { mimeType, data (base64), kind?, filename? } — attached in chat
   } = req.body;
 
-  if (!message || typeof message !== "string") {
-    return res.status(400).json({ error: "Message is required" });
+  let message: string = typeof req.body?.message === "string" ? req.body.message : "";
+
+  if (!message.trim() && !media) {
+    return res.status(400).json({ error: "Message or media is required" });
+  }
+
+  // Multimodal chat: Cole attached a photo/video. Aurelius "sees" it — the
+  // analysis is folded into the message so the model reasons over it in
+  // conversation — and remembers it in the second brain (fire-and-forget).
+  if (media?.data && media?.mimeType) {
+    try {
+      const { analyzeMedia, captureMediaNote } = await import("./media/ingestMedia.ts");
+      const { kind, analysis } = await analyzeMedia(
+        Buffer.from(media.data, "base64"),
+        media.mimeType,
+        message.trim() || undefined
+      );
+      message =
+        (message.trim() ? message.trim() + "\n\n" : "") +
+        `[Cole attached a ${kind}. What I can see in it:]\n${analysis}`;
+      captureMediaNote({ kind, analysis, caption: req.body?.message, filename: media.filename }).catch(() => {});
+    } catch (err: any) {
+      message =
+        (message.trim() ? message.trim() + "\n\n" : "") +
+        `[Cole attached a file but I couldn't read it: ${err?.message ?? err}]`;
+    }
   }
 
   try {
@@ -722,6 +748,31 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       cleanedReviewed = { ...response.reviewed, text: r.cleanedText };
     }
 
+    // ── Never return an empty bubble ──
+    // If the model answered with only directives (a silent SAVE/TOOL/
+    // knowledge proposal) the visible text strips to "". Rather than send an
+    // empty reply, acknowledge what actually happened. Also covers a genuinely
+    // empty LLM response (provider hiccup) — we say so instead of going silent.
+    if (!cleanedText || !cleanedText.trim()) {
+      const acks: string[] = [];
+      if (savedExplicit.length || savedAuto.length) acks.push("Noted — I've saved that.");
+      if (executedTools.length) {
+        const ok = executedTools.filter((e) => e.result.ok).length;
+        acks.push(ok === executedTools.length ? "Done." : `Ran ${ok}/${executedTools.length} actions.`);
+      }
+      if (knowledgeProposalsCreated.length) acks.push("I've proposed a knowledge update for your confirmation.");
+      cleanedText =
+        acks.join(" ") ||
+        "I didn't get a response together on that one — mind rephrasing or asking again?";
+      console.warn("[aurelius] empty reply text — used fallback", {
+        tokensUsed: response.tokensUsed,
+        engine: response.engine,
+        saves: savedExplicit.length + savedAuto.length,
+        tools: executedTools.length,
+        proposals: knowledgeProposalsCreated.length,
+      });
+    }
+
     // ── Trigger 2: auto-fire reflection on meaningful memory writes ──
     let reflectionsTriggered = 0;
 
@@ -935,6 +986,11 @@ ensureRituals().catch((err) => console.error("[rituals] seed failed:", err));
 import("./wiki/livingDocs.ts")
   .then((m) => m.ensureLivingDocuments())
   .catch((err) => console.error("[livingDocs] seed failed:", err));
+// Wire every acting workflow's commit function into the action registry, so
+// both the act-now and confirm-later paths can find a finalizer.
+import("./autonomy/registerActions.ts")
+  .then((m) => m.registerAllActions())
+  .catch((err) => console.error("[autonomy] action registration failed:", err));
 // Dormant without TELEGRAM_BOT_TOKEN; wakes the moment the token lands.
 startTelegramBridge();
 // Dormant without PAPERLESS_URL/TOKEN; wakes on the Mini.
@@ -974,6 +1030,20 @@ nodeSchedule.scheduleJob("0 6 * * *", async () => {
     });
   } catch (err) {
     console.error("[rss] poll failed:", err);
+  }
+});
+// Schedule-protection at 06:45 — defend deep-work time before the day fills.
+// Acts on its own if granted (calendar.schedule_protection), else proposes on
+// the Bridge; deduped so it never spams. Runs before the 07:00 briefing so the
+// briefing reflects any holds just placed.
+nodeSchedule.scheduleJob("45 6 * * *", async () => {
+  try {
+    await runTraced("schedule", "schedule_protection", async () => {
+      const { runScheduleProtection } = await import("./autonomy/workflows/scheduleProtection.ts");
+      await runScheduleProtection({ days: 5 });
+    });
+  } catch (err) {
+    console.error("[scheduleProtection] daily sweep failed:", err);
   }
 });
 // Morning briefing at 07:00 — the day opens with a push, not a blank page.

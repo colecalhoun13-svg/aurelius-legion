@@ -7,7 +7,21 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-type Signal = { id: string; kind: string; severity: string; title: string; body: string; createdAt: string };
+type SignalAction = { label: string; action: string; payload?: any };
+type Signal = {
+  id: string;
+  kind: string;
+  severity: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  status?: string;
+  actions?: SignalAction[] | null;
+};
+
+function confirmableAction(s: Signal): SignalAction | undefined {
+  return (s.actions ?? undefined)?.find?.((a) => a?.action === "confirm_action");
+}
 type Proposal = {
   id: string;
   operatorName: string;
@@ -71,6 +85,28 @@ export default function BridgePage() {
       body: JSON.stringify({ targetType: "bridge_signal", targetId: id, reason: reason.trim() }),
     });
     await act(id, "dismissed");
+  };
+
+  // Cole confirms a gated action proposal → the backend runs its finalizer
+  // (places the calendar hold, creates the draft, …). This is what closes the
+  // "propose → confirm → execute" loop; "Acted on it" only marks status.
+  const confirmAndDo = async (id: string) => {
+    if (busy) return;
+    setBusy(id);
+    try {
+      const res = await fetch("/api/autonomy/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ signalId: id }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        window.alert(`Couldn't do that: ${j.error ?? res.status}`);
+      }
+      await load();
+    } finally {
+      setBusy(null);
+    }
   };
 
   const rule = async (id: string, decision: "confirmed" | "denied") => {
@@ -173,7 +209,13 @@ export default function BridgePage() {
               </span>
             </div>
             {s.body && <p className="text-sm text-neutral-400 mt-2 whitespace-pre-line">{s.body}</p>}
-            <div className="flex gap-2 mt-4">
+            <div className="flex gap-2 mt-4 flex-wrap">
+              {confirmableAction(s) && s.status !== "acted" && (
+                <button onClick={() => confirmAndDo(s.id)} disabled={busy === s.id}
+                  className="text-sm border border-emerald-500/60 rounded-lg px-3 py-1 hover:bg-emerald-500/25 text-emerald-300 font-medium disabled:opacity-50">
+                  {busy === s.id ? "Doing it…" : `Confirm & do it`}
+                </button>
+              )}
               <button onClick={() => act(s.id, "acknowledged")}
                 className="text-sm border border-aurelius-gold/40 rounded-lg px-3 py-1 hover:bg-aurelius-gold/20 text-aurelius-gold">Got it</button>
               <button onClick={() => act(s.id, "acted")}

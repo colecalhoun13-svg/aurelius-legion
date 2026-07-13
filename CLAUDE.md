@@ -6,10 +6,15 @@ anyone (human or agent) working in this repo.
 
 ## Hard rules
 
-1. **Propose, never impose.** Living Knowledge writes go through
-   propose→confirm (`knowledge/proposals.ts`) or explicit Cole action
-   (corrections). Autonomy never escalates its own autonomy (scope
-   `autonomy` never auto-applies).
+1. **Act inward, gate outward, never self-escalate.** (Hybrid Autonomy —
+   NORTH_STAR §2.5.) Aurelius *finalizes* inward work (schedule, organize,
+   draft, ingest) inside a Cole-granted intent-class — reversible, traced,
+   landing on the Bridge as an executed proposal. Every **outward** action
+   (publish/send/spend) stops for Cole's confirm — non-grantable by
+   construction. Living Knowledge writes still go through propose→confirm
+   (`knowledge/proposals.ts`) or explicit Cole action (corrections).
+   **Autonomy never escalates its own autonomy** (scope `autonomy` never
+   auto-applies; the grant switch is only ever Cole's hand).
 2. **One voice.** No personality modes. The voice calibrates from learned
    `persona.*` entries (Layer 1.5) and never announces a shift.
 3. **Honest failure.** Missing key/token/engine → fail loudly, once, with the
@@ -55,7 +60,8 @@ awareness · 6 tool catalog · 7 task · 7.5 pending proposals.
 
 ## Scheduled spine (all traced via core/trace.ts)
 
-06:00 RSS · 06:30 market pulse · 07:00 morning briefing · 08:00 initiative ·
+06:00 RSS · 06:30 market pulse · 06:45 schedule-protection (acts if granted,
+else proposes) · 07:00 morning briefing · 08:00 initiative ·
 13:00 midday check (silent when on pace) · 21:30 debrief · Sun 09:00 weekend
 sweep → wiki · Sun 17:00 persona observer · Sun 18:00 weekly planning ·
 Sun 19:00 freshness sweep ·

@@ -442,6 +442,26 @@ model MeasurementSnapshot {
   @@unique([weekStart, operatorId])
 }
 
+// The acting layer (NORTH_STAR §2.5 / §6 Block 4). A grant is Cole handing
+// Aurelius a scoped, reversible key to FINALIZE one inward action-class on its
+// own. Outward classes (publish/send/spend) and training/health are
+// non-grantable by construction (enforced in autonomy/actionClasses.ts, never
+// by the row). Cole is the only writer; revoke sets status and the grant goes
+// dormant. Never embedded — raw prisma only.
+model AutonomyGrant {
+  id          String    @id @default(cuid())
+  operator    String // the operator/domain the action-class belongs to
+  actionClass String // stable action-class key, e.g. "calendar.schedule_protection"
+  status      String    @default("active") // "active" | "revoked"
+  grantedBy   String    @default("cole")
+  note        String?
+  grantedAt   DateTime  @default(now())
+  revokedAt   DateTime?
+
+  @@unique([operator, actionClass])
+  @@index([status])
+}
+
 model IngestionRun {
   id               String    @id @default(cuid())
   runType          String // "weekend_deep" | "targeted_gap" | "ad_hoc" | "corpus_upload"

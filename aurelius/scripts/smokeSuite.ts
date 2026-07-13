@@ -217,6 +217,132 @@ async function main() {
   await prisma.conversationTurn.deleteMany({ where: { content: { contains: TAG } } });
   await prisma.knowledgeProposal.deleteMany({ where: { intentClassId: "persona_calibration" } });
 
+  console.log("── new tools: gmail + fred (keyless: honest connect/config fails) ──");
+  const { gmailAdapter } = await import("../tools/adapters/gmail.ts");
+  const { fredAdapter } = await import("../tools/adapters/fred.ts");
+  const { gmailAuth } = await import("../gmail/engine.ts");
+  if (!(await gmailAuth.isConnected())) {
+    const g = await gmailAdapter.run("read_inbox", {});
+    check("gmail tool fails honestly when unauthed", !g.ok && /gmail\/auth/.test(g.error ?? ""));
+  } else {
+    check("gmail tool reads when connected", (await gmailAdapter.run("read_inbox", {})).ok);
+  }
+  const { fredConfigured } = await import("../wealth/fred.ts");
+  const f = await fredAdapter.run("macro_snapshot", {});
+  check("fred tool honest about config state", fredConfigured() ? f.ok : (!f.ok && /FRED_API_KEY/.test(f.error ?? "")));
+
+  console.log("── multimodal: photo/video in chat (keyless: honest fail) ──");
+  {
+    const { mediaKind, analyzeMedia } = await import("../media/ingestMedia.ts");
+    check(
+      "media kind classifies image/video/other",
+      mediaKind("image/png") === "image" && mediaKind("video/mp4") === "video" && mediaKind("text/plain") === null
+    );
+    let honest = false;
+    try { await analyzeMedia(Buffer.from("not-an-image"), "image/png"); }
+    catch (e: any) { honest = /GEMINI_API_KEY|Gemini/i.test(e?.message ?? ""); }
+    check("media analysis fails honestly without a real Gemini call", honest);
+  }
+
+  console.log("── the acting layer: autonomy grants (§2.5 Hybrid Autonomy) ──");
+  {
+    const { grantAutonomy, revokeAutonomy, isActionGranted } = await import("../autonomy/grants.ts");
+
+    // An inward class grants, gates true, revokes, gates false.
+    await grantAutonomy({ actionClass: "calendar.schedule_protection", note: "smoke" });
+    const grantedOn = await isActionGranted("calendar.schedule_protection");
+    await revokeAutonomy("calendar.schedule_protection");
+    const grantedOff = await isActionGranted("calendar.schedule_protection");
+    check("inward grant flips the gate on, revoke flips it off", grantedOn === true && grantedOff === false);
+
+    // Outward action is non-grantable by construction — grant throws, gate stays false.
+    let outwardRefused = false;
+    try { await grantAutonomy({ actionClass: "email.send" }); }
+    catch (e: any) { outwardRefused = /OUTWARD|non-grantable/i.test(e?.message ?? ""); }
+    check("outward action (email.send) refused by construction", outwardRefused && !(await isActionGranted("email.send")));
+
+    // Training/health domain is non-grantable — signals only.
+    let trainingRefused = false;
+    try { await grantAutonomy({ actionClass: "training.prescribe" }); }
+    catch (e: any) { trainingRefused = /training|signals only/i.test(e?.message ?? ""); }
+    check("training.prescribe refused (signals only, hard rule 5)", trainingRefused);
+
+    // Self-escalation is non-grantable — autonomy never escalates its own autonomy.
+    let autonomyRefused = false;
+    try { await grantAutonomy({ actionClass: "autonomy" }); }
+    catch (e: any) { autonomyRefused = /autonomy/i.test(e?.message ?? ""); }
+    check("scope 'autonomy' refused (no self-escalation, hard rule 1)", autonomyRefused);
+
+    // The executor: finalizer comes from the registry (one definition, both
+    // paths). Use research.ingest (inward, grantable) with a mock finalizer so
+    // the test doesn't touch the real calendar.
+    const { executeAction, confirmAction } = await import("../autonomy/executor.ts");
+    const { registerActionFinalizer } = await import("../autonomy/actionRegistry.ts");
+    let finalizedCount = 0;
+    registerActionFinalizer("research.ingest", async () => { finalizedCount++; return "done"; });
+    const prep = async () => ({ title: `${TAG} test action`, body: "an inward action", domain: "personal", payload: { n: 1 } });
+
+    await grantAutonomy({ actionClass: "research.ingest", note: "smoke" });
+    const acted = await executeAction({ actionClass: "research.ingest", prepare: prep });
+    const actedSig = await prisma.bridgeSignal.findUnique({ where: { id: acted.bridgeSignalId } });
+    check("granted action finalizes + files an 'acted' signal", acted.finalized && finalizedCount === 1 && actedSig?.status === "acted");
+
+    await revokeAutonomy("research.ingest");
+    const gated = await executeAction({ actionClass: "research.ingest", prepare: prep });
+    const gatedSig = await prisma.bridgeSignal.findUnique({ where: { id: gated.bridgeSignalId } });
+    check("ungranted action gates: finalize NOT run, signal 'pending'", !gated.finalized && finalizedCount === 1 && gatedSig?.status === "pending");
+
+    // Confirm the gated proposal → it executes (the loop closed).
+    const confirmed = await confirmAction(gated.bridgeSignalId);
+    const confirmedSig = await prisma.bridgeSignal.findUnique({ where: { id: gated.bridgeSignalId } });
+    check("confirming a gated proposal executes it (loop closed)", confirmed.ok && finalizedCount === 2 && confirmedSig?.status === "acted");
+
+    // Outward action can never finalize on its own (no standing grant possible).
+    const outward = await executeAction({ actionClass: "email.send", prepare: prep });
+    check("outward action never finalizes on its own through the executor", !outward.finalized && finalizedCount === 2);
+
+    // The surface: active grants list reflects reality; grantable menu excludes outward.
+    const { listActiveGrants } = await import("../autonomy/grants.ts");
+    const { listGrantableClasses } = await import("../autonomy/actionClasses.ts");
+    await grantAutonomy({ actionClass: "research.ingest", note: "smoke" });
+    const activeGrants = await listActiveGrants();
+    const grantable = listGrantableClasses();
+    check(
+      "grant surface lists active grants + a grantable menu with no outward classes",
+      activeGrants.some((g) => g.actionClass === "research.ingest") &&
+        grantable.length > 0 &&
+        !grantable.some((c) => c.tier === "outward")
+    );
+
+    // First acting workflow: schedule-protection. Ungranted → it PROPOSES holds
+    // (pending signals), never writes the calendar. Proves detect→prepare→gate.
+    const { runScheduleProtection } = await import("../autonomy/workflows/scheduleProtection.ts");
+    await revokeAutonomy("calendar.schedule_protection"); // ensure off
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "schedule_protection" } }); // deterministic: clear dedup state
+    const beforeEvents = await prisma.calendarEvent.count({ where: { title: "Deep Work (protected)" } });
+    const sp = await runScheduleProtection({ days: 3, blockMinutes: 60 });
+    const afterEvents = await prisma.calendarEvent.count({ where: { title: "Deep Work (protected)" } });
+    check(
+      "schedule-protection proposes holds when ungranted, writes no calendar events",
+      sp.opportunities >= 1 && sp.gated === sp.opportunities && sp.finalized === 0 && afterEvents === beforeEvents
+    );
+    const sp2 = await runScheduleProtection({ days: 3, blockMinutes: 60 }); // rerun: dedup
+    check("schedule-protection dedups — no repeat proposals for already-pending days", sp2.opportunities === 0);
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "schedule_protection" } });
+
+    // Inbox triage: classifier filters robots; workflow is honest-dormant when
+    // Gmail isn't connected (both testable keyless).
+    const { runInboxTriage, needsReply } = await import("../autonomy/workflows/inboxTriage.ts");
+    const robot = needsReply({ id: "1", threadId: "1", from: "no-reply@stripe.com", subject: "x", snippet: "", date: "", unread: true });
+    const human = needsReply({ id: "2", threadId: "2", from: "Sarah <sarah@gmail.com>", subject: "x", snippet: "", date: "", unread: true });
+    check("inbox triage classifier: drafts for humans, skips robots", human === true && robot === false);
+    const it = await runInboxTriage({ max: 5 });
+    check("inbox triage is honest-dormant when Gmail unconnected", it.connected === false && it.proposed === 0 && it.drafted === 0);
+
+    await prisma.bridgeSignal.deleteMany({ where: { title: { contains: TAG } } });
+    await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
+  }
+
   // ── cleanup (smoke artifacts only) ──
   await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });
   await prisma.corpusDocument.delete({ where: { id: doc.id } });

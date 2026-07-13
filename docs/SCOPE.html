@@ -1,0 +1,393 @@
+<title>Aurelius — Scope of the Second Operator</title>
+<style>
+  :root {
+    --ground: #0b0a07;
+    --panel: #13100a;
+    --panel-2: #191509;
+    --line: #2a2313;
+    --gold: #d4af37;
+    --gold-bright: #e8c766;
+    --gold-dim: #8a7530;
+    --text: #ece5d2;
+    --muted: #948c72;
+    --faint: #6a6349;
+    --live: #6cc08a;
+    --pend: #cf9b3a;
+    --serif: "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(120% 80% at 50% -10%, #17130b 0%, var(--ground) 55%) fixed;
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.62;
+    padding: 0 20px 90px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  /* ── hero ── */
+  .hero { padding: 68px 0 30px; text-align: center; }
+  .crest {
+    width: 62px; height: 62px; margin: 0 auto 26px;
+    border: 1px solid var(--gold-dim); border-radius: 50%;
+    display: grid; place-content: center;
+    font-family: var(--serif); font-size: 30px; color: var(--gold);
+    box-shadow: 0 0 40px rgba(212,175,55,0.12), inset 0 0 20px rgba(212,175,55,0.06);
+  }
+  .eyebrow {
+    font-size: 11px; letter-spacing: .34em; text-transform: uppercase;
+    color: var(--gold-dim); margin-bottom: 20px;
+  }
+  h1 {
+    font-family: var(--serif); font-weight: 400;
+    font-size: clamp(30px, 6.4vw, 50px); letter-spacing: .015em;
+    line-height: 1.1; margin: 0 0 18px; text-wrap: balance;
+  }
+  h1 .g { color: var(--gold); }
+  .lede {
+    max-width: 56ch; margin: 0 auto; color: var(--muted);
+    font-size: 16.5px;
+  }
+  .lede b { color: var(--text); font-weight: 600; }
+
+  hr.rule {
+    border: 0; height: 5px; margin: 46px 0;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  }
+
+  h2 {
+    font-family: var(--serif); font-weight: 400;
+    font-size: 15px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--gold); margin: 0 0 6px;
+  }
+  .sub { color: var(--muted); font-size: 14.5px; margin: 0 0 22px; max-width: 60ch; }
+
+  h3 {
+    font-family: var(--serif); font-weight: 400; font-size: 21px;
+    letter-spacing: .02em; margin: 0 0 4px; color: var(--text);
+  }
+  p { margin: 0 0 14px; }
+  p.body { max-width: 64ch; }
+
+  /* ── the day timeline ── */
+  .day { display: grid; gap: 0; margin-top: 8px; }
+  .beat {
+    display: grid; grid-template-columns: 74px 1fr; gap: 18px;
+    padding: 16px 0; border-bottom: 1px solid var(--line); align-items: start;
+  }
+  .beat:last-child { border-bottom: 0; }
+  .beat .t {
+    font-family: var(--mono); font-size: 12.5px; color: var(--gold);
+    padding-top: 3px; font-variant-numeric: tabular-nums; letter-spacing: .02em;
+  }
+  .beat .t small { display: block; color: var(--faint); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; margin-top: 3px; }
+  .beat .b { font-size: 15px; }
+  .beat .b b { color: var(--gold-bright); font-weight: 600; }
+  .beat .b .q {
+    display: block; margin-top: 7px; padding-left: 14px;
+    border-left: 2px solid var(--gold-dim); color: var(--muted);
+    font-style: italic; font-size: 14px;
+  }
+
+  /* ── pillars ── */
+  .pillars { display: grid; gap: 14px; margin-top: 6px; }
+  .pillar {
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--line); border-radius: 3px;
+    padding: 18px 20px;
+  }
+  .pillar .top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .pillar .g { font-family: var(--serif); color: var(--gold); font-size: 22px; }
+  .pillar p { color: var(--muted); font-size: 14px; margin: 8px 0 0; }
+  .pillar .how { color: var(--faint); font-size: 12.5px; margin-top: 8px; font-family: var(--mono); }
+  .tag { font-size: 9.5px; letter-spacing: .16em; text-transform: uppercase; padding: 3px 8px; border-radius: 2px; white-space: nowrap; }
+  .tag.live { color: var(--live); border: 1px solid rgba(108,192,138,.4); }
+  .tag.soon { color: var(--pend); border: 1px solid rgba(207,155,58,.4); }
+
+  /* ── financial callout ── */
+  .edge {
+    background: var(--panel); border: 1px solid var(--gold-dim); border-radius: 3px;
+    padding: 26px 26px; margin-top: 6px;
+  }
+  .edge h3 { color: var(--gold); }
+  .edge ul { margin: 14px 0 0; padding: 0; list-style: none; display: grid; gap: 11px; }
+  .edge li { padding-left: 20px; position: relative; font-size: 14.5px; color: var(--text); }
+  .edge li::before { content: "▸"; position: absolute; left: 0; color: var(--gold); }
+  .edge li b { color: var(--gold-bright); font-weight: 600; }
+
+  /* ── thesis ── */
+  .thesis {
+    font-family: var(--serif); font-size: 22px; line-height: 1.5;
+    color: var(--text); text-align: center; max-width: 30ch; margin: 8px auto;
+    text-wrap: balance;
+  }
+  .thesis .g { color: var(--gold); }
+
+  /* ── scorecard ── */
+  .scorewrap { margin-top: 8px; }
+  .headline {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 30px;
+  }
+  @media (max-width: 560px) { .headline { grid-template-columns: 1fr; } }
+  .score {
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--line); border-radius: 3px; padding: 20px 18px; text-align: center;
+  }
+  .score.hero-score { border-color: var(--gold-dim); }
+  .score .n {
+    font-family: var(--serif); font-size: 46px; line-height: 1; color: var(--gold);
+    font-variant-numeric: tabular-nums;
+  }
+  .score .n small { font-size: 18px; color: var(--faint); }
+  .score .lbl { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-top: 8px; }
+  .score .note { font-size: 12px; color: var(--faint); margin-top: 6px; line-height: 1.4; }
+
+  .axis { display: grid; gap: 13px; }
+  .row .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+  .row .name { font-size: 14px; }
+  .row .name span { color: var(--muted); font-size: 12.5px; }
+  .row .val { font-family: var(--mono); color: var(--gold); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .bar { height: 6px; background: #241d0e; border-radius: 3px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--gold-dim), var(--gold)); border-radius: 3px; }
+  .bar.ghost i { background: repeating-linear-gradient(90deg, var(--gold-dim) 0 4px, transparent 4px 8px); opacity: .5; }
+
+  .verdict {
+    margin-top: 30px; padding: 22px 24px; background: var(--panel);
+    border: 1px solid var(--line); border-left: 2px solid var(--gold); border-radius: 3px;
+  }
+  .verdict p { font-size: 14.5px; color: var(--muted); margin: 0 0 10px; }
+  .verdict p:last-child { margin: 0; }
+  .verdict b { color: var(--text); }
+
+  .foot { margin-top: 54px; text-align: center; color: var(--faint); font-size: 11.5px; letter-spacing: .08em; }
+
+  @keyframes breathe { 0%,100% { opacity: .12; } 50% { opacity: .22; } }
+  @media (prefers-reduced-motion: no-preference) {
+    .crest { animation: breathe 6s ease-in-out infinite; animation-name: none; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="hero">
+    <div class="crest">A</div>
+    <div class="eyebrow">The Scope of the Second Operator</div>
+    <h1>You make the calls.<br><span class="g">Aurelius</span> handles the rest.</h1>
+    <p class="lede">Not a chatbot. Not an app. A private operating system that runs your day
+    in the background, reads everything you can't, remembers everything you shouldn't have to,
+    and gets sharper about <b>you</b> every week it's alive — so your attention stays on the moves that matter.</p>
+  </header>
+
+  <hr class="rule">
+
+  <!-- THE DAY -->
+  <section>
+    <h2>A day, run in parallel</h2>
+    <p class="sub">This is the machine already in the code — the autonomous spine that fires whether you're watching or not.
+    Real timeline, real behavior.</p>
+    <div class="day">
+      <div class="beat">
+        <div class="t">06:30<small>macro</small></div>
+        <div class="b">Before you're up, it pulls the <b>market pulse</b> — fed funds, the 10-year, the yield curve, CPI, mortgage rates — plus whatever wealth topics you've told it to track, and files a digest into your brain.</div>
+      </div>
+      <div class="beat">
+        <div class="t">07:00<small>briefing</small></div>
+        <div class="b">Your phone buzzes with the <b>morning briefing</b> — in your voice, not a template:
+          <span class="q">"Focus: launch prep. 3 tasks overdue, you're 2 days behind on the athlete program. Calendar's open 2–4pm — that's where the deep work goes. Nothing else on fire."</span>
+        </div>
+      </div>
+      <div class="beat">
+        <div class="t">10:14<small>capture</small></div>
+        <div class="b">Driving, you hold the mic and mutter <i>"reprogram Jake's squat volume, he's stalling."</i> It <b>transcribes, tags it training, files it</b> — and surfaces it the next time you open his session. Nothing lost to the road.</div>
+      </div>
+      <div class="beat">
+        <div class="t">13:00<small>nudge</small></div>
+        <div class="b">Half the day gone. If you're on pace it stays <b>silent</b>. If you're not: <i>"2 of 5 moved. Pick the one that matters and clear it before anything new."</i> It earns the interruption or doesn't make it.</div>
+      </div>
+      <div class="beat">
+        <div class="t">21:30<small>debrief</small></div>
+        <div class="b">The <b>nightly debrief</b> — what closed, what slipped, the honest gap between what you meant to do and what you did. No flattery. The number that confronts, not the number that flatters.</div>
+      </div>
+      <div class="beat">
+        <div class="t">Sun<small>the loop</small></div>
+        <div class="b">Sunday it runs the <b>whole week unattended</b>: researches your standing topics, rewrites its own understanding pages, notices <i>how you actually communicated</i> and proposes tuning its voice, plans the week around your real calendar and goals, and scores both lanes — yours and its own.</div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- PILLARS -->
+  <section>
+    <h2>What it actually does</h2>
+    <p class="sub">Seven systems, all built and verified. Each reads broadly and writes narrowly — nothing
+    outward-facing happens without your say.</p>
+    <div class="pillars">
+      <div class="pillar">
+        <div class="top"><h3>The Second Brain</h3><span class="tag live">live</span></div>
+        <p>Every document, note, voice memo, and research finding lands in one place — vectorized, cross-referenced, and recall-able by meaning, not keyword. Ask it anything you've ever fed it; get an answer with citations.</p>
+        <div class="how">four-write ingestion · semantic recall · living wiki · Obsidian mirror</div>
+      </div>
+      <div class="pillar">
+        <div class="top"><h3>The Calendar &amp; Planner</h3><span class="tag live">live</span></div>
+        <p>Reads your real Google Calendar, finds your open blocks, catches the days you've overcommitted before they arrive, and turns "plan my week" into an actual plan built around training, deep work, and calls.</p>
+        <div class="how">15-min sync · availability scan · overload math · weekly session</div>
+      </div>
+      <div class="pillar">
+        <div class="top"><h3>The Financial Edge</h3><span class="tag live">live</span></div>
+        <p>A wealth operator that runs a macro sweep every morning and researches the markets and topics you care about — so the picture compounds in your brain daily instead of you scrambling to catch up.</p>
+        <div class="how">FRED macro data · daily market pulse · steerable topics</div>
+      </div>
+      <div class="pillar">
+        <div class="top"><h3>The Inbox Hands</h3><span class="tag live">live</span></div>
+        <p>Scans Gmail for what genuinely needs you and drafts the replies — into your drafts, for your review. It <em>cannot send</em>; the permission literally doesn't exist. You stay the only voice that hits send.</p>
+        <div class="how">read + draft only · no send scope by construction</div>
+      </div>
+      <div class="pillar">
+        <div class="top"><h3>The Missions Engine</h3><span class="tag live">live</span></div>
+        <p>Hand it an objective in plain English — "figure out the best rep scheme for in-season power" — and it plans the steps, runs the research, and reports back, filing what it learned into your brain permanently.</p>
+        <div class="how">plan → execute → report → ingest</div>
+      </div>
+      <div class="pillar">
+        <div class="top"><h3>The Learning Loop</h3><span class="tag live">live</span></div>
+        <p>It gets smarter about you specifically: what you confirm becomes permanent belief, what you correct it never repeats, and it watches how you work to tune its own voice — always proposing, never imposing.</p>
+        <div class="how">propose→confirm · compiled reuse · persona observer · corrections</div>
+      </div>
+      <div class="pillar">
+        <div class="top"><h3>The Scoreboard</h3><span class="tag live">live</span></div>
+        <p>The honesty layer. It measures your follow-through and its own — and proves, week over week, that it's leaning on the raw AI <em>less</em> as it compiles its own understanding. If it isn't learning, this number says so to your face.</p>
+        <div class="how">operator score · LLM-dependence rate · weekly snapshot</div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- FINANCIAL -->
+  <section>
+    <h2>Staying ahead of the curve</h2>
+    <p class="sub">The financial dimension, concretely — because "help me stay ahead" only means something with hard mechanics behind it.</p>
+    <div class="edge">
+      <h3>How it keeps you early instead of reactive</h3>
+      <ul>
+        <li><b>Daily, not when you remember.</b> The macro read and your market topics land every single morning at 06:30. The edge isn't one brilliant call — it's never falling behind the drift.</li>
+        <li><b>It compounds.</b> Each day's digest is filed into the brain and folds into a living "wealth" understanding page that rewrites itself weekly. Month three, it knows the arc of the story, not just today's headline.</li>
+        <li><b>You steer it by talking.</b> "Start tracking private credit and the 2-year." Confirmed on the Bridge, it's in next morning's sweep. The research agenda bends to what you're actually thinking about.</li>
+        <li><b>Real numbers, never vibes.</b> FRED is the Fed's own data — fed funds, Treasuries, the yield curve, CPI. Ground truth, not a model guessing.</li>
+        <li><b>Ledger-ready.</b> When you drop in your accounts (local-first, read-only, private), the wealth operator moves from "informs you" to "watches your actual position against the macro it's tracking."</li>
+      </ul>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ROI -->
+  <section>
+    <h2>The $3,000 question</h2>
+    <p class="sub">Fair to ask where a Mac Mini and a UGREEN drive pay for themselves. Here's the honest math — no hand-waving.</p>
+
+    <div class="edge">
+      <h3>First: the hardware isn't a sunk cost for one app</h3>
+      <p class="body" style="margin-top:12px;color:var(--muted)">A Mac Mini and a NAS are general infrastructure — backups, file storage, a media server, local compute you'll use for a decade. Aurelius is the reason to pull the trigger, but you're not buying a single-purpose box. And it's a <b style="color:var(--text)">one-time</b> cost that runs <b style="color:var(--text)">forever</b>: $3,000 over a realistic 5-year life is about <b style="color:var(--gold-bright)">$50 a month</b> — then it keeps going for free.</p>
+    </div>
+
+    <div style="margin-top:16px;" class="edge">
+      <h3>What $50/month actually replaces</h3>
+      <ul>
+        <li><b>The SaaS stack it collapses.</b> Notion + a read-later app + a planner like Motion + a research tool + a second-brain app runs <b>$60–150/month</b> — rented forever, and none of them talk to each other or learn a thing about you. Aurelius is one system that does all of it and compounds.</li>
+        <li><b>The assistant it stands in for.</b> A part-time VA is <b>$1,000–2,000/month</b>. A real chief of staff is a salary. Aurelius won't replace a human's judgment — but the <em>load</em> it carries (reading, remembering, drafting, tracking) is exactly what you'd hire that help to offload.</li>
+        <li><b>The API credits are the only ongoing cost</b> — roughly <b>$20–50/month</b> depending on use — and the compiled-reuse engine is built to drive that <em>down</em> over time as it answers from its own memory instead of the model.</li>
+      </ul>
+    </div>
+
+    <div style="margin-top:16px;" class="edge">
+      <h3>Where the return actually shows up</h3>
+      <ul>
+        <li><b>Time.</b> If it saves 45 minutes a day — planning, searching, inbox triage, "what am I forgetting" — that's <b>~5 hours a week</b> back. For someone building a business and coaching athletes, that time isn't idle; it's billable, sellable, or spent on the work only you can do.</li>
+        <li><b>The coaching business, directly.</b> The training engine reads athlete sessions and writes feedback + PRs back automatically. That's <b>more athletes served per hour</b> of your time — the hardware pays for itself on throughput alone if you scale the roster.</li>
+        <li><b>The financial edge.</b> Staying current on macro and your markets every single morning. It doesn't take a genius call to clear $3,000 — it takes <em>not being late</em>, once.</li>
+        <li><b>An asset that appreciates.</b> A VA quits. A SaaS tool you outgrow or it 10x's its price. This is the opposite: a private, sovereign brain that's worth <em>more</em> every month because it knows you better. You own it outright — no rent, no data sold, no off-switch someone else holds.</li>
+      </ul>
+    </div>
+
+    <div class="verdict" style="margin-top:22px;">
+      <p><b>The honest bottom line:</b> against the tools and help it replaces, the hardware pays back in <b>2–4 months</b> — and then runs for years at the cost of coffee-money API credits. The break-even is not the hard part.</p>
+      <p><b>The one caveat, said straight:</b> the ROI is conditional on you actually living in it. A $3,000 rig running software you ignore returns zero — same as a gym membership you don't use. This isn't a magic box; it's a force multiplier, and it multiplies <em>effort you're already putting in</em>. Feed it your days and it pays for itself many times over. That part's on you — and given how you work, it's a bet I'd take.</p>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- THESIS -->
+  <section>
+    <h2>Why it's a second operator, not a tool</h2>
+    <p class="body">A tool waits to be picked up. An operator runs on its own and reports back. Aurelius is the second kind — the difference between an app you open and a chief of staff who was already working when you woke up.</p>
+    <p class="body">You are the decision-maker: the taste, the risk, the relationships, the call. That doesn't delegate and shouldn't. What <em>does</em> delegate is everything underneath it — the reading, the remembering, the drafting, the tracking, the "did I follow through," the "what am I forgetting." That's the load that quietly eats an ambitious person's day, and it's exactly the load Aurelius carries.</p>
+    <p class="thesis">It runs the <span class="g">background process</span> of your life so you can spend your whole mind on the <span class="g">foreground</span>.</p>
+    <p class="body">And because it's local-first — living on your own Mac Mini and your own drive, not someone's cloud — it's genuinely <em>yours</em>. Your second brain doesn't get trained on, sold, or shut off. It's sovereign, like a real operator would be.</p>
+  </section>
+
+  <hr class="rule">
+
+  <!-- SCORECARD -->
+  <section class="scorewrap">
+    <h2>The honest ranking</h2>
+    <p class="sub">You asked for a number, so here's the truthful version — not one score, because "how good is the engine"
+    and "how much is it changing your life today" are different questions, and only one of them flatters right now.</p>
+
+    <div class="headline">
+      <div class="score">
+        <div class="n">90</div>
+        <div class="lbl">As an engine</div>
+        <div class="note">Architecture, honesty, modularity. Genuinely elite and verified.</div>
+      </div>
+      <div class="score hero-score">
+        <div class="n">40</div>
+        <div class="lbl">Impact today</div>
+        <div class="note">A Ferrari with the tank half-empty. Powerful, barely fueled.</div>
+      </div>
+      <div class="score">
+        <div class="n">85<small></small></div>
+        <div class="lbl">At 90 days</div>
+        <div class="note">Funded, seeded, on the Mini, fed real days. The real answer.</div>
+      </div>
+    </div>
+
+    <div class="axis">
+      <div class="row">
+        <div class="head"><div class="name">Engineering &amp; architecture <span>— is the machine well-built?</span></div><div class="val">90 / 100</div></div>
+        <div class="bar"><i style="width:90%"></i></div>
+      </div>
+      <div class="row">
+        <div class="head"><div class="name">Capability breadth built <span>— how much of the vision exists?</span></div><div class="val">78 / 100</div></div>
+        <div class="bar"><i style="width:78%"></i></div>
+      </div>
+      <div class="row">
+        <div class="head"><div class="name">Impact on your life — today <span>— starved: key unfunded, no data yet</span></div><div class="val">40 / 100</div></div>
+        <div class="bar"><i style="width:40%"></i></div>
+      </div>
+      <div class="row">
+        <div class="head"><div class="name">Impact at 90 days of real use <span>— fueled, fed, living on the Mini</span></div><div class="val">85 / 100</div></div>
+        <div class="bar ghost"><i style="width:85%"></i></div>
+      </div>
+      <div class="row">
+        <div class="head"><div class="name">Ceiling — the full vision <span>— business engines lit, a year of learning</span></div><div class="val">95 / 100</div></div>
+        <div class="bar ghost"><i style="width:95%"></i></div>
+      </div>
+    </div>
+
+    <div class="verdict">
+      <p><b>The straight answer: today it's a 40, and that's the honest floor — not because it's unfinished, but because it's un-fed.</b> The engine underneath is a 90. The three things standing between those numbers are all yours to close: fund the key so it can think, seed your goals and live in it so it has something to learn from, and get it onto the Mini so it runs for real.</p>
+      <p>Do those, and the number that actually matters — <b>how much it changes your day</b> — climbs to the mid-80s within a few months, because that's when the learning loops have real fuel and the compounding starts showing. The trajectory is the point. Most tools peak the day you buy them; this one is designed to be worth more every week you keep it alive.</p>
+      <p><b>What it will feel like at 85:</b> you stop holding your life in your head. The forgetting stops. The scrambling-to-catch-up stops. You wake to a plan, move through a day that nudges you when you drift, and end it with an honest read — while a private, sovereign intelligence quietly gets better at being the second half of you.</p>
+    </div>
+  </section>
+
+  <div class="foot">AURELIUS · operator-class personal OS · built for Cole · local-first, sovereign, one voice</div>
+</div>

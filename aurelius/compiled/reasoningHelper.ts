@@ -196,6 +196,43 @@ async function fetchRelevantPatterns(args: {
 }
 
 /**
+ * Surface an operator's compiled patterns for the MAIN reasoning brain —
+ * everyday chat, not just the training reasoner. Previously confirmed
+ * heuristics reached the model ONLY through reasonWithCompilation() (training),
+ * so the learning loop compounded in one room of the house: Aurelius detected
+ * and stored patterns it never actually reasoned from when Cole talked to it.
+ * This closes that loop. Returns the highest-confidence usable patterns for the
+ * operator, formatted as a prompt block, or "" when there are none yet.
+ */
+export async function loadOperatorPatternsForPrompt(args: {
+  operatorId: string;
+  limit?: number;
+}): Promise<string> {
+  const usableStatuses: PatternStatus[] = ["auto_factual", "confirmed_heuristic"];
+  const patterns = await prisma.compiledPattern.findMany({
+    where: { operatorId: args.operatorId, status: { in: usableStatuses } },
+    orderBy: { confidenceScore: "desc" },
+    take: args.limit ?? 10,
+  });
+  if (patterns.length === 0) return "";
+
+  const lines: string[] = ["═══ COMPILED PATTERNS (what you've learned holds true) ═══"];
+  for (const p of patterns) {
+    const conf = ((p.confidenceScore ?? 0) * 100).toFixed(0);
+    lines.push(
+      `- [${p.patternType} · ${p.status} · ${conf}% confidence · ${p.supportCount ?? 0} instances]`
+    );
+    const summary = summarizePatternSignature(p.patternSignature);
+    if (summary) lines.push(`  ${summary}`);
+  }
+  lines.push("");
+  lines.push(
+    "These are patterns you compiled from repeated experience with Cole — learned, not assumed. Reason FROM them where they apply instead of re-deriving from scratch, and update your view if new evidence contradicts one."
+  );
+  return lines.join("\n");
+}
+
+/**
  * Format grounded context as a prompt-ready string.
  * Operators inline this into their LLM prompt.
  */

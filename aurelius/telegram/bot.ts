@@ -32,6 +32,24 @@ function allowedChat(): string | null {
   return process.env.TELEGRAM_CHAT_ID?.trim() || null;
 }
 
+/** Pull an attached photo/video out of a Telegram message, if any. */
+function mediaFromMessage(
+  msg: any
+): { fileId: string; mime: string; kind: "image" | "video" } | null {
+  if (msg?.photo?.length) {
+    // photo is an array of sizes — take the largest (last).
+    return { fileId: msg.photo[msg.photo.length - 1].file_id, mime: "image/jpeg", kind: "image" };
+  }
+  if (msg?.video) {
+    return { fileId: msg.video.file_id, mime: msg.video.mime_type ?? "video/mp4", kind: "video" };
+  }
+  const doc = msg?.document;
+  if (doc?.mime_type && /^(image|video)\//.test(doc.mime_type)) {
+    return { fileId: doc.file_id, mime: doc.mime_type, kind: doc.mime_type.startsWith("image/") ? "image" : "video" };
+  }
+  return null;
+}
+
 async function api(method: string, payload: Record<string, any>): Promise<any> {
   const t = token();
   if (!t) throw new Error("telegram token missing");
@@ -74,7 +92,7 @@ async function handleCommand(chatId: string | number, text: string) {
     case "/help":
       await send(
         chatId,
-        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\nA voice note transcribes and captures the same as text.\nAnything else you type goes straight to the inbox."
+        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\n/grants — what I can act on for you (grant/revoke keyholes)\n/protect — hold deep-work time on your calendar\n/triage — draft replies to what needs one\nA voice note transcribes and captures the same as text.\nAnything else you type goes straight to the inbox."
       );
       return;
 
@@ -107,6 +125,72 @@ async function handleCommand(chatId: string | number, text: string) {
       const { planWeekLite } = await import("../planning/tools.ts");
       const { briefing } = await planWeekLite();
       await send(chatId, briefing);
+      return;
+    }
+
+    case "/protect": {
+      const { runScheduleProtection } = await import("../autonomy/workflows/scheduleProtection.ts");
+      const r = await runScheduleProtection({ days: 5 });
+      if (r.opportunities === 0) {
+        await send(chatId, "Your next few days already have focus time held. Nothing to protect.");
+      } else if (r.finalized > 0) {
+        await send(chatId, `Protected ${r.finalized} deep-work block${r.finalized === 1 ? "" : "s"} on your calendar (reversible — delete any you don't want). ${r.gated ? `${r.gated} more are on the Bridge for your OK.` : ""}`.trim());
+      } else {
+        await send(chatId, `Found ${r.opportunities} day${r.opportunities === 1 ? "" : "s"} with unprotected focus time — proposed holds on the Bridge. Grant calendar.schedule_protection (/grants) and I'll just place them.`);
+      }
+      return;
+    }
+
+    case "/triage": {
+      const { runInboxTriage } = await import("../autonomy/workflows/inboxTriage.ts");
+      const r = await runInboxTriage({ max: 10 });
+      if (!r.connected) {
+        await send(chatId, "Gmail isn't connected yet — open /api/gmail/auth on the desktop once.");
+      } else if (r.needsReply === 0) {
+        await send(chatId, `Scanned ${r.scanned} — nothing needs a reply right now.`);
+      } else if (r.drafted > 0) {
+        await send(chatId, `Drafted ${r.drafted} repl${r.drafted === 1 ? "y" : "ies"} into your Gmail drafts — review and send. ${r.proposed ? `${r.proposed} more on the Bridge.` : ""}`.trim());
+      } else {
+        await send(chatId, `${r.needsReply} message${r.needsReply === 1 ? "" : "s"} need a reply — drafts are on the Bridge (Confirm & do it to drop them in Gmail). Grant inbox.triage_draft and I'll draft them straight into Gmail.`);
+      }
+      return;
+    }
+
+    case "/grants": {
+      const { listActiveGrants } = await import("../autonomy/grants.ts");
+      const { listGrantableClasses } = await import("../autonomy/actionClasses.ts");
+      const active = await listActiveGrants();
+      const grantable = listGrantableClasses();
+      const activeLines = active.length
+        ? active.map((g) => `✓ ${g.actionClass}`).join("\n")
+        : "(none — Aurelius proposes everything, acts on nothing)";
+      const menu = grantable
+        .map((c) => `  ${active.some((g) => g.actionClass === c.key) ? "●" : "○"} ${c.key} — ${c.description}`)
+        .join("\n");
+      await send(
+        chatId,
+        `Active grants:\n${activeLines}\n\nGrantable keyholes (○ off · ● on):\n${menu}\n\n/grant <class> to turn one on · /revoke <class> to turn it off.\nOutward actions (send/publish/spend) can't be granted — I always ask.`
+      );
+      return;
+    }
+
+    case "/grant": {
+      if (!arg) return send(chatId, "Grant what? /grant <action-class> (see /grants)");
+      try {
+        const { grantAutonomy } = await import("../autonomy/grants.ts");
+        const g = await grantAutonomy({ actionClass: arg, note: "granted via telegram" });
+        await send(chatId, `Granted: ${g.actionClass}. I'll act on that on my own now — reversibly, and it lands on the Bridge. /revoke ${g.actionClass} to take it back.`);
+      } catch (err: any) {
+        await send(chatId, `Can't grant that: ${err?.message ?? err}`);
+      }
+      return;
+    }
+
+    case "/revoke": {
+      if (!arg) return send(chatId, "Revoke what? /revoke <action-class>");
+      const { revokeAutonomy } = await import("../autonomy/grants.ts");
+      const r = await revokeAutonomy(arg);
+      await send(chatId, r ? `Revoked: ${arg}. Back to proposing, not acting.` : `No active grant for "${arg}".`);
       return;
     }
 
@@ -171,22 +255,46 @@ export function startTelegramBridge() {
 
   let offset = 0;
   (async () => {
-    // Validate the token before polling — a bad token 404s forever, and
-    // "getUpdates failed: Not Found" tells nobody anything.
-    try {
-      const me = await api("getMe", {});
-      console.log(
-        `[telegram] bridge live as @${me.username}${chat ? "" : " (TELEGRAM_CHAT_ID unset — will echo chat ids only)"}`
+    // Validate the token before polling — but distinguish a REAL rejection
+    // (Telegram answered 401/404 → bad token) from a transient network blip
+    // at boot. The old code disabled the bridge on ANY error and lied that
+    // it was a bad token; a one-second hiccup killed two-way chat until the
+    // next restart. Retry a few times; only a definitive auth rejection
+    // disables the bridge — transient failures fall through to polling,
+    // which has its own retry loop and where sending already works.
+    let validated = false;
+    let lastErr = "";
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const me = await api("getMe", {});
+        console.log(
+          `[telegram] bridge live as @${me.username}${chat ? "" : " (TELEGRAM_CHAT_ID unset — will echo chat ids only)"}`
+        );
+        validated = true;
+        break;
+      } catch (err: any) {
+        lastErr = err?.message ?? String(err);
+        // A real bad-token response names the rejection; a network error doesn't.
+        if (/not found|unauthorized|401|404/i.test(lastErr)) {
+          console.error(
+            "[telegram] TOKEN REJECTED — Telegram rejected this bot token.\n" +
+              "  Fix TELEGRAM_BOT_TOKEN: format is <digits>:<~35 chars>, no quotes/spaces/'bot' prefix.\n" +
+              "  Re-copy from @BotFather → /mybots → API Token. Bridge disabled until fixed + restart."
+          );
+          running = false;
+          return;
+        }
+        console.warn(`[telegram] getMe attempt ${attempt}/3 failed (${lastErr}) — retrying`);
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
+      }
+    }
+    if (!validated) {
+      // Never got a clean getMe, but it was never a definitive rejection
+      // either. The token likely works (sends already do). Poll anyway —
+      // getUpdates has its own 10s retry, so a real bad token surfaces there.
+      console.warn(
+        `[telegram] getMe didn't confirm (last: ${lastErr}) — proceeding to poll anyway (token likely fine; sends work independently)`
       );
-    } catch {
-      console.error(
-        "[telegram] TOKEN REJECTED — Telegram returned Not Found for this bot token.\n" +
-          "  Check TELEGRAM_BOT_TOKEN in .env: format is <digits>:<~35 chars>, no quotes,\n" +
-          "  no spaces, no 'bot' prefix. Re-copy it from @BotFather → /mybots → API Token.\n" +
-          "  Bridge is DISABLED until the token is fixed and the server restarts."
-      );
-      running = false;
-      return;
     }
     while (running) {
       try {
@@ -195,7 +303,8 @@ export function startTelegramBridge() {
           offset = u.update_id + 1;
           const msg = u.message;
           const voice = msg?.voice ?? msg?.audio;
-          if ((!msg?.text && !voice) || !msg.chat?.id) continue;
+          const media = mediaFromMessage(msg);
+          if ((!msg?.text && !voice && !media) || !msg.chat?.id) continue;
 
           const chatId = String(msg.chat.id);
           if (!chat || chatId !== chat) {
@@ -205,17 +314,38 @@ export function startTelegramBridge() {
           }
 
           try {
-            let text = msg.text;
-            if (!text && voice) {
-              // Voice note → Whisper → the same path as typed words.
-              const { transcribeAudio } = await import("./voice.ts");
-              const file = await api("getFile", { file_id: voice.file_id });
-              const audioRes = await fetch(`${API}/file/bot${token()}/${file.file_path}`);
-              if (!audioRes.ok) throw new Error(`couldn't download the voice note (${audioRes.status})`);
-              text = await transcribeAudio(Buffer.from(await audioRes.arrayBuffer()));
-              await send(msg.chat.id, `Heard: "${text}"`);
+            if (media) {
+              // Photo / video → Aurelius sees it, talks about it, remembers it.
+              const { analyzeMedia, captureMediaNote } = await import("../media/ingestMedia.ts");
+              const f = await api("getFile", { file_id: media.fileId });
+              const dl = await fetch(`${API}/file/bot${token()}/${f.file_path}`);
+              if (!dl.ok) throw new Error(`couldn't download the ${media.kind} (${dl.status})`);
+              const { kind, analysis } = await analyzeMedia(
+                Buffer.from(await dl.arrayBuffer()),
+                media.mime,
+                msg.caption
+              );
+              captureMediaNote({ kind, analysis, caption: msg.caption }).catch(() => {});
+              if (msg.caption?.trim()) {
+                const { ask } = await import("../corpus/ask.ts");
+                const result = await ask(`${msg.caption}\n\n[Cole attached a ${kind}. What's in it:]\n${analysis}`);
+                await send(msg.chat.id, result.answer);
+              } else {
+                await send(msg.chat.id, `Saw your ${kind}:\n\n${analysis}`);
+              }
+            } else {
+              let text = msg.text;
+              if (!text && voice) {
+                // Voice note → Whisper → the same path as typed words.
+                const { transcribeAudio } = await import("./voice.ts");
+                const file = await api("getFile", { file_id: voice.file_id });
+                const audioRes = await fetch(`${API}/file/bot${token()}/${file.file_path}`);
+                if (!audioRes.ok) throw new Error(`couldn't download the voice note (${audioRes.status})`);
+                text = await transcribeAudio(Buffer.from(await audioRes.arrayBuffer()));
+                await send(msg.chat.id, `Heard: "${text}"`);
+              }
+              await handleCommand(msg.chat.id, text);
             }
-            await handleCommand(msg.chat.id, text);
           } catch (err: any) {
             console.error("[telegram] command failed:", err);
             await send(msg.chat.id, `That failed: ${err?.message ?? err}`).catch(() => {});
