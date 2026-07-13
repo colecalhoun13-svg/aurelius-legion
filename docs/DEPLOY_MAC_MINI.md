@@ -301,6 +301,22 @@ In rough priority. None are needed to go live.
 5. **Restic** — upgrade Part 7's plain gzip dumps to encrypted, deduplicated
    snapshots on the NAS.
 
+### Media & connectors roadmap (tracked, not yet built)
+- **Multimodal chat — DONE (v1).** Attach a photo/short video in the web chat or
+  Telegram; Aurelius sees it, talks about it, and remembers it (needs
+  `GEMINI_API_KEY`). Athletic movement reported as signals only.
+- **Full video / athlete-film pipeline — Mini phase.** Long clips + frame-precise
+  technique breakdown: local whisper (audio→transcript) + frame extraction
+  (ffmpeg) + Gemini video. Big files live on the NAS, not cloud upload. Pairs with
+  Immich when the athlete-video library grows.
+- **Instagram — future, two directions:**
+  - *Inward (read):* pull Cole's posts / saved / insights into the corpus — an
+    inward integration, safe.
+  - *Outward (publish):* Aurelius drafts a post → Bridge → **Cole confirms →
+    publishes**. An outward action behind the grant gate (a `content.publish`
+    class); never posts on its own. Needs a Meta Business/Creator account + Graph
+    API app review. Build with the Business Engine, on Cole's real accounts.
+
 Rejected (so we stop relitigating): n8n/Huginn (Aurelius *is* the workflow/trigger
 engine), MinIO (Postgres + NAS filesystem suffice), Logseq (the vault is
 Obsidian-format). Parked: Immich (revisit with the athlete-video pipeline).
