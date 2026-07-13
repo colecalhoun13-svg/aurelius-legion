@@ -74,7 +74,7 @@ async function handleCommand(chatId: string | number, text: string) {
     case "/help":
       await send(
         chatId,
-        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\nA voice note transcribes and captures the same as text.\nAnything else you type goes straight to the inbox."
+        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\n/grants — what I can act on for you (grant/revoke keyholes)\nA voice note transcribes and captures the same as text.\nAnything else you type goes straight to the inbox."
       );
       return;
 
@@ -107,6 +107,44 @@ async function handleCommand(chatId: string | number, text: string) {
       const { planWeekLite } = await import("../planning/tools.ts");
       const { briefing } = await planWeekLite();
       await send(chatId, briefing);
+      return;
+    }
+
+    case "/grants": {
+      const { listActiveGrants } = await import("../autonomy/grants.ts");
+      const { listGrantableClasses } = await import("../autonomy/actionClasses.ts");
+      const active = await listActiveGrants();
+      const grantable = listGrantableClasses();
+      const activeLines = active.length
+        ? active.map((g) => `✓ ${g.actionClass}`).join("\n")
+        : "(none — Aurelius proposes everything, acts on nothing)";
+      const menu = grantable
+        .map((c) => `  ${active.some((g) => g.actionClass === c.key) ? "●" : "○"} ${c.key} — ${c.description}`)
+        .join("\n");
+      await send(
+        chatId,
+        `Active grants:\n${activeLines}\n\nGrantable keyholes (○ off · ● on):\n${menu}\n\n/grant <class> to turn one on · /revoke <class> to turn it off.\nOutward actions (send/publish/spend) can't be granted — I always ask.`
+      );
+      return;
+    }
+
+    case "/grant": {
+      if (!arg) return send(chatId, "Grant what? /grant <action-class> (see /grants)");
+      try {
+        const { grantAutonomy } = await import("../autonomy/grants.ts");
+        const g = await grantAutonomy({ actionClass: arg, note: "granted via telegram" });
+        await send(chatId, `Granted: ${g.actionClass}. I'll act on that on my own now — reversibly, and it lands on the Bridge. /revoke ${g.actionClass} to take it back.`);
+      } catch (err: any) {
+        await send(chatId, `Can't grant that: ${err?.message ?? err}`);
+      }
+      return;
+    }
+
+    case "/revoke": {
+      if (!arg) return send(chatId, "Revoke what? /revoke <action-class>");
+      const { revokeAutonomy } = await import("../autonomy/grants.ts");
+      const r = await revokeAutonomy(arg);
+      await send(chatId, r ? `Revoked: ${arg}. Back to proposing, not acting.` : `No active grant for "${arg}".`);
       return;
     }
 

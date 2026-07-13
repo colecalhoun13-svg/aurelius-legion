@@ -124,6 +124,19 @@ export function getActionClass(key: string): ActionClass | undefined {
   return ACTION_CLASSES.find((c) => c.key === key);
 }
 
+/** Every action-class, each tagged with whether Cole can grant it. For the surface. */
+export function listAllActionClasses(): Array<ActionClass & { grantable: boolean; grantReason: string }> {
+  return ACTION_CLASSES.map((c) => {
+    const g = checkGrantable(c.key);
+    return { ...c, grantable: g.grantable, grantReason: g.reason };
+  });
+}
+
+/** Just the classes Cole is allowed to grant (inward, non-training/health). */
+export function listGrantableClasses(): ActionClass[] {
+  return ACTION_CLASSES.filter((c) => checkGrantable(c.key).grantable);
+}
+
 export type Grantability =
   | { grantable: true; reason: string; actionClass: ActionClass }
   | { grantable: false; reason: string };

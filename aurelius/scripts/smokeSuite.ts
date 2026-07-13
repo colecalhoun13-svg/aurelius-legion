@@ -280,6 +280,19 @@ async function main() {
     const outward = await executeAction({ actionClass: "email.send", prepare: prep, finalize });
     check("outward action never finalizes through the executor", !outward.finalized && finalizedCount === 1);
 
+    // The surface: active grants list reflects reality; grantable menu excludes outward.
+    const { listActiveGrants } = await import("../autonomy/grants.ts");
+    const { listGrantableClasses } = await import("../autonomy/actionClasses.ts");
+    await grantAutonomy({ actionClass: "research.ingest", note: "smoke" });
+    const activeGrants = await listActiveGrants();
+    const grantable = listGrantableClasses();
+    check(
+      "grant surface lists active grants + a grantable menu with no outward classes",
+      activeGrants.some((g) => g.actionClass === "research.ingest") &&
+        grantable.length > 0 &&
+        !grantable.some((c) => c.tier === "outward")
+    );
+
     await prisma.bridgeSignal.deleteMany({ where: { title: { contains: TAG } } });
     await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
   }
