@@ -19,6 +19,25 @@ import { executeAction } from "../executor.ts";
 const ACTION_CLASS = "calendar.schedule_protection";
 const FOCUS_RE = /deep\s*work|deep-work|focus block|focus time/i;
 
+/**
+ * The commit step — registered in the action registry so it runs both when
+ * granted (act now) and when Cole confirms a proposal later. Payload is plain
+ * JSON so it survives a restart.
+ */
+export async function finalizeScheduleProtection(payload: {
+  startAt: string;
+  endAt: string;
+}): Promise<any> {
+  return createCalendarEvent({
+    title: "Deep Work (protected)",
+    startAt: new Date(payload.startAt),
+    endAt: new Date(payload.endAt),
+    domain: "personal",
+    description:
+      "Held by Aurelius under the schedule-protection grant. Delete it if you need the time.",
+  });
+}
+
 export type ScheduleProtectionResult = {
   scanned: number; // days looked at
   opportunities: number; // days that needed a hold
@@ -93,14 +112,6 @@ export async function runScheduleProtection(opts: {
           domain: "personal",
           payload: { startAt: startAt.toISOString(), endAt: endAt.toISOString(), blockMinutes },
         }),
-        finalize: async () =>
-          createCalendarEvent({
-            title: "Deep Work (protected)",
-            startAt,
-            endAt,
-            domain: "personal",
-            description: "Held by Aurelius under the schedule-protection grant. Delete it if you need the time.",
-          }),
       });
       result.signals.push(exec.bridgeSignalId);
       if (exec.finalized) result.finalized++;

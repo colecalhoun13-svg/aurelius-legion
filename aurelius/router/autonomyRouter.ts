@@ -71,6 +71,21 @@ autonomyRouter.post("/grants/revoke", async (req: Request, res: Response) => {
   }
 });
 
+// Cole confirms a gated proposal from the Bridge → commit it now.
+autonomyRouter.post("/confirm", async (req: Request, res: Response) => {
+  const { signalId } = req.body ?? {};
+  if (!signalId || typeof signalId !== "string") {
+    return res.status(400).json({ error: "signalId is required" });
+  }
+  try {
+    const { confirmAction } = await import("../autonomy/executor.ts");
+    const result = await confirmAction(signalId);
+    res.status(result.ok ? 200 : 400).json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "confirm failed" });
+  }
+});
+
 // Run the first acting workflow on demand — schedule-protection.
 // Acts if granted, proposes on the Bridge if not.
 autonomyRouter.post("/schedule-protection/run", async (req: Request, res: Response) => {

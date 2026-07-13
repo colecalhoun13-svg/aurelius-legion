@@ -962,6 +962,11 @@ ensureRituals().catch((err) => console.error("[rituals] seed failed:", err));
 import("./wiki/livingDocs.ts")
   .then((m) => m.ensureLivingDocuments())
   .catch((err) => console.error("[livingDocs] seed failed:", err));
+// Wire every acting workflow's commit function into the action registry, so
+// both the act-now and confirm-later paths can find a finalizer.
+import("./autonomy/registerActions.ts")
+  .then((m) => m.registerAllActions())
+  .catch((err) => console.error("[autonomy] action registration failed:", err));
 // Dormant without TELEGRAM_BOT_TOKEN; wakes the moment the token lands.
 startTelegramBridge();
 // Dormant without PAPERLESS_URL/TOKEN; wakes on the Mini.

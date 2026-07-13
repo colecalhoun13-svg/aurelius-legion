@@ -260,25 +260,33 @@ async function main() {
     catch (e: any) { autonomyRefused = /autonomy/i.test(e?.message ?? ""); }
     check("scope 'autonomy' refused (no self-escalation, hard rule 1)", autonomyRefused);
 
-    // The executor: granted inward → finalize runs, signal is "acted".
-    const { executeAction } = await import("../autonomy/executor.ts");
-    const prep = async () => ({ title: `${TAG} protect block`, body: "would protect a deep-work block", domain: "personal" });
+    // The executor: finalizer comes from the registry (one definition, both
+    // paths). Use research.ingest (inward, grantable) with a mock finalizer so
+    // the test doesn't touch the real calendar.
+    const { executeAction, confirmAction } = await import("../autonomy/executor.ts");
+    const { registerActionFinalizer } = await import("../autonomy/actionRegistry.ts");
     let finalizedCount = 0;
-    const finalize = async () => { finalizedCount++; return "done"; };
+    registerActionFinalizer("research.ingest", async () => { finalizedCount++; return "done"; });
+    const prep = async () => ({ title: `${TAG} test action`, body: "an inward action", domain: "personal", payload: { n: 1 } });
 
-    await grantAutonomy({ actionClass: "calendar.schedule_protection", note: "smoke" });
-    const acted = await executeAction({ actionClass: "calendar.schedule_protection", prepare: prep, finalize });
+    await grantAutonomy({ actionClass: "research.ingest", note: "smoke" });
+    const acted = await executeAction({ actionClass: "research.ingest", prepare: prep });
     const actedSig = await prisma.bridgeSignal.findUnique({ where: { id: acted.bridgeSignalId } });
     check("granted action finalizes + files an 'acted' signal", acted.finalized && finalizedCount === 1 && actedSig?.status === "acted");
 
-    await revokeAutonomy("calendar.schedule_protection");
-    const gated = await executeAction({ actionClass: "calendar.schedule_protection", prepare: prep, finalize });
+    await revokeAutonomy("research.ingest");
+    const gated = await executeAction({ actionClass: "research.ingest", prepare: prep });
     const gatedSig = await prisma.bridgeSignal.findUnique({ where: { id: gated.bridgeSignalId } });
     check("ungranted action gates: finalize NOT run, signal 'pending'", !gated.finalized && finalizedCount === 1 && gatedSig?.status === "pending");
 
-    // Outward action can never finalize even if code tries.
-    const outward = await executeAction({ actionClass: "email.send", prepare: prep, finalize });
-    check("outward action never finalizes through the executor", !outward.finalized && finalizedCount === 1);
+    // Confirm the gated proposal → it executes (the loop closed).
+    const confirmed = await confirmAction(gated.bridgeSignalId);
+    const confirmedSig = await prisma.bridgeSignal.findUnique({ where: { id: gated.bridgeSignalId } });
+    check("confirming a gated proposal executes it (loop closed)", confirmed.ok && finalizedCount === 2 && confirmedSig?.status === "acted");
+
+    // Outward action can never finalize on its own (no standing grant possible).
+    const outward = await executeAction({ actionClass: "email.send", prepare: prep });
+    check("outward action never finalizes on its own through the executor", !outward.finalized && finalizedCount === 2);
 
     // The surface: active grants list reflects reality; grantable menu excludes outward.
     const { listActiveGrants } = await import("../autonomy/grants.ts");
