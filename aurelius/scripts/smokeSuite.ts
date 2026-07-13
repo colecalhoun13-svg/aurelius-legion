@@ -260,6 +260,27 @@ async function main() {
     catch (e: any) { autonomyRefused = /autonomy/i.test(e?.message ?? ""); }
     check("scope 'autonomy' refused (no self-escalation, hard rule 1)", autonomyRefused);
 
+    // The executor: granted inward → finalize runs, signal is "acted".
+    const { executeAction } = await import("../autonomy/executor.ts");
+    const prep = async () => ({ title: `${TAG} protect block`, body: "would protect a deep-work block", domain: "personal" });
+    let finalizedCount = 0;
+    const finalize = async () => { finalizedCount++; return "done"; };
+
+    await grantAutonomy({ actionClass: "calendar.schedule_protection", note: "smoke" });
+    const acted = await executeAction({ actionClass: "calendar.schedule_protection", prepare: prep, finalize });
+    const actedSig = await prisma.bridgeSignal.findUnique({ where: { id: acted.bridgeSignalId } });
+    check("granted action finalizes + files an 'acted' signal", acted.finalized && finalizedCount === 1 && actedSig?.status === "acted");
+
+    await revokeAutonomy("calendar.schedule_protection");
+    const gated = await executeAction({ actionClass: "calendar.schedule_protection", prepare: prep, finalize });
+    const gatedSig = await prisma.bridgeSignal.findUnique({ where: { id: gated.bridgeSignalId } });
+    check("ungranted action gates: finalize NOT run, signal 'pending'", !gated.finalized && finalizedCount === 1 && gatedSig?.status === "pending");
+
+    // Outward action can never finalize even if code tries.
+    const outward = await executeAction({ actionClass: "email.send", prepare: prep, finalize });
+    check("outward action never finalizes through the executor", !outward.finalized && finalizedCount === 1);
+
+    await prisma.bridgeSignal.deleteMany({ where: { title: { contains: TAG } } });
     await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
   }
 
