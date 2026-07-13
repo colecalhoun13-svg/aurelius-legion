@@ -260,6 +260,26 @@ async function main() {
     check("web.fetch rejects a non-url", !bad.ok && /valid http/i.test(bad.error ?? ""));
   }
 
+  console.log("── tool directives: parse every form the model writes ──");
+  {
+    const { extractToolDirectives, extractDirectives } = await import("../llm/directiveParser.ts");
+    const forms = [
+      '[TOOL: tool=web action=search data={"query":"x"}]',
+      '[TOOL: tool=web.search data={"query":"x"}]',
+      '[TOOL: web.search {"query":"x"}]',
+      '[TOOL: web.search data={"query":"x"}]',
+    ];
+    let allParse = true;
+    for (const f of forms) {
+      const ds = extractToolDirectives("Sure.\n\n" + f);
+      if (ds.length !== 1 || ds[0].tool !== "web" || ds[0].action !== "search" || ds[0].data?.query !== "x")
+        allParse = false;
+    }
+    check("every tool-directive form parses to web.search", allParse);
+    const stripped = extractDirectives('Here you go. [TOOL: web.search {"query":"x"}]').cleanedText;
+    check("tool directive stripped from the visible reply", !/\[TOOL:/.test(stripped) && stripped.includes("Here you go"));
+  }
+
   console.log("── multimodal: photo/video in chat (keyless: honest fail) ──");
   {
     const { mediaKind, analyzeMedia } = await import("../media/ingestMedia.ts");

@@ -16,13 +16,13 @@ export const webAdapter: ToolAdapter = {
       name: "search",
       description: "Search the live web for current information; returns a grounded answer plus source links.",
       dataSchema: '{ "query": string }',
-      example: '[TOOL: web.search {"query": "2026 youth speed training trends"}]',
+      example: '[TOOL: tool=web action=search data={"query": "2026 youth speed training trends"}]',
     },
     {
       name: "fetch",
       description: "Fetch a URL and return its readable text.",
       dataSchema: '{ "url": string }',
-      example: '[TOOL: web.fetch {"url": "https://example.com/article"}]',
+      example: '[TOOL: tool=web action=fetch data={"url": "https://example.com/article"}]',
     },
   ],
   async run(action, data): Promise<ToolAdapterResult> {

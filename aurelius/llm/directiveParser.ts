@@ -61,36 +61,64 @@ export function extractSaveDirectives(text: string): SaveDirective[] {
   return directives;
 }
 
+// Head of a TOOL directive = everything between "[TOOL:" and the JSON "{".
+// Liberal by design: models write the tool/action a few different ways and the
+// parser must accept them all, or tool calls silently no-op. Handles:
+//   [TOOL: tool=web action=search data={...}]   (canonical)
+//   [TOOL: tool=web.search data={...}]           (dotted, no action=)
+//   [TOOL: web.search {...}]                     (bare shorthand)
+//   [TOOL: web.search data={...}]
+const TOOL_HEAD = /\[TOOL:\s*([^{}\]]*?)(?=\{)/gi;
+
+/** Pull tool + action out of a directive head, whatever form it took. */
+export function parseToolHead(head: string): { tool: string; action: string } | null {
+  let tool = head.match(/tool=([a-z0-9_.]+)/i)?.[1] ?? "";
+  let action = head.match(/action=([a-z0-9_]+)/i)?.[1] ?? "";
+  if (!tool) {
+    const bare = head.trim().match(/^([a-z0-9_]+)(?:\.([a-z0-9_]+))?/i);
+    if (bare) {
+      tool = bare[1];
+      if (!action && bare[2]) action = bare[2];
+    }
+  }
+  if (tool.includes(".")) {
+    const [t, a] = tool.split(".");
+    tool = t;
+    if (!action) action = a ?? "";
+  }
+  if (!tool || !action) return null;
+  return { tool: tool.toLowerCase().trim(), action: action.toLowerCase().trim() };
+}
+
 export function extractToolDirectives(text: string): ToolDirective[] {
   const directives: ToolDirective[] = [];
-  const TOOL_START = /\[TOOL:\s*tool=([a-z_]+)\s+action=([a-z_]+)\s+data=/gi;
-  TOOL_START.lastIndex = 0;
+  TOOL_HEAD.lastIndex = 0;
   let match;
-  while ((match = TOOL_START.exec(text)) !== null) {
-    const [fullMatch, tool, action] = match;
-    const dataStart = match.index + fullMatch.length;
+  while ((match = TOOL_HEAD.exec(text)) !== null) {
+    const parsed = parseToolHead(match[1]);
+    if (!parsed) {
+      console.warn(`[directiveParser] couldn't parse tool head: "${match[1].trim()}"`);
+      continue;
+    }
+    const dataStart = match.index + match[0].length;
     const jsonResult = extractJSONFromPosition(text, dataStart);
     if (!jsonResult) {
-      console.warn(`[directiveParser] couldn't parse JSON for tool=${tool} action=${action}`);
+      console.warn(`[directiveParser] couldn't parse JSON for ${parsed.tool}.${parsed.action}`);
       continue;
     }
     const afterJSON = text.slice(jsonResult.endIndex);
     if (!/^\s*\]/.test(afterJSON)) {
-      console.warn(`[directiveParser] no closing ] after JSON for tool=${tool} action=${action}`);
+      console.warn(`[directiveParser] no closing ] after JSON for ${parsed.tool}.${parsed.action}`);
       continue;
     }
     let parsedData: Record<string, any>;
     try {
       parsedData = JSON.parse(jsonResult.json);
     } catch (err) {
-      console.warn(`[directiveParser] invalid JSON for tool=${tool} action=${action}:`, err);
+      console.warn(`[directiveParser] invalid JSON for ${parsed.tool}.${parsed.action}:`, err);
       continue;
     }
-    directives.push({
-      tool: tool.toLowerCase().trim(),
-      action: action.toLowerCase().trim(),
-      data: parsedData,
-    });
+    directives.push({ tool: parsed.tool, action: parsed.action, data: parsedData });
   }
   return directives;
 }
@@ -180,7 +208,7 @@ function extractJSONFromPosition(
 function stripAllDirectives(text: string): string {
   let cleaned = text;
   cleaned = cleaned.replace(/\[SAVE:\s*category=[a-z_]+\s+value="[^"]*"\s*\]/gi, "");
-  cleaned = stripBraceContainingDirectives(cleaned, /\[TOOL:\s*tool=[a-z_]+\s+action=[a-z_]+\s+data=/gi);
+  cleaned = stripBraceContainingDirectives(cleaned, /\[TOOL:\s*[^{}\]]*?(?=\{)/gi);
   cleaned = stripBraceContainingDirectives(cleaned, /\[KNOWLEDGE_UPDATE_PROPOSE:\s*data=/gi);
   cleaned = stripBraceContainingDirectives(cleaned, /\[KNOWLEDGE_UPDATE_CONFIRM:\s*data=/gi);
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
