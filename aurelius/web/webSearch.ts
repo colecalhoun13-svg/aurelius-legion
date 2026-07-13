@@ -30,15 +30,18 @@ export async function webSearch(query: string): Promise<WebSearchResult> {
 }
 
 async function tavilySearch(query: string): Promise<WebSearchResult> {
+  // "advanced" depth = heavier, multi-source research (2 credits vs 1). Override
+  // with TAVILY_SEARCH_DEPTH=basic to go light. Free tier ~500 advanced/mo.
+  const depth = process.env.TAVILY_SEARCH_DEPTH?.trim() || "advanced";
   const res = await fetch("https://api.tavily.com/search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       api_key: process.env.TAVILY_API_KEY,
       query,
-      search_depth: "basic",
-      max_results: 6,
-      include_answer: true,
+      search_depth: depth,
+      max_results: 8,
+      include_answer: "advanced",
     }),
   });
   if (!res.ok) throw new Error(`Tavily search failed (${res.status}): ${(await res.text()).slice(0, 150)}`);
