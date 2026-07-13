@@ -231,6 +231,19 @@ async function main() {
   const f = await fredAdapter.run("macro_snapshot", {});
   check("fred tool honest about config state", fredConfigured() ? f.ok : (!f.ok && /FRED_API_KEY/.test(f.error ?? "")));
 
+  console.log("── engines: never a silent empty answer (fail over unless unfunded) ──");
+  {
+    const { isNonAnswer } = await import("../llm/router.ts");
+    check(
+      "router treats empty/errored as a non-answer, real text as an answer",
+      isNonAnswer("") === true &&
+        isNonAnswer("   ") === true &&
+        isNonAnswer("Anthropic API error: 429") === true &&
+        isNonAnswer("Missing GEMINI_API_KEY") === true &&
+        isNonAnswer("Here is a real answer.") === false
+    );
+  }
+
   console.log("── multimodal: photo/video in chat (keyless: honest fail) ──");
   {
     const { mediaKind, analyzeMedia } = await import("../media/ingestMedia.ts");

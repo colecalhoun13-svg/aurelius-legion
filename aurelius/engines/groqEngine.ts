@@ -36,6 +36,7 @@ export const groqAdapter: EngineAdapter = {
 
       const json: any = await res.json();
       const text = json.choices?.[0]?.message?.content ?? "";
+      if (!text) console.warn("[GROQ] empty text — finish_reason:", json.choices?.[0]?.finish_reason);
       return {
         text,
         tokensUsed: json.usage?.total_tokens ?? 0,

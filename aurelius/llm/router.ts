@@ -516,6 +516,18 @@ function engineUnavailableText(text: string): boolean {
   return /engine is not configured|Missing .*_API_KEY/i.test(text);
 }
 
+// Anything that isn't a usable answer → the router should fail over to the next
+// engine. Covers: empty/blank text, a missing key, and adapter-level API/fetch
+// errors (which the adapters return as a short "<Provider> error: ..." string —
+// e.g. a small-context model rejecting a long prompt).
+export function isNonAnswer(text: string): boolean {
+  if (!text || !text.trim()) return true;
+  if (engineUnavailableText(text)) return true;
+  return /^(Anthropic|OpenAI|Gemini|Groq|DeepSeek|xAI) (API )?(error|engine encountered an error|fetch error)/i.test(
+    text.trim()
+  );
+}
+
 export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
   const choice = chooseModel(task);
   const systemPrompt = await buildSystemPrompt(task);
@@ -547,9 +559,15 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
     const isLast = attempt === chain[chain.length - 1];
     try {
       const result = await runAdapter(attempt.provider, attempt.model, systemPrompt, task.input);
-      if (engineUnavailableText(result.text) && !isLast) {
-        lastFailure = result.text;
-        console.warn(`[ROUTER] ${attempt.provider} unavailable (no key/config) — falling over`);
+      // Fail over on anything that isn't a real answer: a missing key, an
+      // adapter-level API error (e.g. a small-context model choking on a long
+      // prompt), or an EMPTY response. Only accept a non-answer on the last
+      // attempt, so the user still gets an honest message rather than a hang.
+      if (isNonAnswer(result.text) && !isLast) {
+        lastFailure = result.text?.trim() || "empty response";
+        console.warn(
+          `[ROUTER] ${attempt.provider}/${attempt.model} gave no usable answer (${lastFailure.slice(0, 80)}) — falling over`
+        );
         failedOver = true;
         continue;
       }

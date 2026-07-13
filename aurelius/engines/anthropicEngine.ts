@@ -17,7 +17,7 @@ async function runAnthropic({
   model = "claude-sonnet-5",
   systemPrompt,
   userPrompt,
-  maxTokens = 4096,
+  maxTokens = 8192,
 }: RunAnthropicInput): Promise<{ text: string; tokensUsed: number; raw: any }> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {

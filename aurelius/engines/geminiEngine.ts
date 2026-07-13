@@ -40,7 +40,25 @@ export const geminiAdapter: EngineAdapter = {
       }
 
       const json: any = await res.json();
-      const text = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+      // Gemini returns candidates[0].content.parts[] — concatenate every text
+      // part, not just parts[0] (which can be a non-text part and drop the reply).
+      const cand = json?.candidates?.[0];
+      let text = "";
+      if (Array.isArray(cand?.content?.parts)) {
+        text = cand.content.parts
+          .filter((p: any) => typeof p?.text === "string")
+          .map((p: any) => p.text)
+          .join("")
+          .trim();
+      }
+      if (!text) {
+        console.warn(
+          "[GEMINI] empty text extracted — finishReason:",
+          cand?.finishReason,
+          "· blockReason:",
+          json?.promptFeedback?.blockReason
+        );
+      }
       const tokensUsed =
         (json?.usageMetadata?.promptTokenCount || 0) +
         (json?.usageMetadata?.candidatesTokenCount || 0);
