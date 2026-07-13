@@ -231,6 +231,38 @@ async function main() {
   const f = await fredAdapter.run("macro_snapshot", {});
   check("fred tool honest about config state", fredConfigured() ? f.ok : (!f.ok && /FRED_API_KEY/.test(f.error ?? "")));
 
+  console.log("── the acting layer: autonomy grants (§2.5 Hybrid Autonomy) ──");
+  {
+    const { grantAutonomy, revokeAutonomy, isActionGranted } = await import("../autonomy/grants.ts");
+
+    // An inward class grants, gates true, revokes, gates false.
+    await grantAutonomy({ actionClass: "calendar.schedule_protection", note: "smoke" });
+    const grantedOn = await isActionGranted("calendar.schedule_protection");
+    await revokeAutonomy("calendar.schedule_protection");
+    const grantedOff = await isActionGranted("calendar.schedule_protection");
+    check("inward grant flips the gate on, revoke flips it off", grantedOn === true && grantedOff === false);
+
+    // Outward action is non-grantable by construction — grant throws, gate stays false.
+    let outwardRefused = false;
+    try { await grantAutonomy({ actionClass: "email.send" }); }
+    catch (e: any) { outwardRefused = /OUTWARD|non-grantable/i.test(e?.message ?? ""); }
+    check("outward action (email.send) refused by construction", outwardRefused && !(await isActionGranted("email.send")));
+
+    // Training/health domain is non-grantable — signals only.
+    let trainingRefused = false;
+    try { await grantAutonomy({ actionClass: "training.prescribe" }); }
+    catch (e: any) { trainingRefused = /training|signals only/i.test(e?.message ?? ""); }
+    check("training.prescribe refused (signals only, hard rule 5)", trainingRefused);
+
+    // Self-escalation is non-grantable — autonomy never escalates its own autonomy.
+    let autonomyRefused = false;
+    try { await grantAutonomy({ actionClass: "autonomy" }); }
+    catch (e: any) { autonomyRefused = /autonomy/i.test(e?.message ?? ""); }
+    check("scope 'autonomy' refused (no self-escalation, hard rule 1)", autonomyRefused);
+
+    await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
+  }
+
   // ── cleanup (smoke artifacts only) ──
   await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });
   await prisma.corpusDocument.delete({ where: { id: doc.id } });
