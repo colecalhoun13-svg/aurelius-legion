@@ -53,20 +53,37 @@ async function tavilySearch(query: string): Promise<WebSearchResult> {
   };
 }
 
+// Grounding-capable models get deprecated too — try candidates until one works.
+const SEARCH_MODEL_CANDIDATES = [
+  process.env.GEMINI_SEARCH_MODEL?.trim(),
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-flash-latest",
+].filter((m): m is string => !!m);
+let cachedSearchModel: string | null = null;
+
 async function geminiSearch(query: string): Promise<WebSearchResult> {
   const key = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_SEARCH_MODEL?.trim() || "gemini-2.5-flash";
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: query }] }],
-        tools: [{ google_search: {} }],
-      }),
-    }
-  );
+  const candidates = cachedSearchModel ? [cachedSearchModel] : SEARCH_MODEL_CANDIDATES;
+  let res: Response | null = null;
+  let lastErr = "no models tried";
+  for (const model of candidates) {
+    res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: query }] }],
+          tools: [{ google_search: {} }],
+        }),
+      }
+    );
+    if (res.status === 404) { lastErr = `model ${model} unavailable (404)`; cachedSearchModel = null; res = null; continue; }
+    cachedSearchModel = model;
+    break;
+  }
+  if (!res) throw new Error(`Gemini search: no available model (${lastErr})`);
   if (!res.ok) throw new Error(`Gemini search failed (${res.status}): ${(await res.text()).slice(0, 150)}`);
   const j: any = await res.json();
   const cand = j?.candidates?.[0];
