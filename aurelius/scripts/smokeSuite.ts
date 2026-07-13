@@ -293,6 +293,22 @@ async function main() {
         !grantable.some((c) => c.tier === "outward")
     );
 
+    // First acting workflow: schedule-protection. Ungranted → it PROPOSES holds
+    // (pending signals), never writes the calendar. Proves detect→prepare→gate.
+    const { runScheduleProtection } = await import("../autonomy/workflows/scheduleProtection.ts");
+    await revokeAutonomy("calendar.schedule_protection"); // ensure off
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "schedule_protection" } }); // deterministic: clear dedup state
+    const beforeEvents = await prisma.calendarEvent.count({ where: { title: "Deep Work (protected)" } });
+    const sp = await runScheduleProtection({ days: 3, blockMinutes: 60 });
+    const afterEvents = await prisma.calendarEvent.count({ where: { title: "Deep Work (protected)" } });
+    check(
+      "schedule-protection proposes holds when ungranted, writes no calendar events",
+      sp.opportunities >= 1 && sp.gated === sp.opportunities && sp.finalized === 0 && afterEvents === beforeEvents
+    );
+    const sp2 = await runScheduleProtection({ days: 3, blockMinutes: 60 }); // rerun: dedup
+    check("schedule-protection dedups — no repeat proposals for already-pending days", sp2.opportunities === 0);
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "schedule_protection" } });
+
     await prisma.bridgeSignal.deleteMany({ where: { title: { contains: TAG } } });
     await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
   }

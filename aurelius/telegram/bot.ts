@@ -110,6 +110,19 @@ async function handleCommand(chatId: string | number, text: string) {
       return;
     }
 
+    case "/protect": {
+      const { runScheduleProtection } = await import("../autonomy/workflows/scheduleProtection.ts");
+      const r = await runScheduleProtection({ days: 5 });
+      if (r.opportunities === 0) {
+        await send(chatId, "Your next few days already have focus time held. Nothing to protect.");
+      } else if (r.finalized > 0) {
+        await send(chatId, `Protected ${r.finalized} deep-work block${r.finalized === 1 ? "" : "s"} on your calendar (reversible — delete any you don't want). ${r.gated ? `${r.gated} more are on the Bridge for your OK.` : ""}`.trim());
+      } else {
+        await send(chatId, `Found ${r.opportunities} day${r.opportunities === 1 ? "" : "s"} with unprotected focus time — proposed holds on the Bridge. Grant calendar.schedule_protection (/grants) and I'll just place them.`);
+      }
+      return;
+    }
+
     case "/grants": {
       const { listActiveGrants } = await import("../autonomy/grants.ts");
       const { listGrantableClasses } = await import("../autonomy/actionClasses.ts");

@@ -1003,6 +1003,20 @@ nodeSchedule.scheduleJob("0 6 * * *", async () => {
     console.error("[rss] poll failed:", err);
   }
 });
+// Schedule-protection at 06:45 — defend deep-work time before the day fills.
+// Acts on its own if granted (calendar.schedule_protection), else proposes on
+// the Bridge; deduped so it never spams. Runs before the 07:00 briefing so the
+// briefing reflects any holds just placed.
+nodeSchedule.scheduleJob("45 6 * * *", async () => {
+  try {
+    await runTraced("schedule", "schedule_protection", async () => {
+      const { runScheduleProtection } = await import("./autonomy/workflows/scheduleProtection.ts");
+      await runScheduleProtection({ days: 5 });
+    });
+  } catch (err) {
+    console.error("[scheduleProtection] daily sweep failed:", err);
+  }
+});
 // Morning briefing at 07:00 — the day opens with a push, not a blank page.
 nodeSchedule.scheduleJob("0 7 * * *", async () => {
   try {

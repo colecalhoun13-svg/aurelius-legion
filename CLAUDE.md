@@ -60,7 +60,8 @@ awareness · 6 tool catalog · 7 task · 7.5 pending proposals.
 
 ## Scheduled spine (all traced via core/trace.ts)
 
-06:00 RSS · 06:30 market pulse · 07:00 morning briefing · 08:00 initiative ·
+06:00 RSS · 06:30 market pulse · 06:45 schedule-protection (acts if granted,
+else proposes) · 07:00 morning briefing · 08:00 initiative ·
 13:00 midday check (silent when on pace) · 21:30 debrief · Sun 09:00 weekend
 sweep → wiki · Sun 17:00 persona observer · Sun 18:00 weekly planning ·
 Sun 19:00 freshness sweep ·

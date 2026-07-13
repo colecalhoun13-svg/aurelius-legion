@@ -45,6 +45,10 @@ export async function executeAction(args: {
   prepare: () => Promise<PreparedAction>;
   finalize: (prepared: PreparedAction) => Promise<any>;
   operatorId?: string | null;
+  // Stable identity for this action instance (e.g. "schprot:2026-07-14"), so a
+  // workflow can dedup its own proposals instead of re-filing them each run.
+  sourceType?: string;
+  sourceId?: string;
 }): Promise<ExecuteResult> {
   // Always prepare — safe, reversible, no commitment. Closes the loop to the
   // edge whether or not we're allowed to take the last step.
@@ -63,7 +67,8 @@ export async function executeAction(args: {
         kind: "background_result",
         operatorId: args.operatorId ?? null,
         domain: prepared.domain ?? null,
-        sourceType: "reasoning_output",
+        sourceType: args.sourceType ?? "reasoning_output",
+        sourceId: args.sourceId ?? null,
         severity: "info",
         status: "acted", // executed proposal — done, on the record, reversible
         title: prepared.title,
@@ -81,7 +86,8 @@ export async function executeAction(args: {
       kind: "background_result",
       operatorId: args.operatorId ?? null,
       domain: prepared.domain ?? null,
-      sourceType: "reasoning_output",
+      sourceType: args.sourceType ?? "reasoning_output",
+      sourceId: args.sourceId ?? null,
       severity: "attention",
       status: "pending",
       title: prepared.title,

@@ -70,3 +70,15 @@ autonomyRouter.post("/grants/revoke", async (req: Request, res: Response) => {
     res.status(500).json({ error: err?.message ?? "revoke failed" });
   }
 });
+
+// Run the first acting workflow on demand — schedule-protection.
+// Acts if granted, proposes on the Bridge if not.
+autonomyRouter.post("/schedule-protection/run", async (req: Request, res: Response) => {
+  try {
+    const { runScheduleProtection } = await import("../autonomy/workflows/scheduleProtection.ts");
+    const result = await runScheduleProtection(req.body ?? {});
+    res.json({ ok: true, result });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "schedule-protection failed" });
+  }
+});
