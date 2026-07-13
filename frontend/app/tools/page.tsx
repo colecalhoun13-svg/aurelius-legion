@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 type ToolInfo = { name: string; actions: string[] };
 type Integration = {
   name: string;
-  status: "live" | "partial" | "config" | "deploy" | "parked";
+  status: "live" | "partial" | "config" | "deploy" | "planned" | "parked";
   desc: string;
   glyph: string;
   need?: string;
@@ -22,6 +22,7 @@ const STATUS_STYLE: Record<string, string> = {
   partial: "text-aurelius-gold border-aurelius-gold/50",
   config: "text-amber-300 border-amber-300/50",
   deploy: "text-sky-300 border-sky-400/40",
+  planned: "text-neutral-400 border-neutral-600",
   parked: "text-neutral-500 border-neutral-700",
 };
 const STATUS_LABEL: Record<string, string> = {
@@ -29,9 +30,10 @@ const STATUS_LABEL: Record<string, string> = {
   partial: "partial",
   config: "needs a key",
   deploy: "at deploy",
+  planned: "not built yet",
   parked: "parked",
 };
-const ORDER = ["live", "partial", "config", "deploy", "parked"];
+const ORDER = ["live", "partial", "config", "deploy", "planned", "parked"];
 
 export default function ToolsPage() {
   const [registered, setRegistered] = useState<ToolInfo[] | null>(null);

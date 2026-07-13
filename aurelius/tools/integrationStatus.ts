@@ -10,11 +10,12 @@
 //   partial   — working but not fully wired (e.g. keyless research)
 //   config    — built, waiting on one credential from Cole
 //   deploy    — built, wakes on the Mac Mini
+//   planned   — designed, NOT built yet (no code) — honest about the gap
 //   parked    — deliberately not built (business engine — Cole's call)
 
 import { listTools } from "./toolRegistry.ts";
 
-export type IntegrationStatus = "live" | "partial" | "config" | "deploy" | "parked";
+export type IntegrationStatus = "live" | "partial" | "config" | "deploy" | "planned" | "parked";
 
 export type Integration = {
   name: string;
@@ -39,6 +40,26 @@ export async function getIntegrations(): Promise<Integration[]> {
   } catch {
     /* calendar module unavailable → not live */
   }
+
+  // Gmail: derive live status the same way as calendar (don't hardcode).
+  let gmailLive = false;
+  try {
+    const { gmailAuth } = await import("../gmail/engine.ts");
+    gmailLive = registered.has("gmail") && (await gmailAuth.isConnected());
+  } catch {
+    /* gmail module unavailable → not live */
+  }
+
+  const fredLive = registered.has("fred") && has("FRED_API_KEY");
+  const visionLive = has("GEMINI_API_KEY");
+
+  // Memory/recall: what's actually powering semantic recall right now.
+  const embProvider = (process.env.EMBEDDINGS_PROVIDER ?? "openai").trim().toLowerCase();
+  const embLive =
+    (embProvider === "gemini" && has("GEMINI_API_KEY")) ||
+    (embProvider === "openai" && has("OPENAI_API_KEY")) ||
+    embProvider === "ollama";
+  const embMock = embProvider === "mock";
 
   return [
     {
@@ -83,24 +104,40 @@ export async function getIntegrations(): Promise<Integration[]> {
     },
     {
       name: "Gmail",
-      status: "config",
+      status: gmailLive ? "live" : "config",
       desc: "Read + draft-only. Flags what needs you, never sends on its own",
       glyph: "✉",
-      need: "one Google OAuth authorization (same flow as calendar)",
+      need: gmailLive ? undefined : "one Google OAuth authorization at /api/gmail/auth",
+    },
+    {
+      name: "Vision (photos & video)",
+      status: visionLive ? "live" : "config",
+      desc: "Attach a photo/video in chat — Aurelius reads it, describes it, remembers it",
+      glyph: "◎",
+      need: visionLive ? undefined : "GEMINI_API_KEY (free); big athlete-film analysis at deploy",
+    },
+    {
+      name: "Memory / recall",
+      status: embLive ? "live" : embMock ? "partial" : "config",
+      desc: embMock
+        ? "Running on MOCK embeddings — recall is not semantic yet"
+        : `Semantic recall via ${embProvider} embeddings`,
+      glyph: "❈",
+      need: embLive ? undefined : "set EMBEDDINGS_PROVIDER=gemini + a Gemini key, then re-embed",
     },
     {
       name: "Canvas LMS",
-      status: "config",
+      status: "planned",
       desc: "School assignments + due dates flow into Today",
       glyph: "✎",
-      need: "a Canvas access token from your school portal",
+      need: "not built yet — say the word (you noted you didn't need it yet)",
     },
     {
       name: "FRED",
-      status: "config",
+      status: fredLive ? "live" : "config",
       desc: "Economic + rates data for the wealth engine",
       glyph: "◈",
-      need: "a free FRED API key (~2 min)",
+      need: fredLive ? undefined : "a free FRED API key (~2 min)",
     },
     {
       name: "Paperless-ngx",
@@ -132,24 +169,31 @@ export async function getIntegrations(): Promise<Integration[]> {
     },
     {
       name: "Plaid / SimpleFIN",
-      status: "deploy",
+      status: "planned",
       desc: "Wealth operator's ledger — read-only, local-first era",
       glyph: "◇",
-      need: "sensitive — wired at Mac Mini deploy",
+      need: "not built yet — sensitive; build at Mac Mini deploy",
     },
     {
       name: "Hammerspoon",
-      status: "deploy",
-      desc: "macOS hands — allowlisted scripts behind the escalation matrix",
+      status: "planned",
+      desc: "macOS hands — allowlisted scripts behind the grant system",
       glyph: "⌘",
-      need: "runs on the Mac Mini",
+      need: "not built yet — build at Mac Mini deploy, gated by grants",
     },
     {
       name: "Ollama (local)",
-      status: "deploy",
+      status: "planned",
       desc: "Free local inference — embeddings + bulk background work",
       glyph: "⌂",
-      need: "runs on the Mac Mini",
+      need: "not built yet — the adapter slots in at Mac Mini deploy",
+    },
+    {
+      name: "MCP connectors",
+      status: "parked",
+      desc: "Plug into the tool ecosystem (Notion, files, more) — gated by the grant system",
+      glyph: "⧉",
+      need: "a near-term block; best on the Mac Mini so servers run local",
     },
   ];
 }
