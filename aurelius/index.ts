@@ -515,25 +515,31 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "Message or media is required" });
   }
 
-  // Multimodal chat: Cole attached a photo/video. Aurelius "sees" it — the
-  // analysis is folded into the message so the model reasons over it in
-  // conversation — and remembers it in the second brain (fire-and-forget).
-  if (media?.data && media?.mimeType) {
-    try {
-      const { analyzeMedia, captureMediaNote } = await import("./media/ingestMedia.ts");
-      const { kind, analysis } = await analyzeMedia(
-        Buffer.from(media.data, "base64"),
-        media.mimeType,
-        message.trim() || undefined
-      );
-      message =
-        (message.trim() ? message.trim() + "\n\n" : "") +
-        `[Cole attached a ${kind}. What I can see in it:]\n${analysis}`;
-      captureMediaNote({ kind, analysis, caption: req.body?.message, filename: media.filename }).catch(() => {});
-    } catch (err: any) {
-      message =
-        (message.trim() ? message.trim() + "\n\n" : "") +
-        `[Cole attached a file but I couldn't read it: ${err?.message ?? err}]`;
+  // Multimodal chat: Cole attached one or more photos/videos. Aurelius "sees"
+  // each — the analyses fold into the message so the model reasons over them in
+  // conversation — and remembers each in the second brain (fire-and-forget).
+  // Accepts `media` as a single object (back-compat) or an array (multi-drop).
+  const mediaItems: any[] = Array.isArray(media) ? media : media ? [media] : [];
+  if (mediaItems.length > 0) {
+    const { analyzeMedia, captureMediaNote } = await import("./media/ingestMedia.ts");
+    for (const m of mediaItems) {
+      if (!m?.data || !m?.mimeType) continue;
+      const label = m.filename ? ` (${m.filename})` : "";
+      try {
+        const { kind, analysis } = await analyzeMedia(
+          Buffer.from(m.data, "base64"),
+          m.mimeType,
+          req.body?.message?.trim() || undefined
+        );
+        message =
+          (message.trim() ? message.trim() + "\n\n" : "") +
+          `[Cole attached a ${kind}${label}. What I can see in it:]\n${analysis}`;
+        captureMediaNote({ kind, analysis, caption: req.body?.message, filename: m.filename }).catch(() => {});
+      } catch (err: any) {
+        message =
+          (message.trim() ? message.trim() + "\n\n" : "") +
+          `[Cole attached a file${label} but I couldn't read it: ${err?.message ?? err}]`;
+      }
     }
   }
 

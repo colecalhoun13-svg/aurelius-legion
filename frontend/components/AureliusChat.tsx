@@ -2,21 +2,20 @@
  * AureliusChat.tsx
  * Aurelius OS v3.4 — Frontend Chat Interface
  *
- * Wires the UI → Backend → Engine → UI loop. Multimodal: attach a photo or
- * short video and Aurelius sees it and talks about it, in the normal chat.
+ * Wires the UI → Backend → Engine → UI loop. Multimodal: attach one or more
+ * photos/videos and Aurelius sees them and talks about them, in the normal chat.
  */
 
 "use client";
 
 import { useRef, useState } from "react";
 
+type Attachment = { file: File; mimeType: string; kind: "image" | "video"; dataUrl: string };
 type Message = {
   role: "user" | "aurelius";
   content: string;
-  attachment?: { name: string; kind: "image" | "video" };
+  attachments?: { name: string; kind: "image" | "video" }[];
 };
-
-type Attachment = { file: File; mimeType: string; kind: "image" | "video"; dataUrl: string };
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -32,40 +31,46 @@ export function AureliusChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [attachment, setAttachment] = useState<Attachment | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const pickFile = async (file?: File) => {
-    if (!file) return;
-    const kind = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : null;
-    if (!kind) { setError("Only images and videos can be attached."); return; }
-    if (file.size > 18 * 1024 * 1024) { setError("File is over 18MB — too big to attach in chat."); return; }
-    setError(null);
-    setAttachment({ file, mimeType: file.type, kind, dataUrl: await readAsDataUrl(file) });
+  const pickFiles = async (files?: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const next: Attachment[] = [];
+    for (const file of Array.from(files)) {
+      const kind = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : null;
+      if (!kind) { setError(`Skipped ${file.name} — only images and videos.`); continue; }
+      if (file.size > 18 * 1024 * 1024) { setError(`Skipped ${file.name} — over 18MB.`); continue; }
+      next.push({ file, mimeType: file.type, kind, dataUrl: await readAsDataUrl(file) });
+    }
+    if (next.length) { setError(null); setAttachments((prev) => [...prev, ...next]); }
+    if (fileRef.current) fileRef.current.value = "";
   };
 
+  const removeAttachment = (idx: number) => setAttachments((prev) => prev.filter((_, i) => i !== idx));
+
   const sendMessage = async () => {
-    if ((!input.trim() && !attachment) || loading) return;
+    if ((!input.trim() && attachments.length === 0) || loading) return;
 
     const userMessage: Message = {
       role: "user",
-      content: input || (attachment ? `(${attachment.kind} attached)` : ""),
-      attachment: attachment ? { name: attachment.file.name, kind: attachment.kind } : undefined,
+      content: input || (attachments.length ? `(${attachments.length} file${attachments.length > 1 ? "s" : ""} attached)` : ""),
+      attachments: attachments.map((a) => ({ name: a.file.name, kind: a.kind })),
     };
     setMessages((prev) => [...prev, userMessage]);
 
     const body: any = { message: input };
-    if (attachment) {
-      body.media = {
-        mimeType: attachment.mimeType,
-        kind: attachment.kind,
-        filename: attachment.file.name,
-        data: attachment.dataUrl.split(",")[1], // strip "data:...;base64,"
-      };
+    if (attachments.length) {
+      body.media = attachments.map((a) => ({
+        mimeType: a.mimeType,
+        kind: a.kind,
+        filename: a.file.name,
+        data: a.dataUrl.split(",")[1], // strip "data:...;base64,"
+      }));
     }
 
     setInput("");
-    setAttachment(null);
+    setAttachments([]);
     if (fileRef.current) fileRef.current.value = "";
     setLoading(true);
     setError(null);
@@ -105,7 +110,7 @@ export function AureliusChat() {
 
       <div className="flex flex-col gap-2 mb-3 max-h-80 overflow-y-auto text-sm">
         {messages.length === 0 && (
-          <div className="text-zinc-500">Type a message — or attach a photo/video — to speak with Aurelius.</div>
+          <div className="text-zinc-500">Type a message — or attach photos/videos — to speak with Aurelius.</div>
         )}
 
         {messages.map((m, idx) => (
@@ -120,9 +125,11 @@ export function AureliusChat() {
             <div className="text-[10px] uppercase tracking-wide mb-1 text-zinc-500">
               {m.role === "user" ? "Operator" : "Aurelius"}
             </div>
-            {m.attachment && (
-              <div className="text-[11px] text-yellow-500/80 mb-1">
-                {m.attachment.kind === "image" ? "🖼" : "🎬"} {m.attachment.name}
+            {m.attachments && m.attachments.length > 0 && (
+              <div className="text-[11px] text-yellow-500/80 mb-1 space-y-0.5">
+                {m.attachments.map((a, i) => (
+                  <div key={i}>{a.kind === "image" ? "🖼" : "🎬"} {a.name}</div>
+                ))}
               </div>
             )}
             <div className="whitespace-pre-wrap">{m.content}</div>
@@ -132,17 +139,20 @@ export function AureliusChat() {
 
       {error && <div className="text-xs text-red-400 mb-2">{error}</div>}
 
-      {attachment && (
-        <div className="flex items-center gap-2 mb-2 text-xs bg-zinc-900 border border-yellow-600/30 rounded px-2 py-1.5 w-fit">
-          {attachment.kind === "image" ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={attachment.dataUrl} alt="attachment" className="h-10 w-10 object-cover rounded" />
-          ) : (
-            <span className="text-lg">🎬</span>
-          )}
-          <span className="text-zinc-300 max-w-[180px] truncate">{attachment.file.name}</span>
-          <button onClick={() => { setAttachment(null); if (fileRef.current) fileRef.current.value = ""; }}
-            className="text-zinc-500 hover:text-red-400" aria-label="remove attachment">✕</button>
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          {attachments.map((a, i) => (
+            <div key={i} className="flex items-center gap-2 text-xs bg-zinc-900 border border-yellow-600/30 rounded px-2 py-1.5">
+              {a.kind === "image" ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={a.dataUrl} alt="attachment" className="h-9 w-9 object-cover rounded" />
+              ) : (
+                <span className="text-lg">🎬</span>
+              )}
+              <span className="text-zinc-300 max-w-[140px] truncate">{a.file.name}</span>
+              <button onClick={() => removeAttachment(i)} className="text-zinc-500 hover:text-red-400" aria-label="remove">✕</button>
+            </div>
+          ))}
         </div>
       )}
 
@@ -151,20 +161,21 @@ export function AureliusChat() {
           ref={fileRef}
           type="file"
           accept="image/*,video/*"
+          multiple
           className="hidden"
-          onChange={(e) => pickFile(e.target.files?.[0])}
+          onChange={(e) => pickFiles(e.target.files)}
         />
         <button
           onClick={() => fileRef.current?.click()}
           disabled={loading}
-          title="Attach a photo or video"
+          title="Attach photos or videos"
           className="px-3 py-2 text-sm rounded bg-zinc-800 border border-zinc-700 hover:border-yellow-500 disabled:opacity-50"
         >
           📎
         </button>
         <input
           className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-yellow-500"
-          placeholder="Ask Aurelius anything, or attach a photo/video..."
+          placeholder="Ask Aurelius anything, or attach photos/videos..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
