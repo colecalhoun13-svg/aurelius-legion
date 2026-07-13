@@ -296,9 +296,11 @@ export function startTelegramBridge() {
         `[telegram] getMe didn't confirm (last: ${lastErr}) — proceeding to poll anyway (token likely fine; sends work independently)`
       );
     }
+    let conflictStreak = 0;
     while (running) {
       try {
         const updates: any[] = await api("getUpdates", { timeout: 50, offset });
+        conflictStreak = 0;
         for (const u of updates) {
           offset = u.update_id + 1;
           const msg = u.message;
@@ -351,7 +353,31 @@ export function startTelegramBridge() {
             await send(msg.chat.id, `That failed: ${err?.message ?? err}`).catch(() => {});
           }
         }
-      } catch (err) {
+      } catch (err: any) {
+        const m = err?.message ?? String(err);
+        // A revoked/rotated token can't be polled away — stop, don't hot-loop
+        // forever spraying getUpdates at Telegram. (The prior code retried EVERY
+        // error every 10s indefinitely, including this permanent one.)
+        if (/unauthorized|401|not found|404/i.test(m)) {
+          console.error(
+            `[telegram] TOKEN REJECTED during poll (${m}). Bridge disabled — fix TELEGRAM_BOT_TOKEN + restart.`
+          );
+          running = false;
+          break;
+        }
+        // 409 Conflict = another getUpdates poller is running (a second instance,
+        // or a webhook is set). Retrying at 10s just fights it; back off harder
+        // and cap so logs don't flood. Usually clears when the other poller dies.
+        if (/409|conflict/i.test(m)) {
+          conflictStreak++;
+          const wait = Math.min(60_000, 10_000 * conflictStreak);
+          console.warn(
+            `[telegram] getUpdates conflict (${m}) — another poller/webhook is active. ` +
+              `Backing off ${Math.round(wait / 1000)}s (streak ${conflictStreak}).`
+          );
+          await new Promise((r) => setTimeout(r, wait));
+          continue;
+        }
         console.error("[telegram] poll error (retrying in 10s):", err);
         await new Promise((r) => setTimeout(r, 10_000));
       }

@@ -233,8 +233,14 @@ export async function findAvailability(opts: {
     }
 
     const windowMinutes = Math.max(0, (windowEnd.getTime() - (i === 0 && now > windowStart ? Math.min(now.getTime(), windowEnd.getTime()) : windowStart.getTime())) / 60000);
+    // LOCAL date, not UTC: the slots above are built with setHours() (local),
+    // so the day label must be the local calendar day too. toISOString() is UTC
+    // and, under a non-UTC TZ (the prod Mac Mini), names a different day near
+    // midnight — the downstream focus-block existence check then queries the
+    // wrong 24h window and a hold can land on the wrong day.
+    const localDate = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
     out.push({
-      date: day.toISOString().slice(0, 10),
+      date: localDate,
       slots,
       busyMinutes: Math.round(busyMinutes),
       freeMinutes: Math.max(0, Math.round(windowMinutes - busyMinutes)),

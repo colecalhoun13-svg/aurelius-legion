@@ -8,6 +8,7 @@
 import { runLLM } from "../llm/runLLM.ts";
 import { semanticRecall } from "../retrieval/retrieve.ts";
 import { prisma } from "../core/db/prisma.ts";
+import { extractDirectives } from "../llm/directiveParser.ts";
 
 export type AskResult = {
   answer: string;
@@ -64,8 +65,14 @@ ${question}
     input: prompt,
   });
 
+  // buildSystemPrompt injects the tool catalog into EVERY call, so the model can
+  // emit a stray [TOOL:]/[SAVE:] directive here too. This path doesn't execute
+  // tools — it just answers — so strip any directives rather than print raw
+  // "[TOOL: ...]" text to Cole (visible on Telegram /ask and photo captions).
+  const answer = extractDirectives(response.text ?? "").cleanedText || response.text;
+
   return {
-    answer: response.text,
+    answer,
     sources,
     engine: `${response.engine}/${response.model}`,
     recallCount: hits.length,

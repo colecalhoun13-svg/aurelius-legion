@@ -242,6 +242,16 @@ async function main() {
         isNonAnswer("Missing GEMINI_API_KEY") === true &&
         isNonAnswer("Here is a real answer.") === false
     );
+    // The regex gap the sweeps flagged: 5 of 6 engines say "<X>_API_KEY is not
+    // configured." (no "Missing", no "engine") — those must still fail over, and
+    // the all-providers-down line must never be served/filed as an answer.
+    check(
+      "router fails over on every keyless-provider string + all-providers-down",
+      isNonAnswer("GROQ_API_KEY is not configured.") === true &&
+        isNonAnswer("XAI_API_KEY is not configured.") === true &&
+        isNonAnswer("OPENAI_API_KEY is not configured.") === true &&
+        isNonAnswer("All configured LLM providers failed (anthropic → openai). Last error: x") === true
+    );
   }
 
   console.log("── live web: search + fetch (keyless: honest fail) ──");
@@ -278,6 +288,28 @@ async function main() {
     check("every tool-directive form parses to web.search", allParse);
     const stripped = extractDirectives('Here you go. [TOOL: web.search {"query":"x"}]').cleanedText;
     check("tool directive stripped from the visible reply", !/\[TOOL:/.test(stripped) && stripped.includes("Here you go"));
+
+    // Zero-arg actions (no data block) must run — "plan my week" etc. broke
+    // because [TOOL: planning.plan_week] required a trailing "{".
+    const zero = extractToolDirectives("On it.\n\n[TOOL: planning.plan_week]");
+    check(
+      "zero-arg tool directive parses (data defaults to {})",
+      zero.length === 1 && zero[0].tool === "planning" && zero[0].action === "plan_week"
+    );
+    const zeroCanonical = extractToolDirectives("[TOOL: tool=gmail action=read_inbox]");
+    check(
+      "zero-arg canonical form parses",
+      zeroCanonical.length === 1 && zeroCanonical[0].tool === "gmail" && zeroCanonical[0].action === "read_inbox"
+    );
+    const zeroStripped = extractDirectives("Done. [TOOL: planning.plan_week]").cleanedText;
+    check("zero-arg directive stripped from the reply", !/\[TOOL:/.test(zeroStripped) && zeroStripped.includes("Done"));
+
+    // A directive quoted inside a code fence is the model SHOWING syntax — it must
+    // NOT execute (adversarial sweep found quoted directives firing for real).
+    const fenced = extractToolDirectives('Example:\n```\n[TOOL: web.search {"query":"x"}]\n```\nThat\'s the format.');
+    check("directive inside a code fence does not execute", fenced.length === 0);
+    const inline = extractToolDirectives("Write `[TOOL: gmail.read_inbox]` to check mail.");
+    check("directive inside inline code does not execute", inline.length === 0);
   }
 
   console.log("── multimodal: photo/video in chat (keyless: honest fail) ──");
@@ -346,9 +378,22 @@ async function main() {
     const confirmedSig = await prisma.bridgeSignal.findUnique({ where: { id: gated.bridgeSignalId } });
     check("confirming a gated proposal executes it (loop closed)", confirmed.ok && finalizedCount === 2 && confirmedSig?.status === "acted");
 
+    // Idempotency: a second confirm (double-click / retry) must NOT re-run the
+    // finalizer — confirm gates irreversible outward actions, so no double send.
+    const reconfirm = await confirmAction(gated.bridgeSignalId);
+    check("re-confirming an acted proposal is a no-op (no double outward action)", reconfirm.ok && finalizedCount === 2);
+
+    // Concurrent confirm of a FRESH gated proposal → exactly one finalize (the
+    // atomic row-claim serializes the double-click race).
+    const race = await executeAction({ actionClass: "research.ingest", prepare: prep });
+    const before = finalizedCount;
+    await Promise.all([confirmAction(race.bridgeSignalId), confirmAction(race.bridgeSignalId)]);
+    check("concurrent confirm finalizes exactly once (atomic claim)", finalizedCount === before + 1);
+
     // Outward action can never finalize on its own (no standing grant possible).
+    const beforeOutward = finalizedCount;
     const outward = await executeAction({ actionClass: "email.send", prepare: prep });
-    check("outward action never finalizes on its own through the executor", !outward.finalized && finalizedCount === 2);
+    check("outward action never finalizes on its own through the executor", !outward.finalized && finalizedCount === beforeOutward);
 
     // The surface: active grants list reflects reality; grantable menu excludes outward.
     const { listActiveGrants } = await import("../autonomy/grants.ts");

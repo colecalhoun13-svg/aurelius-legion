@@ -17,7 +17,7 @@ import { runLLM } from "../llm/runLLM.ts";
 import { embedSourceSafe } from "../retrieval/embedPipeline.ts";
 
 function engineUnavailable(text: string): boolean {
-  return /engine is not configured|Missing .*_API_KEY/i.test(text);
+  return /is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
 }
 
 async function gatherDomainMaterial(domain: string) {

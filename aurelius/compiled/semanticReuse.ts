@@ -23,7 +23,9 @@ const MIN_QUESTION = 12; // chars — below this, matching is noise
 const MIN_ANSWER = 40;   // don't compile one-word replies
 
 function engineUnavailableText(text: string): boolean {
-  return /engine is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
+  // "<PROVIDER>_API_KEY is not configured." has no "Missing " and no "engine",
+  // so the narrow form let it slip through — broadened to any "is not configured".
+  return /is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
 }
 
 /** Only these task types are semantically re-servable — never realtime. */
@@ -53,6 +55,10 @@ export async function tryReuseAnswer(args: {
 
     const entry = await prisma.reasoningCacheEntry.findUnique({ where: { id: top.sourceId } });
     if (!entry || entry.domain !== "chat_reuse") return null; // training cache has its own reader
+    // Operator isolation: recall isn't scoped by operator, so a near-duplicate
+    // question could surface ANOTHER operator's cached answer. Only reuse this
+    // operator's own compiled understanding.
+    if (entry.operatorId !== args.operatorId) return null;
     if (Date.now() - entry.createdAt.getTime() > FRESH_DAYS * 86400_000) return null;
 
     // Summary is stored as "Q: ...\nA: ..." — serve only the answer.

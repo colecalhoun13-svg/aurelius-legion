@@ -170,7 +170,7 @@ Write the result directly — tactical, grounded in the material above, no fille
   });
   // No engine = no synthesis. Fail honestly rather than filing (and
   // ingesting into the corpus) an error message dressed as a report.
-  if (/engine is not configured|Missing .*_API_KEY/i.test(response.text)) {
+  if (/is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(response.text)) {
     throw new Error("no LLM engine available for synthesis");
   }
   return response.text;

@@ -65,6 +65,24 @@ import { gmailRouter } from "./router/gmailRouter.ts";
 // row the cockpit can read. Telemetry is fire-and-forget by design.
 import { runTraced, requestTracer, logBootMarker } from "./core/trace.ts";
 
+// ─────────────────────────────────────────────────────────────────────────
+// STAY ALIVE — Aurelius is an always-on OS with a scheduled spine (06:00 RSS →
+// 21:30 debrief → weekly sweeps). Node's default is to CRASH the whole process
+// on any unhandled promise rejection or uncaught exception — so one stray throw
+// in a fire-and-forget scheduled job (an unfunded engine, a slept Neon, a
+// Telegram blip) would take the entire OS down until manually restarted. For a
+// single-operator personal system, surviving loudly beats dying silently: log
+// the failure with its origin, keep serving. (These MUST be registered before
+// anything async can throw — hence the top of the file.)
+process.on("unhandledRejection", (reason: any) => {
+  const msg = reason?.stack ?? reason?.message ?? String(reason);
+  console.error(`[FATAL-GUARD] Unhandled promise rejection (surviving): ${msg}`);
+});
+process.on("uncaughtException", (err: any) => {
+  const msg = err?.stack ?? err?.message ?? String(err);
+  console.error(`[FATAL-GUARD] Uncaught exception (surviving): ${msg}`);
+});
+
 const app = express();
 app.use(express.json({ limit: "25mb" })); // room for base64 photos / short clips attached in chat
 app.use(
@@ -194,6 +212,15 @@ async function executeToolDirectives(
   }
 
   return executed;
+}
+
+// True when some read action returned literal data rows (sessions, dashboard
+// cells, …). Those are ground truth: even a synthesized prose answer should keep
+// them, so a paraphrase that drifts on a number isn't the only thing Cole sees.
+function hasGroundTruthRows(executed: ExecutedTool[]): boolean {
+  return executed.some(
+    (e) => e.result.ok && Array.isArray((e.result.output as any)?.rows) && (e.result.output as any).rows.length > 0
+  );
 }
 
 function summarizeToolResults(executed: ExecutedTool[]): string {
@@ -694,6 +721,13 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
 
       if (synthesized) {
         cleanedText = synthesized; // the real answer replaces the pre-tool preamble
+        // …but never at the cost of ground truth: if a read action returned
+        // literal rows, append them beneath so Cole sees the data, not only the
+        // model's paraphrase of it (silent hallucination is what these prevent).
+        if (hasGroundTruthRows(executedTools)) {
+          const toolSummary = summarizeToolResults(executedTools);
+          if (toolSummary) cleanedText = cleanedText + "\n" + toolSummary;
+        }
       } else {
         const toolSummary = summarizeToolResults(executedTools);
         if (toolSummary) cleanedText = cleanedText + "\n" + toolSummary;
@@ -855,6 +889,19 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       )
       .catch(() => {});
 
+    // Telemetry read for the response meta — must NOT sink a fully-computed
+    // answer. A DB blip on this count previously threw inside res.json()'s
+    // object literal (it's in the outer try), discarding the whole turn and
+    // handing Cole an error for a reply that was ready. Compute it defensively.
+    let pendingProposalsAfter = 0;
+    try {
+      pendingProposalsAfter = primaryOperatorId
+        ? (await getPendingProposals(primaryOperatorId)).length
+        : 0;
+    } catch (err) {
+      console.warn("[aurelius] pendingProposals count failed (non-fatal):", (err as any)?.message ?? err);
+    }
+
     return res.json({
       reply: cleanedText,
       operators: { primary, secondaries },
@@ -874,9 +921,7 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
         pass2Succeeded: pass2Outcomes.filter((o) => o.ok).length,
         knowledgeProposalsCreated: knowledgeProposalsCreated.length,
         knowledgeProposalsResolved: knowledgeProposalsResolved.length,
-        pendingProposalsAfter: primaryOperatorId
-          ? (await getPendingProposals(primaryOperatorId)).length
-          : 0,
+        pendingProposalsAfter,
       },
       tools: executedTools.map((e) => ({
         tool: e.directive.tool,
@@ -1021,6 +1066,11 @@ import {
 } from "./rituals/engine.ts";
 import { computeWeeklySnapshot } from "./measurement/scoreboard.ts";
 import { startTelegramBridge, sendToCole } from "./telegram/bot.ts";
+
+// Wake Neon before the first scheduled job or app open hits it cold.
+import("./core/db/prisma.ts")
+  .then((m) => m.warmupDb())
+  .catch((err) => console.error("[db] warmup init failed:", err));
 
 ensureRituals().catch((err) => console.error("[rituals] seed failed:", err));
 // The five living documents exist from first boot (founding editions).
@@ -1177,12 +1227,34 @@ nodeSchedule.scheduleJob("0 20 * * 0", () => {
 });
 // Initiative — 08:00 daily, after the briefing: Aurelius scans its own
 // state and proposes missions. Proposed only; Cole launches.
-import("./autonomy/initiative.ts").then(({ runInitiativePulse }) => {
-  nodeSchedule.scheduleJob("0 8 * * *", () => {
-    runTraced("schedule", "initiative_pulse", () => runInitiativePulse()).catch((err) =>
-      console.error("[initiative] failed:", err)
-    );
-  });
+import("./autonomy/initiative.ts")
+  .then(({ runInitiativePulse }) => {
+    nodeSchedule.scheduleJob("0 8 * * *", () => {
+      runTraced("schedule", "initiative_pulse", () => runInitiativePulse()).catch((err) =>
+        console.error("[initiative] failed:", err)
+      );
+    });
+  })
+  .catch((err) => console.error("[initiative] init failed:", err));
+
+// JSON error handler — MUST be last (after all routes). Without it, a body that
+// exceeds the 25MB json limit (e.g. several photos attached at once) throws a
+// body-parser 413 that Express renders as an empty/HTML response; the frontend
+// proxy then sees `{}` and the chat silently does nothing. Turn parser failures
+// into an honest JSON error the UI can show. (Arity 4 = Express error handler.)
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((err: any, _req: Request, res: Response, _next: any) => {
+  if (err?.type === "entity.too.large" || err?.status === 413) {
+    return res.status(413).json({
+      error:
+        "Those attachments are too large to send at once (25MB total). Send fewer/smaller files, or a shorter clip.",
+    });
+  }
+  if (err?.type === "entity.parse.failed" || err?.status === 400) {
+    return res.status(400).json({ error: "Malformed request body." });
+  }
+  console.error("[express] unhandled error:", err?.message ?? err);
+  return res.status(500).json({ error: "Aurelius hit an unexpected server error." });
 });
 
 const PORT = Number(process.env.PORT) || 3001;

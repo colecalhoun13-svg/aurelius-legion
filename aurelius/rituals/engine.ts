@@ -11,6 +11,7 @@
 
 import { prisma } from "../core/db/prisma.ts";
 import { runLLM } from "../llm/runLLM.ts";
+import { extractDirectives } from "../llm/directiveParser.ts";
 import { getToday } from "../productivity/service.ts";
 import { runNightlyPulse } from "../autonomy/pulse.ts";
 
@@ -32,7 +33,7 @@ export async function ensureRituals() {
 
 // LLM text that indicates no engine answered (keyless environment).
 function isEngineUnavailable(text: string): boolean {
-  return /engine is not configured|Missing .*_API_KEY/i.test(text);
+  return /is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
 }
 
 async function voiceOver(skeleton: string, instruction: string): Promise<string> {
@@ -42,7 +43,11 @@ async function voiceOver(skeleton: string, instruction: string): Promise<string>
       operators: { primary: "strategy", secondaries: [] },
       input: `${instruction}\n\n═══ TODAY'S GROUND TRUTH ═══\n${skeleton}`,
     });
-    if (!isEngineUnavailable(response.text)) return response.text;
+    // Strip any stray [TOOL:]/[SAVE:] directive — the catalog is in the prompt
+    // but a briefing must never print a raw directive to Cole.
+    if (!isEngineUnavailable(response.text)) {
+      return extractDirectives(response.text ?? "").cleanedText || response.text;
+    }
   } catch (err) {
     console.warn("[rituals] voice-over failed, shipping deterministic briefing:", err);
   }

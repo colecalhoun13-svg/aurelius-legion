@@ -26,15 +26,32 @@ async function traceOperatorId(): Promise<string | null> {
   }
 }
 
+async function persist(level: "info" | "error", message: string, context: Record<string, any>): Promise<void> {
+  const operatorId = await traceOperatorId();
+  if (!operatorId) return;
+  await prisma.logEntry.create({
+    data: { operatorId, type: "trace", level, message, context },
+  });
+}
+
 function write(level: "info" | "error", message: string, context: Record<string, any>) {
-  traceOperatorId()
-    .then((operatorId) => {
-      if (!operatorId) return;
-      return prisma.logEntry.create({
-        data: { operatorId, type: "trace", level, message, context },
-      });
-    })
-    .catch(() => {}); // telemetry never throws into the traced path
+  persist(level, message, context).catch(() => {}); // telemetry never throws into the traced path
+}
+
+/**
+ * Emit a "started" marker BEFORE a job runs and AWAIT it. Scheduled jobs
+ * otherwise only leave a trace once they finish (runTraced writes on completion),
+ * so a long-running live job is invisible to catch-up's ranToday — and boot's
+ * catch-up sweep would double-fire it (two morning briefings, duplicate
+ * scoreboards). A committed start marker makes the in-flight run visible.
+ * Best-effort: if telemetry can't write, we don't block the job.
+ */
+export async function markStarted(kind: string, name: string): Promise<void> {
+  try {
+    await persist("info", `${kind}:${name}`, { kind, name, status: "started" });
+  } catch {
+    /* telemetry down — proceed; the completion write still records the run */
+  }
 }
 
 /** One row per boot — the cockpit derives uptime from the latest marker. */
@@ -67,6 +84,12 @@ export async function runTraced<T>(
   meta: Record<string, any> = {}
 ): Promise<T> {
   const started = Date.now();
+  // Scheduled/catch-up runs claim visibility up front so a boot catch-up sweep
+  // can't double-fire a job the live scheduler is mid-flight on. (Requests skip
+  // this — they don't race a catch-up and don't need the extra row.)
+  if (kind === "schedule" || kind === "catchup") {
+    await markStarted(kind, name);
+  }
   try {
     const result = await fn();
     write("info", `${kind}:${name}`, { kind, name, durationMs: Date.now() - started, status: "ok", ...meta });

@@ -367,7 +367,7 @@ model BridgeSignal {
   title      String
   body       String // markdown
   actions    Json? // [{ label, action, payload }]
-  status     String    @default("pending") // "pending" | "surfaced" | "acknowledged" | "acted" | "dismissed" | "expired"
+  status     String    @default("pending") // "pending" | "surfaced" | "acknowledged" | "acting" (transient confirm claim) | "acted" | "dismissed" | "expired"
   surfacedAt DateTime?
   expiresAt  DateTime?
   createdAt  DateTime  @default(now())

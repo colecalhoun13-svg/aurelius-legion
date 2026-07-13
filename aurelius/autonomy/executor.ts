@@ -107,7 +107,13 @@ export async function executeAction(args: {
  * Cole confirmed a gated proposal on the Bridge → commit it now. This is Cole's
  * explicit authority, so it runs the finalizer regardless of grant state (it's
  * how OUTWARD actions ship too: prepared → gated → Cole confirms → executes).
- * Idempotent: an already-acted signal is a no-op success.
+ *
+ * Idempotent AND concurrency-safe: confirm is the gate protecting IRREVERSIBLE
+ * outward actions, so a double-click (or a Bridge tap racing a retry) must never
+ * run the finalizer twice. We atomically CLAIM the row (pending → acting) with a
+ * conditional updateMany before finalizing — only the caller whose update
+ * changed a row proceeds; the loser is a no-op success. On finalizer failure we
+ * release the claim back to pending so Cole can retry.
  */
 export async function confirmAction(
   bridgeSignalId: string
@@ -124,6 +130,17 @@ export async function confirmAction(
   const finalizer = getActionFinalizer(actionClass);
   if (!finalizer) return { ok: false, error: `no finalizer registered for ${actionClass}` };
 
+  // Atomic claim: flip pending/attention → acting only if not already claimed.
+  // The DB serializes concurrent updateManys; exactly one gets count === 1.
+  const claim = await prisma.bridgeSignal.updateMany({
+    where: { id: sig.id, status: { notIn: ["acting", "acted"] } },
+    data: { status: "acting" },
+  });
+  if (claim.count === 0) {
+    // Someone else already claimed or completed it — don't double-execute.
+    return { ok: true, result: "already claimed" };
+  }
+
   try {
     const result = await runTraced(
       "action",
@@ -134,6 +151,10 @@ export async function confirmAction(
     await prisma.bridgeSignal.update({ where: { id: sig.id }, data: { status: "acted" } });
     return { ok: true, result };
   } catch (err: any) {
+    // Release the claim so Cole can retry — the outward action did NOT ship.
+    await prisma.bridgeSignal
+      .updateMany({ where: { id: sig.id, status: "acting" }, data: { status: "pending" } })
+      .catch(() => {});
     return { ok: false, error: err?.message ?? "finalize failed" };
   }
 }

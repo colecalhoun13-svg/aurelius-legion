@@ -16,15 +16,21 @@ export function recordTurns(args: {
   operatorName?: string;
   engine?: string;
 }) {
+  // Stamp explicit timestamps 1ms apart. createMany with @default(now()) can give
+  // both rows an identical createdAt, and recentConversationBlock orders by
+  // createdAt alone — so Cole's turn and the reply could render out of order
+  // ("You:" before "Cole:"). The 1ms gap makes the pair's order deterministic.
+  const t0 = new Date();
   prisma.conversationTurn
     .createMany({
       data: [
-        { role: "cole", content: args.coleMessage.slice(0, 4000), operatorName: args.operatorName },
+        { role: "cole", content: args.coleMessage.slice(0, 4000), operatorName: args.operatorName, createdAt: t0 },
         {
           role: "aurelius",
           content: args.aureliusReply.slice(0, 4000),
           operatorName: args.operatorName,
           engine: args.engine,
+          createdAt: new Date(t0.getTime() + 1),
         },
       ],
     })

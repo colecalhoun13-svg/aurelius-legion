@@ -34,13 +34,24 @@ export function AureliusChat() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // The backend accepts ≤25MB of JSON, and base64 inflates bytes ~33%. Cap the
+  // COMBINED raw size of attached files at ~17MB so the encoded payload stays
+  // under the limit — otherwise several photos at once silently 413 server-side.
+  const TOTAL_RAW_LIMIT = 17 * 1024 * 1024;
+
   const pickFiles = async (files?: FileList | null) => {
     if (!files || files.length === 0) return;
     const next: Attachment[] = [];
+    let running = attachments.reduce((sum, a) => sum + a.file.size, 0);
     for (const file of Array.from(files)) {
       const kind = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : null;
       if (!kind) { setError(`Skipped ${file.name} — only images and videos.`); continue; }
       if (file.size > 18 * 1024 * 1024) { setError(`Skipped ${file.name} — over 18MB.`); continue; }
+      if (running + file.size > TOTAL_RAW_LIMIT) {
+        setError(`Skipped ${file.name} — that would exceed the ~17MB total send limit. Send it in a separate message.`);
+        continue;
+      }
+      running += file.size;
       next.push({ file, mimeType: file.type, kind, dataUrl: await readAsDataUrl(file) });
     }
     if (next.length) { setError(null); setAttachments((prev) => [...prev, ...next]); }

@@ -55,7 +55,7 @@ export async function runMarketPulse(dateStr?: string) {
     try {
       const r = await runResearch({ query: topic, operator: "wealth", depth: "shallow" });
       // No engine = no digest. Never file an error message as market analysis.
-      if (/engine is not configured|Missing .*_API_KEY/i.test(r.synthesis ?? "")) {
+      if (/is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(r.synthesis ?? "")) {
         errors.push(`${topic}: no research engine available`);
       } else if (r.synthesis || r.insights.length > 0) {
         totalInsights += r.insights.length;

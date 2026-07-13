@@ -512,8 +512,15 @@ function providerConfigured(p: string): boolean {
   return !!process.env[PROVIDER_KEYS[p] ?? ""]?.trim();
 }
 
-function engineUnavailableText(text: string): boolean {
-  return /engine is not configured|Missing .*_API_KEY/i.test(text);
+// True when `text` is an engine's "I can't run" string rather than a real
+// answer. Must match EVERY adapter's keyless message, not just Anthropic's:
+//   • anthropicEngine → "Anthropic engine is not configured. Missing ANTHROPIC_API_KEY."
+//   • the other five   → "<PROVIDER>_API_KEY is not configured."  (e.g. GROQ_API_KEY)
+// and the router's own all-providers-down line. Missing any of these lets a
+// config string be served as the answer (no failover) or filed as content —
+// the exact silent-failure class the sweeps flagged.
+export function engineUnavailableText(text: string): boolean {
+  return /is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
 }
 
 // Anything that isn't a usable answer → the router should fail over to the next
@@ -627,15 +634,26 @@ ${primary.text}
 Produce your refined response now.
 `.trim();
 
-    const reviewed = await runAdapter("anthropic", reviewerModel, reviewerSystemPrompt, reviewerUserPrompt);
-
-    response.reviewed = {
-      reviewer: "anthropic",
-      model: reviewerModel,
-      text: reviewed.text,
-      tokensUsed: reviewed.tokensUsed,
-      latencyMs: reviewed.latencyMs,
-    };
+    // The reviewer is a single direct adapter call — no failover chain. If it
+    // throws (network) or comes back a non-answer (Opus unfunded/keyless/empty),
+    // do NOT attach it: a raw "Anthropic ... is not configured." string as
+    // `reviewed` would surface as the refined answer. Fall back to primary.
+    try {
+      const reviewed = await runAdapter("anthropic", reviewerModel, reviewerSystemPrompt, reviewerUserPrompt);
+      if (!isNonAnswer(reviewed.text)) {
+        response.reviewed = {
+          reviewer: "anthropic",
+          model: reviewerModel,
+          text: reviewed.text,
+          tokensUsed: reviewed.tokensUsed,
+          latencyMs: reviewed.latencyMs,
+        };
+      } else {
+        console.warn(`[ROUTER] reviewer (${reviewerModel}) gave no usable answer — keeping primary`);
+      }
+    } catch (err) {
+      console.warn(`[ROUTER] reviewer (${reviewerModel}) threw (${(err as any)?.message ?? err}) — keeping primary`);
+    }
   }
 
   return response;

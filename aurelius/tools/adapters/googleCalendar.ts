@@ -94,6 +94,15 @@ export const googleCalendarAdapter: ToolAdapter = {
         const endAt = data.end
           ? new Date(String(data.end))
           : new Date(startAt.getTime() + (Number(data.durationMinutes) || 60) * 60000);
+        // Validate the end the same way we validate the start — an unparseable
+        // `end` otherwise sails through as an Invalid Date, and an end at/before
+        // the start books a zero/negative-length event.
+        if (isNaN(endAt.getTime())) {
+          return { ok: false, output: null, error: `unparseable end: ${data.end}` };
+        }
+        if (endAt.getTime() <= startAt.getTime()) {
+          return { ok: false, output: null, error: "end must be after start" };
+        }
         const event = await createCalendarEvent({
           title: String(data.title),
           startAt,

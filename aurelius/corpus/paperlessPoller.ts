@@ -43,6 +43,13 @@ async function setCursor(id: number) {
   });
 }
 
+// A doc that fails to ingest holds the cursor so the batch retries it next poll.
+// But a genuinely poison doc (bad encoding, an embedding key that 401s on it
+// forever) would then block the ENTIRE queue permanently. Count attempts per
+// doc id; after MAX_DOC_ATTEMPTS, log loudly, advance past it, and keep going.
+const docAttempts = new Map<number, number>();
+const MAX_DOC_ATTEMPTS = 3;
+
 export async function pollPaperlessOnce() {
   const cfg = config();
   if (!cfg) return { dormant: true as const };
@@ -74,9 +81,21 @@ export async function pollPaperlessOnce() {
         triggeredBy: "schedule",
       });
       ingested++;
+      docAttempts.delete(d.id);
       await setCursor(d.id);
     } catch (err) {
-      console.warn(`[paperless] ingest failed for doc ${d.id} (cursor holds):`, err);
+      const attempts = (docAttempts.get(d.id) ?? 0) + 1;
+      docAttempts.set(d.id, attempts);
+      if (attempts >= MAX_DOC_ATTEMPTS) {
+        console.error(
+          `[paperless] doc ${d.id} failed ${attempts}× — skipping past it so it can't block the queue:`,
+          (err as any)?.message ?? err
+        );
+        docAttempts.delete(d.id);
+        await setCursor(d.id); // advance past the poison doc
+        continue;
+      }
+      console.warn(`[paperless] ingest failed for doc ${d.id} (attempt ${attempts}/${MAX_DOC_ATTEMPTS}, cursor holds):`, err);
       break; // stop the batch; retry from cursor next poll
     }
   }

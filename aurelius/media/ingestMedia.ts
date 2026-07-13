@@ -5,6 +5,7 @@
 // it in-conversation, and — fire-and-forget — files what it saw into the second
 // brain so it's remembered and searchable. Not a separate inbox; part of chat.
 
+import { createHash } from "node:crypto";
 import { analyzeImage, analyzeVideo, visionConfigured } from "./vision.ts";
 
 export type MediaKind = "image" | "video";
@@ -42,11 +43,20 @@ export async function captureMediaNote(args: {
   try {
     const { ingestDocument } = await import("../corpus/ingest.ts");
     const label = args.caption?.slice(0, 80) || args.filename || `${args.kind} in chat`;
+    // Dedup on the analysis content — a Telegram redelivery or a retry after a
+    // crash mid-ingest would otherwise file the same photo/video twice.
+    const dedupKey =
+      "media:" +
+      createHash("sha256")
+        .update(`${args.kind}|${args.caption ?? ""}|${args.analysis}`)
+        .digest("hex")
+        .slice(0, 32);
     await ingestDocument({
       title: `[${args.kind}] ${label}`,
       content: (args.caption ? `Caption: ${args.caption}\n\n` : "") + args.analysis,
       sourceType: "upload",
       domain: "personal",
+      dedupKey,
     });
   } catch (err: any) {
     console.warn("[media] capture note failed (non-fatal):", err?.message ?? err);

@@ -220,33 +220,49 @@ export async function setKnowledge(
     return shape;
   }
 
-  // Update — archive old value to history, bump version
-  const priorEntry: KnowledgeHistoryEntry = {
-    value: existing.value,
-    sourceType: existing.sourceType as KnowledgeSourceType,
-    sourceId: existing.sourceId,
-    rationale: existing.rationale,
-    version: existing.version,
-    replacedAt: new Date().toISOString(),
-    replacedBy: input.updatedBy,
-  };
+  // Update — archive old value to history, bump version. OPTIMISTIC CONCURRENCY:
+  // two concurrent writers each read version N, each append to the SAME history
+  // snapshot, each write N+1 → the second clobbers the first and one revision's
+  // history entry vanishes. Guard the write on the version we read (updateMany
+  // where version = N); if we lost the race (count 0), re-read and retry.
+  let current = existing;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const priorEntry: KnowledgeHistoryEntry = {
+      value: current.value,
+      sourceType: current.sourceType as KnowledgeSourceType,
+      sourceId: current.sourceId,
+      rationale: current.rationale,
+      version: current.version,
+      replacedAt: new Date().toISOString(),
+      replacedBy: input.updatedBy,
+    };
 
-  const updated = await prisma.knowledgeEntry.update({
-    where: { id: existing.id },
-    data: {
-      value: input.value,
-      sourceType: input.sourceType,
-      sourceId: input.sourceId ?? null,
-      rationale: input.rationale ?? null,
-      updatedBy: input.updatedBy,
-      version: existing.version + 1,
-      history: [...(existing.history as any[]), priorEntry],
-    },
-  });
+    const res = await prisma.knowledgeEntry.updateMany({
+      where: { id: current.id, version: current.version },
+      data: {
+        value: input.value,
+        sourceType: input.sourceType,
+        sourceId: input.sourceId ?? null,
+        rationale: input.rationale ?? null,
+        updatedBy: input.updatedBy,
+        version: current.version + 1,
+        history: [...(current.history as any[]), priorEntry],
+      },
+    });
 
-  const shape = entryToShape(updated);
-  indexKnowledgeEntry(shape);
-  return shape;
+    if (res.count === 1) {
+      const updated = await prisma.knowledgeEntry.findUnique({ where: { id: current.id } });
+      const shape = entryToShape(updated!);
+      indexKnowledgeEntry(shape);
+      return shape;
+    }
+
+    // Lost the race — someone bumped the version between our read and write.
+    const reread = await prisma.knowledgeEntry.findUnique({ where: { id: existing.id } });
+    if (!reread) break; // vanished underneath us
+    current = reread;
+  }
+  throw new Error(`setKnowledge: version conflict on ${input.scope}/${input.key} after retries`);
 }
 
 /**

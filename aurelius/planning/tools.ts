@@ -21,6 +21,7 @@
 
 import { prisma } from "../core/db/prisma.ts";
 import { runLLM } from "../llm/runLLM.ts";
+import { extractDirectives } from "../llm/directiveParser.ts";
 import { computeOperatorScore } from "../measurement/operatorScore.ts";
 
 const DAILY_CAPACITY = 5; // tasks/day baseline; calendar shrinks it on busy days
@@ -111,7 +112,7 @@ export async function detectOverload() {
 }
 
 function engineUnavailable(text: string): boolean {
-  return /engine is not configured|Missing .*_API_KEY/i.test(text);
+  return /is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
 }
 
 /**
@@ -331,7 +332,11 @@ first, where the risk is (overload/overdue), and one sentence on pace. Under
 ${skeleton}
 `.trim(),
     });
-    if (!engineUnavailable(response.text)) briefing = response.text;
+    if (!engineUnavailable(response.text)) {
+      // Strip any stray directive — the tool catalog is in the prompt, but this
+      // briefing must never print raw "[TOOL: ...]" text to Cole.
+      briefing = extractDirectives(response.text ?? "").cleanedText || response.text;
+    }
   } catch (err) {
     console.warn("[planning] briefing voice failed, shipping skeleton:", err);
   }

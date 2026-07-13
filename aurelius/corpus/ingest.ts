@@ -24,6 +24,10 @@ export type IngestInput = {
   domain?: string;
   operatorName?: string; // resolved to id if provided
   triggeredBy?: string;  // "cole" | "schedule" | "self_directed"
+  // Idempotency anchor. When set, a second ingest with the same key returns the
+  // existing doc instead of creating a duplicate (Telegram redelivery, a crash
+  // mid-analysis and retry). Stored in sourceUrl when no real URL is given.
+  dedupKey?: string;
 };
 
 // Deterministic v1 synopsis: first ~2 sentences, capped. The LLM-written
@@ -35,6 +39,17 @@ function synopsize(text: string): string {
 }
 
 export async function ingestDocument(input: IngestInput) {
+  // Idempotency: if this exact source was already ingested, return it rather
+  // than duplicating four writes (doc + embeddings + memory + signal).
+  const anchor = input.sourceUrl ?? input.dedupKey ?? null;
+  if (anchor) {
+    const existing = await prisma.corpusDocument.findFirst({ where: { sourceUrl: anchor } });
+    if (existing) {
+      console.log(`[corpus] skip duplicate ingest for "${input.title}" (already ${existing.id})`);
+      return { doc: existing, chunkCount: existing.chunkCount ?? 0, deduped: true as const };
+    }
+  }
+
   const run = await prisma.ingestionRun.create({
     data: {
       runType: "corpus_upload",
@@ -53,12 +68,13 @@ export async function ingestDocument(input: IngestInput) {
 
     const summary = synopsize(input.content);
 
-    // 3. register
+    // 3. register — persist the dedup anchor in sourceUrl when no real URL,
+    // so a later redelivery finds it and skips (see idempotency check above).
     const doc = await prisma.corpusDocument.create({
       data: {
         title: input.title,
         sourceType: input.sourceType ?? "note",
-        sourceUrl: input.sourceUrl ?? null,
+        sourceUrl: input.sourceUrl ?? input.dedupKey ?? null,
         domain: input.domain ?? "personal",
         operatorId,
         summary,
