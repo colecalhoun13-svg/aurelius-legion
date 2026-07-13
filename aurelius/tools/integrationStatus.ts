@@ -52,6 +52,7 @@ export async function getIntegrations(): Promise<Integration[]> {
 
   const fredLive = registered.has("fred") && has("FRED_API_KEY");
   const visionLive = has("GEMINI_API_KEY");
+  const webLive = registered.has("web") && (has("TAVILY_API_KEY") || has("GEMINI_API_KEY"));
 
   // Memory/recall: what's actually powering semantic recall right now.
   const embProvider = (process.env.EMBEDDINGS_PROVIDER ?? "openai").trim().toLowerCase();
@@ -88,6 +89,13 @@ export async function getIntegrations(): Promise<Integration[]> {
       status: "live",
       desc: "arXiv · PubMed · Semantic Scholar · OpenAlex — keyless, always on",
       glyph: "❉",
+    },
+    {
+      name: "Live web search",
+      status: webLive ? "live" : "config",
+      desc: "Real-time search (grounded, with sources) + page fetch — no more fabricated trends",
+      glyph: "⌕",
+      need: webLive ? undefined : "GEMINI_API_KEY (you have it) or a free TAVILY_API_KEY",
     },
     {
       name: "Google Sheets",

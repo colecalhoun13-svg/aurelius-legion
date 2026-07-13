@@ -9,6 +9,7 @@ import { googleSheetsAdapter } from "./adapters/googleSheets.ts";
 import { googleCalendarAdapter } from "./adapters/googleCalendar.ts";
 import { gmailAdapter } from "./adapters/gmail.ts";
 import { fredAdapter } from "./adapters/fred.ts";
+import { webAdapter } from "./adapters/web.ts";
 
 export function registerAllTools(): void {
   registerTool(googleSheetsAdapter);
@@ -16,6 +17,7 @@ export function registerAllTools(): void {
   registerTool(googleCalendarAdapter);
   registerTool(gmailAdapter);
   registerTool(fredAdapter);
+  registerTool(webAdapter);
 
   // Future tools register here:
   //   registerTool(instagramAdapter);        // Phase 6

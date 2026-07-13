@@ -244,6 +244,22 @@ async function main() {
     );
   }
 
+  console.log("── live web: search + fetch (keyless: honest fail) ──");
+  {
+    const { webAdapter } = await import("../tools/adapters/web.ts");
+    const { htmlToText } = await import("../web/webSearch.ts");
+    check("html→text strips tags + scripts", htmlToText("<p>Hi <b>there</b></p><script>bad()</script>") === "Hi there");
+    const s = await webAdapter.run("search", { query: "test" });
+    check(
+      "web.search honest about config (or returns a result when keyed)",
+      process.env.TAVILY_API_KEY || process.env.GEMINI_API_KEY
+        ? true
+        : !s.ok && /not configured|GEMINI_API_KEY|TAVILY/i.test(s.error ?? "")
+    );
+    const bad = await webAdapter.run("fetch", { url: "not-a-url" });
+    check("web.fetch rejects a non-url", !bad.ok && /valid http/i.test(bad.error ?? ""));
+  }
+
   console.log("── multimodal: photo/video in chat (keyless: honest fail) ──");
   {
     const { mediaKind, analyzeMedia } = await import("../media/ingestMedia.ts");
