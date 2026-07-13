@@ -520,7 +520,7 @@ function providerConfigured(p: string): boolean {
 // config string be served as the answer (no failover) or filed as content —
 // the exact silent-failure class the sweeps flagged.
 export function engineUnavailableText(text: string): boolean {
-  return /is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
+  return /_API_KEY is not configured|engine is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
 }
 
 // Anything that isn't a usable answer → the router should fail over to the next

@@ -125,16 +125,23 @@ export async function runCatchUp() {
   todayStart.setHours(0, 0, 0, 0);
   const isSunday = now.getDay() === 0;
 
+  // Cole may have re-timed a ritual from chat; honor the LIVE time so catch-up
+  // fires (or waits) at the overridden hour, not the hardcoded default below.
+  const { getEffectiveTime } = await import("./schedule.ts");
+
   let fired = 0;
   for (const job of JOBS) {
     if (job.sundayOnly && !isSunday) continue;
+    const eff = getEffectiveTime(job.name);
+    const hour = eff?.hour ?? job.hour;
+    const minute = eff?.minute ?? job.minute ?? 0;
     const due = new Date(now);
-    due.setHours(job.hour, job.minute ?? 0, 0, 0);
+    due.setHours(hour, minute, 0, 0);
     if (due > now) continue; // not due yet today — the live scheduler owns it
     if (job.expiresHour !== undefined && now.getHours() >= job.expiresHour) continue;
     if (await ranToday(job.name, todayStart)) continue;
 
-    console.log(`[catchup] ${job.name} was due ${job.hour}:${String(job.minute ?? 0).padStart(2, "0")} and never ran — firing now`);
+    console.log(`[catchup] ${job.name} was due ${hour}:${String(minute).padStart(2, "0")} and never ran — firing now`);
     try {
       await runTraced("catchup", job.name, job.run);
       fired++;

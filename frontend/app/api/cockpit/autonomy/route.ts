@@ -6,11 +6,16 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const rows = await prisma.logEntry.findMany({
+    // Scheduled/catch-up runs now leave a "started" marker AND a completion row
+    // (started marker makes in-flight jobs visible to catch-up). Hide the started
+    // markers here so the feed shows one line per run, not two — fetch extra then
+    // filter, so we still land 14 real rows.
+    const raw = await prisma.logEntry.findMany({
       where: { type: { in: ["trace", "boot"] } },
       orderBy: { createdAt: "desc" },
-      take: 14,
+      take: 28,
     });
+    const rows = raw.filter((r) => ((r.context ?? {}) as any).status !== "started").slice(0, 14);
     return NextResponse.json(
       rows.map((r) => {
         const ctx = (r.context ?? {}) as any;

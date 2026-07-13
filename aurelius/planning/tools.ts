@@ -112,7 +112,7 @@ export async function detectOverload() {
 }
 
 function engineUnavailable(text: string): boolean {
-  return /is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
+  return /_API_KEY is not configured|engine is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
 }
 
 /**
@@ -370,6 +370,82 @@ ${skeleton}
 
   console.log(`[planning] weekly session filed (${instance.id})`);
   return { instanceId: instance.id, briefing, analysis, overload };
+}
+
+/**
+ * DAILY PLANNING — "plan my day." The daily analogue of planWeekLite: pull
+ * today's open + scheduled tasks, overdue backlog, calendar, and today's
+ * capacity, then voice a short plan (one priority, attack order, risk, pace).
+ * Persists as today's plan (aurelius-generated) so the Today view reflects it.
+ * Propose, never impose — nothing self-schedules.
+ */
+export async function planDay(dateStr?: string) {
+  const { getToday, upsertTodayPlan } = await import("../productivity/service.ts");
+  const today = await getToday(dateStr);
+  const overload = await detectOverload();
+  const todayCap = overload.days[0];
+
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  const taskLines = today.tasks.length
+    ? today.tasks.map((t: any) => `- [${t.priority}] ${t.title}${t.scheduledFor ? " (scheduled)" : ""}`).join("\n")
+    : "(nothing queued for today yet)";
+  const overdueLines = today.overdue.length
+    ? today.overdue.slice(0, 8).map((t: any) => `- ${t.title} (overdue)`).join("\n")
+    : "(no overdue)";
+  const calLines = today.calendarEvents.length
+    ? today.calendarEvents
+        .map((e: any) => {
+          const d = new Date(e.startAt);
+          return `- ${pad2(d.getHours())}:${pad2(d.getMinutes())} ${e.title}`;
+        })
+        .join("\n")
+    : "(no calendar events synced for today)";
+
+  const skeleton = [
+    `Date: ${today.date}`,
+    today.plan?.focus ? `Existing focus: ${today.plan.focus}` : "",
+    `Open today (${today.tasks.length}):\n${taskLines}`,
+    `Overdue backlog:\n${overdueLines}`,
+    `Calendar:\n${calLines}`,
+    todayCap
+      ? `Capacity today: ${todayCap.capacity} task-slots, ${todayCap.due} due${todayCap.overloaded ? " — OVERLOADED" : ""}`
+      : "",
+    `Done so far today: ${today.doneToday}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  let plan = skeleton;
+  try {
+    const response = await runLLM({
+      taskType: "chat",
+      operators: { primary: "strategy", secondaries: [] },
+      input: `
+Write Cole's plan for TODAY from the ground truth below. Structure: the single
+priority for today, the order to attack the open items, where the risk is
+(overload / overdue / a tight calendar), and one sentence on pace. Under 150
+words, no headers. Propose — Cole decides; nothing self-schedules.
+
+═══ GROUND TRUTH ═══
+${skeleton}
+`.trim(),
+    });
+    if (!engineUnavailable(response.text)) {
+      plan = extractDirectives(response.text ?? "").cleanedText || response.text;
+    }
+  } catch (err) {
+    console.warn("[planning] day plan voice failed, shipping skeleton:", err);
+  }
+
+  await upsertTodayPlan({ date: today.date, headline: plan.slice(0, 1000), generatedBy: "aurelius" });
+
+  return {
+    date: today.date,
+    plan,
+    openCount: today.tasks.length,
+    overdueCount: today.overdue.length,
+    overloaded: !!todayCap?.overloaded,
+  };
 }
 
 /**

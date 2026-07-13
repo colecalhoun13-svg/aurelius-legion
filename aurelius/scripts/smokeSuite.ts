@@ -252,6 +252,13 @@ async function main() {
         isNonAnswer("OPENAI_API_KEY is not configured.") === true &&
         isNonAnswer("All configured LLM providers failed (anthropic → openai). Last error: x") === true
     );
+    // …but a legitimate answer that mentions an unconfigured integration is a REAL
+    // answer (Aurelius is dormant-until-configured), not a non-answer to fail over.
+    check(
+      "a real 'X is not configured' answer is NOT mistaken for an engine failure",
+      isNonAnswer("Your Google Calendar is not configured yet — connect it at /api/calendar/auth.") === false &&
+        isNonAnswer("Paperless is not configured, so document sync is dormant.") === false
+    );
   }
 
   console.log("── live web: search + fetch (keyless: honest fail) ──");
@@ -323,6 +330,36 @@ async function main() {
     try { await analyzeMedia(Buffer.from("not-an-image"), "image/png"); }
     catch (e: any) { honest = /GEMINI_API_KEY|Gemini/i.test(e?.message ?? ""); }
     check("media analysis fails honestly without a real Gemini call", honest);
+  }
+
+  console.log("── schedule control: Cole re-times a ritual from chat ──");
+  {
+    const { scheduleNamed, setSchedule, listSchedules, parseTime, getEffectiveTime } = await import("../core/schedule.ts");
+    check(
+      "parseTime reads 6:30 / 7am / 10pm / 22:00 / 7, rejects junk",
+      JSON.stringify(parseTime("6:30")) === JSON.stringify({ hour: 6, minute: 30 }) &&
+        JSON.stringify(parseTime("7am")) === JSON.stringify({ hour: 7, minute: 0 }) &&
+        JSON.stringify(parseTime("10pm")) === JSON.stringify({ hour: 22, minute: 0 }) &&
+        JSON.stringify(parseTime("22:00")) === JSON.stringify({ hour: 22, minute: 0 }) &&
+        JSON.stringify(parseTime("7")) === JSON.stringify({ hour: 7, minute: 0 }) &&
+        parseTime("banana") === null &&
+        parseTime("25:00") === null
+    );
+    // Register throwaway jobs (real node-schedule, harmless; process exits at end).
+    scheduleNamed(`${TAG}_daily`, "0 7 * * *", "test morning briefing", () => {});
+    scheduleNamed(`${TAG}_sun`, "0 20 * * 0", "test weekly scoreboard", () => {});
+
+    const rd = await setSchedule(`${TAG}_daily`, "6:30", { persist: false });
+    check("re-time a daily ritual: new time, cadence stays daily", rd.ok && rd.time === "06:30" && rd.cadence === "daily");
+    const rs = await setSchedule("test weekly scoreboard", "9:15", { persist: false }); // fuzzy label
+    check("re-time by fuzzy label: Sunday cadence preserved", rs.ok && rs.time === "09:15" && rs.cadence === "Sundays");
+    const eff = getEffectiveTime(`${TAG}_daily`);
+    check("catch-up sees the overridden time (no double/missed fire)", eff?.hour === 6 && eff?.minute === 30);
+    check("listSchedules reflects the change", listSchedules().some((r) => r.name === `${TAG}_daily` && r.time === "06:30"));
+    const bad = await setSchedule("no such ritual", "6:30", { persist: false });
+    check("unknown ritual rejected honestly", !bad.ok && /no scheduled ritual/i.test(bad.error ?? ""));
+    const badTime = await setSchedule(`${TAG}_daily`, "banana", { persist: false });
+    check("unparseable time rejected honestly", !badTime.ok && /couldn't read/i.test(badTime.error ?? ""));
   }
 
   console.log("── the acting layer: autonomy grants (§2.5 Hybrid Autonomy) ──");

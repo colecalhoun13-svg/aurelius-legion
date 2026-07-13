@@ -311,7 +311,9 @@ export function startTelegramBridge() {
           const chatId = String(msg.chat.id);
           if (!chat || chatId !== chat) {
             // Not Cole. Echo the id (so Cole can configure) and nothing more.
-            await send(msg.chat.id, `This is a private system. Chat id: ${chatId}`);
+            // Guard the send: a stranger's stale chat throws "chat not found",
+            // which must not bubble to the poll catch and disable the bridge.
+            await send(msg.chat.id, `This is a private system. Chat id: ${chatId}`).catch(() => {});
             continue;
           }
 
@@ -357,8 +359,10 @@ export function startTelegramBridge() {
         const m = err?.message ?? String(err);
         // A revoked/rotated token can't be polled away — stop, don't hot-loop
         // forever spraying getUpdates at Telegram. (The prior code retried EVERY
-        // error every 10s indefinitely, including this permanent one.)
-        if (/unauthorized|401|not found|404/i.test(m)) {
+        // error every 10s indefinitely, including this permanent one.) Narrow to
+        // AUTH signals only: "not found"/"404" also appears in "chat not found"
+        // from a stranger's stale chat, which must NOT disable the whole bridge.
+        if (/unauthorized|401/i.test(m)) {
           console.error(
             `[telegram] TOKEN REJECTED during poll (${m}). Bridge disabled — fix TELEGRAM_BOT_TOKEN + restart.`
           );

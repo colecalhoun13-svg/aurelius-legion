@@ -1057,7 +1057,10 @@ app.post("/api/aurelius/register-sheet", async (req: Request, res: Response) => 
 // Nightly at 21:30: close the day, compute intent-vs-action gap.
 // Sunday 09:00: weekend research pass → proposals for Monday review.
 // ═══════════════════════════════════════════════════════════════════
-import nodeSchedule from "node-schedule";
+// Named schedule registry: every ritual registers by name so Cole can re-time it
+// from chat ("move my brief to 6:30") — the change reschedules the live job and
+// persists. Defaults below stay the source of truth for cadence/day-of-week.
+import { scheduleNamed, applyScheduleOverrides } from "./core/schedule.ts";
 import { runWeekendPulse } from "./autonomy/pulse.ts";
 import {
   ensureRituals,
@@ -1071,6 +1074,12 @@ import { startTelegramBridge, sendToCole } from "./telegram/bot.ts";
 import("./core/db/prisma.ts")
   .then((m) => m.warmupDb())
   .catch((err) => console.error("[db] warmup init failed:", err));
+
+// Release any confirm-proposals stranded in "acting" by a crash mid-finalize —
+// at boot none can be legitimately in flight.
+import("./autonomy/executor.ts")
+  .then((m) => m.reapStaleActing())
+  .catch((err) => console.error("[executor] reap init failed:", err));
 
 ensureRituals().catch((err) => console.error("[rituals] seed failed:", err));
 // The five living documents exist from first boot (founding editions).
@@ -1101,7 +1110,7 @@ import("./core/catchUp.ts")
 
 // Market pulse at 06:30 — crypto/equities/macro digest into the wealth
 // corpus before the day starts. Signals only; Cole makes the calls.
-nodeSchedule.scheduleJob("30 6 * * *", async () => {
+scheduleNamed("market_pulse", "30 6 * * *", "market pulse", async () => {
   try {
     await runTraced("schedule", "market_pulse", async () => {
       const { runMarketPulse } = await import("./wealth/engine.ts");
@@ -1113,7 +1122,7 @@ nodeSchedule.scheduleJob("30 6 * * *", async () => {
 });
 // RSS standing feeds at 06:00 — reading digests into the corpus. Dormant
 // until research.rss_feeds exists in Living Knowledge.
-nodeSchedule.scheduleJob("0 6 * * *", async () => {
+scheduleNamed("rss_ingest", "0 6 * * *", "RSS ingest", async () => {
   try {
     await runTraced("schedule", "rss_ingest", async () => {
       const { pollRssOnce } = await import("./corpus/rssIngest.ts");
@@ -1127,7 +1136,7 @@ nodeSchedule.scheduleJob("0 6 * * *", async () => {
 // Acts on its own if granted (calendar.schedule_protection), else proposes on
 // the Bridge; deduped so it never spams. Runs before the 07:00 briefing so the
 // briefing reflects any holds just placed.
-nodeSchedule.scheduleJob("45 6 * * *", async () => {
+scheduleNamed("schedule_protection", "45 6 * * *", "schedule protection", async () => {
   try {
     await runTraced("schedule", "schedule_protection", async () => {
       const { runScheduleProtection } = await import("./autonomy/workflows/scheduleProtection.ts");
@@ -1138,7 +1147,7 @@ nodeSchedule.scheduleJob("45 6 * * *", async () => {
   }
 });
 // Morning briefing at 07:00 — the day opens with a push, not a blank page.
-nodeSchedule.scheduleJob("0 7 * * *", async () => {
+scheduleNamed("morning_briefing", "0 7 * * *", "morning briefing", async () => {
   try {
     await runTraced("schedule", "morning_briefing", async () => {
       const { briefing } = await generateMorningBriefing();
@@ -1149,7 +1158,7 @@ nodeSchedule.scheduleJob("0 7 * * *", async () => {
   }
 });
 // Nightly debrief at 21:30 — wraps the deterministic pulse (gap math) in voice.
-nodeSchedule.scheduleJob("30 21 * * *", async () => {
+scheduleNamed("nightly_debrief", "30 21 * * *", "nightly debrief", async () => {
   try {
     await runTraced("schedule", "nightly_debrief", async () => {
       const { debrief } = await generateNightlyDebrief();
@@ -1160,7 +1169,7 @@ nodeSchedule.scheduleJob("30 21 * * *", async () => {
   }
 });
 // Midday check at 13:00 — corrective, and silent when Cole is on pace.
-nodeSchedule.scheduleJob("0 13 * * *", async () => {
+scheduleNamed("midday_check", "0 13 * * *", "midday check", async () => {
   try {
     await runTraced("schedule", "midday_check", async () => {
       const { runMiddayCheck } = await import("./planning/tools.ts");
@@ -1172,7 +1181,7 @@ nodeSchedule.scheduleJob("0 13 * * *", async () => {
 });
 // Persona observation — Sunday 17:00: how did Cole actually communicate
 // this week? Calibration proposals land on the bench (propose, never impose).
-nodeSchedule.scheduleJob("0 17 * * 0", async () => {
+scheduleNamed("persona_observer", "0 17 * * 0", "persona observer", async () => {
   try {
     await runTraced("schedule", "persona_observer", async () => {
       const { observeCommunicationStyle } = await import("./persona/observer.ts");
@@ -1183,7 +1192,7 @@ nodeSchedule.scheduleJob("0 17 * * 0", async () => {
   }
 });
 // Weekly planning session — Sunday 18:00, after the research pass digests.
-nodeSchedule.scheduleJob("0 18 * * 0", async () => {
+scheduleNamed("weekly_planning", "0 18 * * 0", "weekly planning", async () => {
   try {
     await runTraced("schedule", "weekly_planning", async () => {
       const { planWeekLite } = await import("./planning/tools.ts");
@@ -1195,7 +1204,7 @@ nodeSchedule.scheduleJob("0 18 * * 0", async () => {
     console.error("[planning] weekly session failed:", err);
   }
 });
-nodeSchedule.scheduleJob("0 9 * * 0", async () => {
+scheduleNamed("weekend_pulse", "0 9 * * 0", "weekend research pulse", async () => {
   try {
     await runTraced("schedule", "weekend_pulse", async () => {
       await runWeekendPulse();
@@ -1209,7 +1218,7 @@ nodeSchedule.scheduleJob("0 9 * * 0", async () => {
 });
 // Knowledge freshness — Sunday 19:00: stale entries get re-check
 // proposals on the bench (capped, cooldown; propose, never impose).
-nodeSchedule.scheduleJob("0 19 * * 0", async () => {
+scheduleNamed("freshness_sweep", "0 19 * * 0", "freshness sweep", async () => {
   try {
     await runTraced("schedule", "freshness_sweep", async () => {
       const { runFreshnessSweep } = await import("./knowledge/freshness.ts");
@@ -1220,7 +1229,7 @@ nodeSchedule.scheduleJob("0 19 * * 0", async () => {
   }
 });
 // Weekly scoreboard — Sunday 20:00, one honest snapshot of both lanes.
-nodeSchedule.scheduleJob("0 20 * * 0", () => {
+scheduleNamed("weekly_scoreboard", "0 20 * * 0", "weekly scoreboard", () => {
   runTraced("schedule", "weekly_scoreboard", () => computeWeeklySnapshot()).catch((err) =>
     console.error("[scoreboard] failed:", err)
   );
@@ -1229,13 +1238,16 @@ nodeSchedule.scheduleJob("0 20 * * 0", () => {
 // state and proposes missions. Proposed only; Cole launches.
 import("./autonomy/initiative.ts")
   .then(({ runInitiativePulse }) => {
-    nodeSchedule.scheduleJob("0 8 * * *", () => {
+    scheduleNamed("initiative_pulse", "0 8 * * *", "initiative pulse", () => {
       runTraced("schedule", "initiative_pulse", () => runInitiativePulse()).catch((err) =>
         console.error("[initiative] failed:", err)
       );
     });
   })
   .catch((err) => console.error("[initiative] init failed:", err));
+
+// Apply any Cole-set time overrides on top of the defaults just registered.
+applyScheduleOverrides().catch((err) => console.error("[schedule] override apply failed:", err));
 
 // JSON error handler — MUST be last (after all routes). Without it, a body that
 // exceeds the 25MB json limit (e.g. several photos attached at once) throws a

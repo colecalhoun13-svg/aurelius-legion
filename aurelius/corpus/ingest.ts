@@ -39,11 +39,14 @@ function synopsize(text: string): string {
 }
 
 export async function ingestDocument(input: IngestInput) {
-  // Idempotency: if this exact source was already ingested, return it rather
-  // than duplicating four writes (doc + embeddings + memory + signal).
-  const anchor = input.sourceUrl ?? input.dedupKey ?? null;
-  if (anchor) {
-    const existing = await prisma.corpusDocument.findFirst({ where: { sourceUrl: anchor } });
+  // Idempotency: ONLY when the caller passes an explicit dedupKey (media notes,
+  // where a Telegram redelivery would double-file the same photo). We must NOT
+  // dedup on sourceUrl — RSS reuses the stable feed URL for every daily digest,
+  // and a URL can legitimately be re-ingested, so keying on it would make those
+  // ingest exactly once ever. The dedupKey is persisted into sourceUrl below so
+  // this lookup finds it on the next identical call.
+  if (input.dedupKey) {
+    const existing = await prisma.corpusDocument.findFirst({ where: { sourceUrl: input.dedupKey } });
     if (existing) {
       console.log(`[corpus] skip duplicate ingest for "${input.title}" (already ${existing.id})`);
       return { doc: existing, chunkCount: existing.chunkCount ?? 0, deduped: true as const };

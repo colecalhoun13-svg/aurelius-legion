@@ -23,9 +23,11 @@ const MIN_QUESTION = 12; // chars — below this, matching is noise
 const MIN_ANSWER = 40;   // don't compile one-word replies
 
 function engineUnavailableText(text: string): boolean {
-  // "<PROVIDER>_API_KEY is not configured." has no "Missing " and no "engine",
-  // so the narrow form let it slip through — broadened to any "is not configured".
-  return /is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
+  // Match every engine's keyless string ("<PROVIDER>_API_KEY is not configured.",
+  // "Anthropic engine is not configured.") and the all-down line — but NOT a
+  // legitimate "your calendar is not configured" answer (Aurelius is
+  // dormant-until-configured by design), so anchor to _API_KEY / "engine".
+  return /_API_KEY is not configured|engine is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
 }
 
 /** Only these task types are semantically re-servable — never realtime. */

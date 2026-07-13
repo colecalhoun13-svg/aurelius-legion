@@ -33,7 +33,7 @@ export async function ensureRituals() {
 
 // LLM text that indicates no engine answered (keyless environment).
 function isEngineUnavailable(text: string): boolean {
-  return /is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
+  return /_API_KEY is not configured|engine is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
 }
 
 async function voiceOver(skeleton: string, instruction: string): Promise<string> {

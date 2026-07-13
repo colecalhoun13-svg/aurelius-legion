@@ -104,6 +104,28 @@ export async function executeAction(args: {
 }
 
 /**
+ * Boot reaper. confirmAction claims a row (pending → acting) before finalizing.
+ * If the process dies mid-finalize, that row is stranded in "acting": the Bridge
+ * (which lists pending/surfaced) hides it, and a retry hits the claim's
+ * `notIn ["acting","acted"]` guard and no-ops. At BOOT no confirm can be in
+ * flight — the process that set "acting" is gone — so every "acting" row is
+ * stranded and safe to release back to pending. Call once on startup.
+ */
+export async function reapStaleActing(): Promise<number> {
+  try {
+    const { count } = await prisma.bridgeSignal.updateMany({
+      where: { status: "acting" },
+      data: { status: "pending" },
+    });
+    if (count > 0) console.log(`[executor] reaped ${count} stranded 'acting' proposal(s) → pending`);
+    return count;
+  } catch (err) {
+    console.warn("[executor] reapStaleActing failed:", (err as any)?.message ?? err);
+    return 0;
+  }
+}
+
+/**
  * Cole confirmed a gated proposal on the Bridge → commit it now. This is Cole's
  * explicit authority, so it runs the finalizer regardless of grant state (it's
  * how OUTWARD actions ship too: prepared → gated → Cole confirms → executes).
