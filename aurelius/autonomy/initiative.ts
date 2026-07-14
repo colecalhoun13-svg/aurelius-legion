@@ -17,6 +17,7 @@
 
 import { prisma } from "../core/db/prisma.ts";
 import { createMission } from "../missions/engine.ts";
+import { isActionGranted } from "./grants.ts";
 
 type Proposal = { title: string; objective: string; domain: string; operatorName?: string };
 
@@ -92,12 +93,25 @@ export async function runInitiativePulse() {
     }
   }
 
-  // Create as PROPOSED — never run. Dedup against in-flight missions.
+  // Create the missions, then decide: if research.ingest is GRANTED, Aurelius
+  // runs its own proposals through the acting layer (NORTH_STAR §4 — "the acting
+  // layer is what changes that"); otherwise they stay proposed for Cole to launch.
+  const granted = await isActionGranted("research.ingest");
   const proposed: string[] = [];
+  const ran: string[] = [];
   for (const c of candidates) {
     if (await alreadyInFlight(c.title)) continue;
     const mission = await createMission({ ...c, origin: "aurelius_proposed" });
-    proposed.push(mission.title);
+    if (granted) {
+      // Run in the background so the pulse doesn't block on multi-LLM missions.
+      // Granted → executeAction finalizes (runs it) and files an executed proposal.
+      import("./workflows/researchIngest.ts")
+        .then((m) => m.runMissionThroughActingLayer(mission.id))
+        .catch((err) => console.error("[initiative] auto-run failed:", err));
+      ran.push(mission.title);
+    } else {
+      proposed.push(mission.title);
+    }
   }
 
   if (proposed.length > 0) {
@@ -115,6 +129,8 @@ export async function runInitiativePulse() {
     });
   }
 
-  console.log(`[initiative] scanned: ${candidates.length} candidates, ${proposed.length} proposed`);
-  return { candidates: candidates.length, proposed };
+  console.log(
+    `[initiative] scanned ${candidates.length} candidates · ${proposed.length} proposed · ${ran.length} auto-run (research.ingest granted)`
+  );
+  return { candidates: candidates.length, proposed, ran };
 }
