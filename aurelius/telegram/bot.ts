@@ -234,9 +234,30 @@ async function handleCommand(chatId: string | number, text: string) {
     }
 
     default: {
-      // Plain text — quick capture. Frictionless inbox from anywhere.
+      // Plain text → the FULL chat pipeline (tools, planning, memory, second
+      // brain), the same one the web chat uses — so "add a task", "what's on
+      // today", "plan my day", "grant schedule protection", "draft an IG post"
+      // all work from the phone, not just slash commands. The bot runs in the
+      // backend process, so we hit the local endpoint over loopback. Fall back
+      // to quick-capture only if the pipeline is unreachable or returns nothing.
+      try {
+        const port = process.env.PORT || "3001";
+        const res = await fetch(`http://localhost:${port}/api/aurelius`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text }),
+        });
+        const data: any = await res.json().catch(() => ({}));
+        const reply = (data?.reply ?? "").toString().trim();
+        if (reply) {
+          await send(chatId, reply);
+          return;
+        }
+      } catch (err) {
+        console.warn("[telegram] chat pipeline unreachable — capturing to inbox instead:", (err as any)?.message ?? err);
+      }
       await quickCapture({ content: text, captureContext: "telegram" });
-      await send(chatId, "Captured.");
+      await send(chatId, "Captured to your inbox.");
     }
   }
 }

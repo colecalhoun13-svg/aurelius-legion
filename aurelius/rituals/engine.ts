@@ -13,6 +13,7 @@ import { prisma } from "../core/db/prisma.ts";
 import { runLLM } from "../llm/runLLM.ts";
 import { extractDirectives } from "../llm/directiveParser.ts";
 import { getToday } from "../productivity/service.ts";
+import { operatorToday } from "../core/time.ts";
 import { runNightlyPulse } from "../autonomy/pulse.ts";
 
 const RITUAL_DEFS = [
@@ -93,7 +94,7 @@ async function fileInstance(ritualName: string, outputText: string, structured?:
 // ── Morning briefing ─────────────────────────────────────────────────
 
 export async function generateMorningBriefing(dateStr?: string) {
-  const today = await getToday(dateStr);
+  const today = await getToday(dateStr ?? operatorToday());
 
   const lines: string[] = [];
   lines.push(`Focus: ${today.plan?.focus?.trim() || "(no focus set yet — set one)"}`);

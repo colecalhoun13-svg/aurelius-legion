@@ -218,8 +218,11 @@ async function executeToolDirectives(
 // cells, …). Those are ground truth: even a synthesized prose answer should keep
 // them, so a paraphrase that drifts on a number isn't the only thing Cole sees.
 function hasGroundTruthRows(executed: ExecutedTool[]): boolean {
+  const KEYS = ["rows", "tasks", "goals", "rituals", "athletes", "overdue", "sessionsToReview"];
   return executed.some(
-    (e) => e.result.ok && Array.isArray((e.result.output as any)?.rows) && (e.result.output as any).rows.length > 0
+    (e) =>
+      e.result.ok &&
+      KEYS.some((k) => Array.isArray((e.result.output as any)?.[k]) && (e.result.output as any)[k].length > 0)
   );
 }
 
@@ -296,6 +299,25 @@ function summarizeToolResults(executed: ExecutedTool[]): string {
             lines.push(`   • ${s.date} · ${s.client} · ${s.dayTab} · ${s.exerciseCount} exercises · ${s.workingSetCount} working sets`);
           }
         }
+      }
+
+      // Cole's own lane (productivity/planning reads) — the ground truth beneath
+      // any synthesized prose, so a paraphrase that drops or renames a task/goal
+      // isn't the only thing he sees.
+      if (Array.isArray(output.tasks)) {
+        for (const t of output.tasks as any[]) {
+          const due = t.dueDate ? ` (due ${new Date(t.dueDate).toISOString().slice(0, 10)})` : "";
+          lines.push(`   • ${t.title}${t.priority && t.priority !== "normal" ? ` [${t.priority}]` : ""}${due}`);
+        }
+      }
+      if (Array.isArray(output.overdue) && output.overdue.length) {
+        for (const t of output.overdue as any[]) lines.push(`   ⚠ overdue: ${t.title}`);
+      }
+      if (Array.isArray(output.goals) && ex.directive.tool === "productivity") {
+        for (const g of output.goals as any[]) lines.push(`   • ${g.name}${g.progressPct != null ? ` — ${g.progressPct}%` : ""}`);
+      }
+      if (Array.isArray(output.rituals)) {
+        for (const r of output.rituals as any[]) lines.push(`   • ${r.label} ${r.time}${r.enabled === false ? " [paused]" : ""}`);
       }
     }
   }

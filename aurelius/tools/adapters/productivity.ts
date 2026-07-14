@@ -9,6 +9,7 @@
 
 import type { ToolAdapter, ToolAdapterResult } from "../types.ts";
 import { prisma } from "../../core/db/prisma.ts";
+import { operatorToday } from "../../core/time.ts";
 import {
   createTask,
   completeTask,
@@ -75,7 +76,7 @@ export const productivityAdapter: ToolAdapter = {
   async run(action, data): Promise<ToolAdapterResult> {
     switch (action) {
       case "get_today": {
-        const t = await getToday();
+        const t = await getToday(operatorToday()); // Cole's local day, not UTC
         return {
           ok: true,
           output: {
@@ -112,7 +113,7 @@ export const productivityAdapter: ToolAdapter = {
         if (schedChk.error) return { ok: false, output: null, error: schedChk.error };
 
         // On today's deck if it has no date, OR is due/scheduled today; else "next".
-        const todayStr = new Date().toISOString().slice(0, 10);
+        const todayStr = operatorToday();
         const isToday =
           (dueChk.iso && dueChk.iso.slice(0, 10) === todayStr) ||
           (schedChk.iso && schedChk.iso.slice(0, 10) === todayStr);
@@ -204,7 +205,7 @@ export const productivityAdapter: ToolAdapter = {
 
       case "set_focus": {
         if (!data?.focus) return { ok: false, output: null, error: "focus required" };
-        await upsertTodayPlan({ focus: String(data.focus), generatedBy: "cole_manual" });
+        await upsertTodayPlan({ date: operatorToday(), focus: String(data.focus), generatedBy: "cole_manual" });
         return { ok: true, output: { summary: `Today's focus set: "${String(data.focus)}".` } };
       }
 

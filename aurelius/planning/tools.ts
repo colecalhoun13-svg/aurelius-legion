@@ -381,7 +381,8 @@ ${skeleton}
  */
 export async function planDay(dateStr?: string) {
   const { getToday, upsertTodayPlan } = await import("../productivity/service.ts");
-  const today = await getToday(dateStr);
+  const { operatorToday } = await import("../core/time.ts");
+  const today = await getToday(dateStr ?? operatorToday());
   const overload = await detectOverload();
   const todayCap = overload.days[0];
 
