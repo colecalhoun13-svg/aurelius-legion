@@ -432,6 +432,38 @@ async function main() {
     check("resolveJob refuses an ambiguous ritual query", !ambigJob.ok && /matches \d+ rituals/i.test(ambigJob.error ?? ""));
   }
 
+  console.log("── outward path: draft (inward) + publish (gated, never on its own) ──");
+  {
+    const { contentAdapter } = await import("../tools/adapters/content.ts");
+    const { instagramConfigured } = await import("../outward/instagram.ts");
+    const { confirmAction } = await import("../autonomy/executor.ts");
+    const { isActionGranted } = await import("../autonomy/grants.ts");
+    const { registerActionFinalizer } = await import("../autonomy/actionRegistry.ts");
+    const { finalizeContentPublish } = await import("../autonomy/workflows/contentPublish.ts");
+    registerActionFinalizer("content.publish", finalizeContentPublish);
+
+    check("instagram dormant-honest without a token", instagramConfigured() === false);
+    check("content.publish is non-grantable (outward by construction)", (await isActionGranted("content.publish")) === false);
+
+    const noImg = await contentAdapter.run("publish_post", { caption: "hi" });
+    check("publish_post refuses instagram without a public image url", !noImg.ok && /image/i.test(noImg.error ?? ""));
+
+    const staged = await contentAdapter.run("publish_post", { caption: `${TAG} 500lb squat`, imageUrl: "https://example.com/pr.jpg" });
+    const sigId = staged.output?.bridgeSignalId as string | undefined;
+    const sig = sigId ? await prisma.bridgeSignal.findUnique({ where: { id: sigId } }) : null;
+    check("publish_post GATES — files a pending Bridge confirm, nothing published", staged.ok && staged.output?.gated === true && sig?.status === "pending");
+
+    // Confirm without a token: honest failure (no fake 'posted!'), reverts to pending.
+    const confirmed = sigId ? await confirmAction(sigId) : { ok: true, error: "" };
+    const after = sigId ? await prisma.bridgeSignal.findUnique({ where: { id: sigId } }) : null;
+    check(
+      "confirm without IG token fails honestly + reverts to pending (rule 3)",
+      !confirmed.ok && /not configured/i.test(confirmed.error ?? "") && after?.status === "pending"
+    );
+
+    if (sigId) await prisma.bridgeSignal.delete({ where: { id: sigId } }).catch(() => {});
+  }
+
   console.log("── the acting layer: autonomy grants (§2.5 Hybrid Autonomy) ──");
   {
     const { grantAutonomy, revokeAutonomy, isActionGranted } = await import("../autonomy/grants.ts");

@@ -52,6 +52,7 @@ export async function getIntegrations(): Promise<Integration[]> {
 
   const fredLive = registered.has("fred") && has("FRED_API_KEY");
   const visionLive = has("GEMINI_API_KEY");
+  const instagramLive = registered.has("content") && has("INSTAGRAM_ACCESS_TOKEN") && has("INSTAGRAM_BUSINESS_ID");
   const webLive = registered.has("web") && (has("TAVILY_API_KEY") || has("GEMINI_API_KEY"));
 
   // Memory/recall: what's actually powering semantic recall right now.
@@ -174,11 +175,13 @@ export async function getIntegrations(): Promise<Integration[]> {
       need: "name your feeds in one conversation (research.rss_feeds)",
     },
     {
-      name: "Instagram Graph",
-      status: "parked",
-      desc: "Content operator's eyes — analytics, trends, drafts",
+      name: "Content / Instagram publish",
+      status: instagramLive ? "live" : "config",
+      desc: "Draft posts in your voice (inward) + publish to Instagram — outward, so every post stops for your one-tap confirm on the Bridge",
       glyph: "▣",
-      need: "business engine — parked for your working session",
+      need: instagramLive
+        ? undefined
+        : "Meta app + IG business account → INSTAGRAM_ACCESS_TOKEN + INSTAGRAM_BUSINESS_ID (docs/SETUP.md). Drafting works keyless now.",
     },
     {
       name: "Cal.com (self-hosted)",
