@@ -1236,6 +1236,11 @@ scheduleNamed("weekly_scoreboard", "0 20 * * 0", "weekly scoreboard", () => {
 });
 // Initiative — 08:00 daily, after the briefing: Aurelius scans its own
 // state and proposes missions. Proposed only; Cole launches.
+//
+// Every other ritual registers synchronously above; this one is behind a dynamic
+// import. Apply the persisted time/pause overrides ONLY after it registers, so a
+// Cole-paused or re-timed initiative pulse isn't skipped by a boot race (the
+// disabled-set loop does registry.has(name) with no retry).
 import("./autonomy/initiative.ts")
   .then(({ runInitiativePulse }) => {
     scheduleNamed("initiative_pulse", "0 8 * * *", "initiative pulse", () => {
@@ -1244,10 +1249,11 @@ import("./autonomy/initiative.ts")
       );
     });
   })
-  .catch((err) => console.error("[initiative] init failed:", err));
-
-// Apply any Cole-set time overrides on top of the defaults just registered.
-applyScheduleOverrides().catch((err) => console.error("[schedule] override apply failed:", err));
+  .catch((err) => console.error("[initiative] init failed:", err))
+  .finally(() => {
+    // Apply Cole-set time overrides + paused rituals over the registered defaults.
+    applyScheduleOverrides().catch((err) => console.error("[schedule] override apply failed:", err));
+  });
 
 // JSON error handler — MUST be last (after all routes). Without it, a body that
 // exceeds the 25MB json limit (e.g. several photos attached at once) throws a

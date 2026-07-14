@@ -147,22 +147,45 @@ export function getEffectiveTime(name: string): { hour: number; minute: number }
   return { hour, minute };
 }
 
-/** Resolve a job by exact name or a fuzzy label match ("morning brief" → morning_briefing). */
-function resolveJob(nameOrLabel: string): NamedJob | null {
+/**
+ * Resolve a job by exact name/label, else fuzzy. Returns `{ job }` for a single
+ * hit, `{ job: null, candidates }` when a loose query matches MORE THAN ONE
+ * (e.g. "weekly" → weekly_planning + weekly_scoreboard, "pulse" → market/weekend/
+ * initiative) so the caller can ask Cole to disambiguate instead of silently
+ * mutating the first-registered sibling. `{ job: null, candidates: [] }` = none.
+ */
+function resolveJob(nameOrLabel: string): { job: NamedJob | null; candidates: NamedJob[] } {
   const q = nameOrLabel.trim().toLowerCase().replace(/[\s-]+/g, "_");
-  if (registry.has(q)) return registry.get(q)!;
-  // fuzzy: match on label words or name substring
+  if (registry.has(q)) return { job: registry.get(q)!, candidates: [] };
+
   const bare = nameOrLabel.trim().toLowerCase();
+  // Exact label match is unambiguous even if a substring would match others.
+  const exactLabel = [...registry.values()].filter((j) => j.label.toLowerCase() === bare);
+  if (exactLabel.length === 1) return { job: exactLabel[0], candidates: [] };
+
+  const matches = new Set<NamedJob>();
   for (const j of registry.values()) {
-    if (j.name.includes(q) || q.includes(j.name)) return j;
-    if (j.label.toLowerCase().includes(bare) || bare.includes(j.label.toLowerCase())) return j;
+    if (j.name.includes(q) || q.includes(j.name)) matches.add(j);
+    if (j.label.toLowerCase().includes(bare) || bare.includes(j.label.toLowerCase())) matches.add(j);
   }
-  // last try: match on the first word (e.g. "morning")
-  const first = bare.split(/\s+/)[0];
-  for (const j of registry.values()) {
-    if (j.label.toLowerCase().includes(first) || j.name.includes(first)) return j;
+  if (matches.size === 0) {
+    // last resort: first word (e.g. "morning")
+    const first = bare.split(/\s+/)[0];
+    for (const j of registry.values()) {
+      if (j.label.toLowerCase().includes(first) || j.name.includes(first)) matches.add(j);
+    }
   }
-  return null;
+  const arr = [...matches];
+  if (arr.length === 1) return { job: arr[0], candidates: [] };
+  return { job: null, candidates: arr };
+}
+
+/** Shared error for a resolve miss/ambiguity. */
+function resolveError(nameOrLabel: string, candidates: NamedJob[]): string {
+  if (candidates.length > 1) {
+    return `"${nameOrLabel}" matches ${candidates.length} rituals: ${candidates.map((c) => c.label).join(", ")}. Which one?`;
+  }
+  return `no scheduled ritual matches "${nameOrLabel}". Known: ${[...registry.values()].map((j) => j.label).join(", ")}.`;
 }
 
 async function readOverrides(): Promise<Record<string, string>> {
@@ -174,22 +197,41 @@ async function readOverrides(): Promise<Record<string, string>> {
   return v && typeof v === "object" && !Array.isArray(v) ? v : {};
 }
 
-async function writeOverride(name: string, cron: string): Promise<void> {
-  const { resolveOperatorId, setKnowledge } = await import("../knowledge/store.ts");
+// Schedule config is CONFIG, not knowledge — write it with raw prisma so it
+// never lands in the vector index (setKnowledge embeds its value, which would
+// spray cron JSON into semantic recall). Same spirit as hard rule 6 for creds.
+async function writeConfig(key: string, value: any): Promise<void> {
+  const { prisma } = await import("./db/prisma.ts");
+  const { resolveOperatorId } = await import("../knowledge/store.ts");
   const opId = await resolveOperatorId("global");
-  if (!opId) return;
+  if (!opId) {
+    console.warn(`[schedule] no global operator — can't persist ${key} (live change stands, won't survive restart)`);
+    return;
+  }
+  await prisma.knowledgeEntry.upsert({
+    where: { operatorId_scope_key: { operatorId: opId, scope: OVERRIDES_SCOPE, key } },
+    update: { value, updatedBy: "cole", active: true },
+    create: {
+      operatorId: opId,
+      scope: OVERRIDES_SCOPE,
+      key,
+      value,
+      sourceType: "system",
+      sourceId: "schedule_control",
+      rationale: "schedule control",
+      createdBy: "cole",
+      updatedBy: "cole",
+      version: 1,
+      active: true,
+      history: [],
+    },
+  });
+}
+
+async function writeOverride(name: string, cron: string): Promise<void> {
   const current = await readOverrides();
   current[name] = cron;
-  await setKnowledge({
-    operatorId: opId,
-    scope: OVERRIDES_SCOPE,
-    key: OVERRIDES_KEY,
-    value: current,
-    sourceType: "system" as any,
-    sourceId: "schedule_control",
-    rationale: "Cole-set ritual time",
-    updatedBy: "cole",
-  });
+  await writeConfig(OVERRIDES_KEY, current);
 }
 
 async function readDisabled(): Promise<string[]> {
@@ -202,19 +244,7 @@ async function readDisabled(): Promise<string[]> {
 }
 
 async function writeDisabled(names: string[]): Promise<void> {
-  const { resolveOperatorId, setKnowledge } = await import("../knowledge/store.ts");
-  const opId = await resolveOperatorId("global");
-  if (!opId) return;
-  await setKnowledge({
-    operatorId: opId,
-    scope: OVERRIDES_SCOPE,
-    key: DISABLED_KEY,
-    value: [...new Set(names)],
-    sourceType: "system" as any,
-    sourceId: "schedule_control",
-    rationale: "Cole-paused rituals",
-    updatedBy: "cole",
-  });
+  await writeConfig(DISABLED_KEY, [...new Set(names)]);
 }
 
 export type SetEnabledResult = { ok: boolean; error?: string; name?: string; label?: string; enabled?: boolean };
@@ -230,12 +260,9 @@ export async function setEnabled(
   opts: { persist?: boolean } = {}
 ): Promise<SetEnabledResult> {
   const persist = opts.persist ?? true;
-  const target = resolveJob(nameOrLabel);
+  const { job: target, candidates } = resolveJob(nameOrLabel);
   if (!target) {
-    return {
-      ok: false,
-      error: `no scheduled ritual matches "${nameOrLabel}". Known: ${[...registry.values()].map((j) => j.label).join(", ")}.`,
-    };
+    return { ok: false, error: resolveError(nameOrLabel, candidates) };
   }
 
   if (enabled && !target.enabled) {
@@ -285,12 +312,9 @@ export async function setSchedule(
   opts: { persist?: boolean } = {}
 ): Promise<SetScheduleResult> {
   const persist = opts.persist ?? true;
-  const target = resolveJob(nameOrLabel);
+  const { job: target, candidates } = resolveJob(nameOrLabel);
   if (!target) {
-    return {
-      ok: false,
-      error: `no scheduled ritual matches "${nameOrLabel}". Known: ${[...registry.values()].map((j) => j.label).join(", ")}.`,
-    };
+    return { ok: false, error: resolveError(nameOrLabel, candidates) };
   }
   const parsed = parseTime(time);
   if (!parsed) {

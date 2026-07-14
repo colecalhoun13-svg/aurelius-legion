@@ -342,6 +342,19 @@ async function main() {
     check("productivity.get_today returns a snapshot", todayR.ok && Array.isArray(todayR.output?.tasks));
     const compT = await productivityAdapter.run("complete_task", { title: `${TAG} intake form` });
     check("productivity.complete_task marks it done by title", compT.ok && compT.output?.id === taskId);
+    // Ambiguity guard: a loose substring matching >1 OPEN task must NOT silently
+    // complete one ("call" ⊂ "recall the order").
+    const aTask = await productivityAdapter.run("add_task", { title: `${TAG} call mom` });
+    const bTask = await productivityAdapter.run("add_task", { title: `${TAG} recall the order` });
+    const ambigC = await productivityAdapter.run("complete_task", { title: "call" });
+    check("complete_task refuses an ambiguous substring", !ambigC.ok && /matches \d+ open tasks/i.test(ambigC.error ?? ""));
+    for (const t of [aTask, bTask]) {
+      const tid = t.output?.id as string | undefined;
+      if (tid) {
+        await prisma.vectorEmbedding.deleteMany({ where: { sourceId: tid } }).catch(() => {});
+        await prisma.task.delete({ where: { id: tid } }).catch(() => {});
+      }
+    }
     const setF = await productivityAdapter.run("set_focus", { focus: `${TAG} ship the page` });
     check("productivity.set_focus sets today's focus", setF.ok);
     const addG = await productivityAdapter.run("add_goal", { name: `${TAG} sign athletes`, horizon: "quarter", target: 10 });
@@ -413,6 +426,10 @@ async function main() {
     const resume = await setEnabled(`${TAG}_daily`, true, { persist: false });
     check("resume a ritual: re-enabled at its current time", resume.ok && resume.enabled === true && isJobEnabled(`${TAG}_daily`) === true);
     check("resumed ritual keeps the time set while paused", getEffectiveTime(`${TAG}_daily`)?.hour === 5);
+    // Ambiguity guard: a query matching >1 ritual (both throwaway jobs share the
+    // TAG in their names) must list candidates, not silently pick the first.
+    const ambigJob = await setEnabled(`${TAG}`, false, { persist: false });
+    check("resolveJob refuses an ambiguous ritual query", !ambigJob.ok && /matches \d+ rituals/i.test(ambigJob.error ?? ""));
   }
 
   console.log("── the acting layer: autonomy grants (§2.5 Hybrid Autonomy) ──");

@@ -112,11 +112,26 @@ export const productivityAdapter: ToolAdapter = {
       case "complete_task": {
         let id = data?.id ? String(data.id) : "";
         if (!id && data?.title) {
-          const matches = await listTasks({ limit: 200 });
-          const hit = matches.find((t) => t.title.toLowerCase() === String(data.title).toLowerCase())
-            ?? matches.find((t) => t.title.toLowerCase().includes(String(data.title).toLowerCase()));
-          if (!hit) return { ok: false, output: null, error: `no task matching "${data.title}"` };
-          id = hit.id;
+          const q = String(data.title).toLowerCase().trim();
+          // Only OPEN tasks are completable — never resolve to a done/abandoned
+          // one (which would report a false "Done"). Prefer an exact title; fall
+          // back to substring ONLY if it's unambiguous, else list candidates so
+          // we never silently complete the wrong task ("call" ⊂ "recall order").
+          const open = (await listTasks({ limit: 200 })).filter(
+            (t) => t.status !== "done" && t.status !== "abandoned"
+          );
+          const exact = open.filter((t) => t.title.toLowerCase() === q);
+          const subs = open.filter((t) => t.title.toLowerCase().includes(q));
+          const pool = exact.length ? exact : subs;
+          if (pool.length === 0) return { ok: false, output: null, error: `no open task matching "${data.title}"` };
+          if (pool.length > 1) {
+            return {
+              ok: false,
+              output: null,
+              error: `"${data.title}" matches ${pool.length} open tasks: ${pool.slice(0, 5).map((t) => `"${t.title}"`).join(", ")}. Be more specific or pass the id.`,
+            };
+          }
+          id = pool[0].id;
         }
         if (!id) return { ok: false, output: null, error: "id or title required" };
         const done = await completeTask(id);
