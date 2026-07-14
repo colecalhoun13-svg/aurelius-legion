@@ -58,6 +58,7 @@ export async function runInitiativePulse() {
     _max: { createdAt: true },
   });
   for (const d of domains) {
+    if (!d.domain) continue; // a null domain would propose "Refresh the null field"
     if (d._max.createdAt && d._max.createdAt < tenDays) {
       candidates.push({
         title: `Refresh the ${d.domain} field`,
@@ -96,22 +97,40 @@ export async function runInitiativePulse() {
   // Create the missions, then decide: if research.ingest is GRANTED, Aurelius
   // runs its own proposals through the acting layer (NORTH_STAR §4 — "the acting
   // layer is what changes that"); otherwise they stay proposed for Cole to launch.
+  //
+  // HARD CAP on auto-run: the candidate set is data-driven (one per stale/thin
+  // domain + at-risk project) and can be large. Firing every one as a detached
+  // promise would launch a swarm of concurrent multi-LLM missions on a single
+  // tick — a rate-limit/cost storm, unattended. Cap per pulse, and run the batch
+  // SEQUENTIALLY in the background so at most one mission is in flight at a time.
+  const MAX_AUTORUN_PER_PULSE = 3;
   const granted = await isActionGranted("research.ingest");
   const proposed: string[] = [];
   const ran: string[] = [];
+  const toRun: string[] = [];
   for (const c of candidates) {
     if (await alreadyInFlight(c.title)) continue;
     const mission = await createMission({ ...c, origin: "aurelius_proposed" });
-    if (granted) {
-      // Run in the background so the pulse doesn't block on multi-LLM missions.
-      // Granted → executeAction finalizes (runs it) and files an executed proposal.
-      import("./workflows/researchIngest.ts")
-        .then((m) => m.runMissionThroughActingLayer(mission.id))
-        .catch((err) => console.error("[initiative] auto-run failed:", err));
+    if (granted && toRun.length < MAX_AUTORUN_PER_PULSE) {
+      toRun.push(mission.id);
       ran.push(mission.title);
     } else {
+      // Over the cap (or ungranted) → stays proposed for Cole to launch.
       proposed.push(mission.title);
     }
+  }
+  if (toRun.length > 0) {
+    // Detached from the pulse, but sequential within the batch.
+    (async () => {
+      const { runMissionThroughActingLayer } = await import("./workflows/researchIngest.ts");
+      for (const id of toRun) {
+        try {
+          await runMissionThroughActingLayer(id);
+        } catch (err) {
+          console.error("[initiative] auto-run failed:", err);
+        }
+      }
+    })().catch((err) => console.error("[initiative] auto-run batch failed:", err));
   }
 
   if (proposed.length > 0) {

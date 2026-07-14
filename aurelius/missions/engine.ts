@@ -262,6 +262,18 @@ export async function reportMission(missionId: string, outputs: string[]) {
 // ── Orchestrator ─────────────────────────────────────────────────────
 
 export async function runMission(missionId: string) {
+  // Atomic run-claim: the initiative auto-run and a Cole tap (or a double-click)
+  // can both reach here for the same mission. Without a claim, planMission's
+  // deleteMany/createMany run twice — steps deleted mid-execute, double LLM spend,
+  // duplicate corpus ingest. Flip proposed/planned → running; bail if we lost.
+  const claim = await prisma.mission.updateMany({
+    where: { id: missionId, status: { in: ["proposed", "planned"] } },
+    data: { status: "running", startedAt: new Date() },
+  });
+  if (claim.count === 0) {
+    console.log(`[missions] ${missionId} already running/finished — skipping duplicate run`);
+    return prisma.mission.findUnique({ where: { id: missionId } });
+  }
   try {
     await planMission(missionId);
     const outputs = await executeMission(missionId);

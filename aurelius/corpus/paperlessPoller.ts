@@ -79,6 +79,11 @@ export async function pollPaperlessOnce() {
         sourceUrl: `${cfg.url}/documents/${d.id}/`,
         domain: "documents",
         triggeredBy: "schedule",
+        // Idempotent on the Paperless doc id: if setCursor fails after a
+        // successful ingest (cold Neon, version conflict), the next poll re-fetches
+        // this same doc — without a dedupKey that re-creates a duplicate corpus
+        // doc + embeddings + memory + signal every 10 min.
+        dedupKey: `paperless:${d.id}`,
       });
       ingested++;
       docAttempts.delete(d.id);

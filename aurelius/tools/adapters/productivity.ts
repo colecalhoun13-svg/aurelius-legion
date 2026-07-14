@@ -8,6 +8,7 @@
 // Cole's own (origin "cole") since he asked for them explicitly in conversation.
 
 import type { ToolAdapter, ToolAdapterResult } from "../types.ts";
+import { prisma } from "../../core/db/prisma.ts";
 import {
   createTask,
   completeTask,
@@ -93,17 +94,38 @@ export const productivityAdapter: ToolAdapter = {
       case "add_task": {
         if (!data?.title) return { ok: false, output: null, error: "title required" };
         const priority = data.priority && PRIORITIES.has(String(data.priority)) ? String(data.priority) : undefined;
-        // No due/scheduled given → put it on today's deck rather than the inbox,
-        // since Cole asked for it in the moment.
-        const hasWhen = !!(data.due || data.scheduledFor);
+        // Validate dates HERE, not in Prisma: the tool description invites "due
+        // Friday", but new Date("Friday") is Invalid Date (Prisma throws a cryptic
+        // error), and "07/18" silently parses to the year 2001. Require a real
+        // ISO-ish date and fail with a helpful message (hard rule 3).
+        const checkDate = (label: string, v: any): { iso?: string; error?: string } => {
+          if (v === undefined || v === null || v === "") return {};
+          const d = new Date(String(v));
+          if (Number.isNaN(d.getTime()) || d.getFullYear() < 2020 || d.getFullYear() > 2100) {
+            return { error: `couldn't read "${v}" as a ${label} — use YYYY-MM-DD (e.g. 2026-07-18).` };
+          }
+          return { iso: d.toISOString() };
+        };
+        const dueChk = checkDate("due date", data.due);
+        if (dueChk.error) return { ok: false, output: null, error: dueChk.error };
+        const schedChk = checkDate("scheduled time", data.scheduledFor);
+        if (schedChk.error) return { ok: false, output: null, error: schedChk.error };
+
+        // On today's deck if it has no date, OR is due/scheduled today; else "next".
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const isToday =
+          (dueChk.iso && dueChk.iso.slice(0, 10) === todayStr) ||
+          (schedChk.iso && schedChk.iso.slice(0, 10) === todayStr);
+        const hasFutureWhen = !!((dueChk.iso || schedChk.iso) && !isToday);
+
         const task = await createTask({
           title: String(data.title),
           description: data.description ? String(data.description) : undefined,
           priority,
           domain: data.domain ? String(data.domain) : undefined,
-          dueDate: data.due ? String(data.due) : undefined,
-          scheduledFor: data.scheduledFor ? String(data.scheduledFor) : undefined,
-          status: hasWhen ? "next" : "today",
+          dueDate: dueChk.iso,
+          scheduledFor: schedChk.iso,
+          status: hasFutureWhen ? "next" : "today",
           origin: "cole",
         });
         return { ok: true, output: { summary: `Added "${task.title}"${task.dueDate ? ` (due ${new Date(task.dueDate).toISOString().slice(0, 10)})` : ""}.`, id: task.id } };
@@ -114,12 +136,15 @@ export const productivityAdapter: ToolAdapter = {
         if (!id && data?.title) {
           const q = String(data.title).toLowerCase().trim();
           // Only OPEN tasks are completable — never resolve to a done/abandoned
-          // one (which would report a false "Done"). Prefer an exact title; fall
-          // back to substring ONLY if it's unambiguous, else list candidates so
-          // we never silently complete the wrong task ("call" ⊂ "recall order").
-          const open = (await listTasks({ limit: 200 })).filter(
-            (t) => t.status !== "done" && t.status !== "abandoned"
-          );
+          // one (would report a false "Done"). Filter in the QUERY, not after a
+          // limit: client-side filtering of listTasks({limit:200}) could drop open
+          // tasks behind 200 done rows. Prefer an exact title; fall back to
+          // substring only if unambiguous, else list candidates (never guess).
+          const open = await prisma.task.findMany({
+            where: { status: { notIn: ["done", "abandoned"] } },
+            orderBy: { createdAt: "desc" },
+            take: 500,
+          });
           const exact = open.filter((t) => t.title.toLowerCase() === q);
           const subs = open.filter((t) => t.title.toLowerCase().includes(q));
           const pool = exact.length ? exact : subs;

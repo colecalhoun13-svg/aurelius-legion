@@ -371,16 +371,32 @@ async function listAthletes(_data: Record<string, any>): Promise<ToolAdapterResu
 // derived from the file title. Kills the curl-per-athlete step.
 // ═══════════════════════════════════════════════════════════════════
 
-/** "Mike Johnson — In-Season 2026 Program" → "Mike Johnson".
- *  Cut at the first separator, strip trailing boilerplate words + years.
- *  Falls back to the full trimmed title if the heuristic empties it. */
+/** Strip anything that could be a directive or break out of a memory line —
+ *  a sheet title is attacker-influenceable (anyone who shares a sheet with the
+ *  discoverable service account controls it), and it gets persisted into the
+ *  `clients` memory that's recalled into prompts. Neutralize before storing. */
+function sanitizeTitle(title: string): string {
+  return String(title ?? "")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ") // control chars incl. newlines/tabs
+    .replace(/\[(TOOL|SAVE|KNOWLEDGE_UPDATE_PROPOSE|KNOWLEDGE_UPDATE_CONFIRM)\b/gi, "[ ") // defang directive heads
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+}
+
+/** "Mike Johnson — In-Season 2026 Program" -> "Mike Johnson". Cut at the first
+ *  separator (incl. ':'), strip boilerplate + years. Returns "" when the result
+ *  is empty/pure-boilerplate — the caller then SKIPS and asks rather than
+ *  registering a garbage name ("3B", "Squat", "Training Log 2026"). */
 function deriveClientName(title: string): string {
-  const cut = title.split(/\s+[—–|]\s+|\s+-\s+|[([]/)[0] ?? title;
-  const cleaned = cut
-    .replace(/\b(program|training|sheet|log|tracker|template|20\d{2})\b/gi, "")
+  const clean = sanitizeTitle(title);
+  const cut = clean.split(/\s*[\u2014\u2013|:]\s*|\s+-\s+|[([]/)[0] ?? clean;
+  const stripped = cut
+    .replace(/\b(program|training|sheet|log|tracker|template|in-?season|off-?season|block|phase|day\s*\d+|20\d{2})\b/gi, "")
     .replace(/\s+/g, " ")
     .trim();
-  return cleaned || title.trim();
+  if (!stripped || !/[a-z]/i.test(stripped) || /^\d+[a-z]?$/i.test(stripped)) return "";
+  return stripped;
 }
 
 async function syncRoster(_data: Record<string, any>): Promise<ToolAdapterResult> {
@@ -448,11 +464,21 @@ async function syncRoster(_data: Record<string, any>): Promise<ToolAdapterResult
         skipped.push({ title: f.name, reason: "already registered" });
         continue;
       }
+      const safeTitle = sanitizeTitle(f.name);
       const name = deriveClientName(f.name);
+      // Couldn't derive a clean name (title-first, label-only, or pure boilerplate)
+      // → don't register a garbage name; ask Cole to name it explicitly.
+      if (!name) {
+        skipped.push({
+          title: safeTitle,
+          reason: `couldn't read an athlete name from "${safeTitle}" — register it manually with a name (POST /api/aurelius/register-sheet)`,
+        });
+        continue;
+      }
       const nameKey = name.toLowerCase();
       if (knownNames.has(nameKey) && knownNames.get(nameKey) !== f.id) {
         skipped.push({
-          title: f.name,
+          title: safeTitle,
           reason: `name "${name}" is already registered to a different sheet — register this one manually with a distinct name (POST /api/aurelius/register-sheet)`,
         });
         continue;
@@ -461,12 +487,12 @@ async function syncRoster(_data: Record<string, any>): Promise<ToolAdapterResult
       await saveMemory({
         operator: "training",
         category: "clients",
-        value: `${name} — registered training sheet (auto-discovered from "${f.name}")`,
+        value: `${name} — registered training sheet (auto-discovered from "${safeTitle}")`,
         relatedOperators: ["business"],
         metadata: {
           clientName: name,
           sheetId: f.id,
-          sheetTitle: f.name,
+          sheetTitle: safeTitle,
           sport: null,
           position: null,
           registeredAt: new Date().toISOString(),
@@ -475,7 +501,7 @@ async function syncRoster(_data: Record<string, any>): Promise<ToolAdapterResult
         },
       });
       knownNames.set(nameKey, f.id);
-      registered.push({ name, title: f.name });
+      registered.push({ name, title: safeTitle });
     }
 
     const summary =

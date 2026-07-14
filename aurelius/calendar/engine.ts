@@ -105,13 +105,20 @@ export async function syncCalendar(opts: { daysBack?: number; daysAhead?: number
     if (!pageToken) break;
   }
 
-  // Mirror Google-side deletions: anything local in the window that the
-  // sweep didn't see no longer exists upstream.
-  removed += (
-    await prisma.calendarEvent.deleteMany({
-      where: { startAt: { gte: timeMin, lte: timeMax }, externalId: { notIn: seen } },
-    })
-  ).count;
+  // Mirror Google-side deletions: anything local in the window that the sweep
+  // didn't see no longer exists upstream. BUT only when we actually fetched the
+  // whole window — if we hit MAX_PAGES with a live pageToken, pages we never
+  // fetched aren't in `seen`, and pruning would delete real upstream events
+  // (they'd vanish from Today/briefings/availability). Skip the prune then.
+  if (pageToken) {
+    console.warn(`[calendar] sync hit MAX_PAGES with more events remaining — skipping prune to avoid deleting unfetched events`);
+  } else {
+    removed += (
+      await prisma.calendarEvent.deleteMany({
+        where: { startAt: { gte: timeMin, lte: timeMax }, externalId: { notIn: seen } },
+      })
+    ).count;
+  }
 
   console.log(`[calendar] sync: ${upserted} events upserted, ${removed} removed`);
   return { ok: true as const, upserted, removed, window: { from: timeMin, to: timeMax } };

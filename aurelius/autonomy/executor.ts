@@ -105,20 +105,50 @@ export async function executeAction(args: {
 
 /**
  * Boot reaper. confirmAction claims a row (pending → acting) before finalizing.
- * If the process dies mid-finalize, that row is stranded in "acting": the Bridge
- * (which lists pending/surfaced) hides it, and a retry hits the claim's
- * `notIn ["acting","acted"]` guard and no-ops. At BOOT no confirm can be in
- * flight — the process that set "acting" is gone — so every "acting" row is
- * stranded and safe to release back to pending. Call once on startup.
+ * If the process dies mid-finalize, that row is stranded in "acting". At BOOT no
+ * confirm is in flight, so we recover stranded rows — BUT the recovery differs by
+ * tier, because a crash can land AFTER the outward API call succeeded but BEFORE
+ * the "acted" write:
+ *   • INWARD → safe to release to "pending" (reversible/idempotent; re-running a
+ *     schedule hold or a mission re-check does no harm).
+ *   • OUTWARD (publish/send/spend) → NEVER silently re-arm — it may have already
+ *     shipped, and a re-confirm would double-publish. Surface it to Cole as a
+ *     "surfaced" signal with a warning so he decides, rather than auto-re-arming.
  */
 export async function reapStaleActing(): Promise<number> {
   try {
-    const { count } = await prisma.bridgeSignal.updateMany({
-      where: { status: "acting" },
-      data: { status: "pending" },
-    });
-    if (count > 0) console.log(`[executor] reaped ${count} stranded 'acting' proposal(s) → pending`);
-    return count;
+    const stranded = await prisma.bridgeSignal.findMany({ where: { status: "acting" } });
+    if (stranded.length === 0) return 0;
+
+    const { getActionClass } = await import("./actionClasses.ts");
+    let inward = 0;
+    let outward = 0;
+    for (const sig of stranded) {
+      const actions = (sig.actions as any[]) ?? [];
+      const actionClass = actions.find((a) => a?.action === "confirm_action")?.payload?.actionClass ?? "";
+      // The apply_grant confirm wraps a to-be-granted class in its payload, but the
+      // action itself (autonomy.apply_grant) is inward-safe to re-arm. Judge the
+      // confirm's OWN class tier; unknown → inward (safe).
+      const tier = getActionClass(actionClass)?.tier;
+      if (tier === "outward") {
+        await prisma.bridgeSignal.update({
+          where: { id: sig.id },
+          data: {
+            status: "surfaced",
+            severity: "critical",
+            body:
+              sig.body +
+              `\n\n⚠️ A restart interrupted this WHILE it was executing. It may have already gone out. Verify before re-confirming — I won't re-run it on my own.`,
+          },
+        });
+        outward++;
+      } else {
+        await prisma.bridgeSignal.update({ where: { id: sig.id }, data: { status: "pending" } });
+        inward++;
+      }
+    }
+    console.log(`[executor] reaped stranded 'acting': ${inward} inward → pending, ${outward} outward → surfaced for review`);
+    return inward + outward;
   } catch (err) {
     console.warn("[executor] reapStaleActing failed:", (err as any)?.message ?? err);
     return 0;

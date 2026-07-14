@@ -92,6 +92,10 @@ export async function recordAnswer(args: {
   if (args.input.trim().length < MIN_QUESTION) return;
   if (args.answer.trim().length < MIN_ANSWER) return;
   if (engineUnavailableText(args.answer)) return; // never file error text as knowledge
+  // Never cache an answer that ran a TOOL — its content is live/state-dependent
+  // (today's tasks, a web result, an inbox). Re-serving the frozen prose 14 days
+  // later would hand back stale data. Only pure-reasoning answers are reusable.
+  if (/\[TOOL:/i.test(args.answer)) return;
 
   // Direct create (not writeCache): writeCache auto-embeds the summary,
   // but reuse must match QUESTION-to-question — embedding the Q+A blob

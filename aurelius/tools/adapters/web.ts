@@ -7,6 +7,35 @@
 import type { ToolAdapter, ToolAdapterResult } from "../types.ts";
 import { webSearch, webFetch, webSearchConfigured } from "../../web/webSearch.ts";
 
+// SSRF guard. web.fetch takes a model-supplied URL, and the model can be steered
+// by injected corpus/web/email content, so a fetch must never reach the deploy
+// host's own network — cloud metadata (169.254.169.254), loopback, or private
+// LANs. Block literal private/link-local/loopback IPs + internal hostnames. (Full
+// DNS-rebinding defense needs resolve-then-check; this stops the direct cases.)
+function ssrfBlockReason(rawUrl: string): string | null {
+  let host: string;
+  try {
+    host = new URL(rawUrl).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  } catch {
+    return "unparseable url";
+  }
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host.endsWith(".local")) {
+    return "internal hostname";
+  }
+  if (host === "::1" || host === "0.0.0.0") return "loopback";
+  // IPv4 literal ranges: loopback 127/8, private 10/8, 172.16–31/12, 192.168/16,
+  // link-local/metadata 169.254/16.
+  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const [a, b] = [Number(m[1]), Number(m[2])];
+    if (a === 127 || a === 10 || a === 169 && b === 254 || a === 192 && b === 168 || a === 172 && b >= 16 && b <= 31) {
+      return "private/link-local address";
+    }
+  }
+  if (host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80")) return "private IPv6";
+  return null;
+}
+
 export const webAdapter: ToolAdapter = {
   name: "web",
   description:
@@ -46,6 +75,8 @@ export const webAdapter: ToolAdapter = {
     if (action === "fetch") {
       const url = (data?.url ?? "").toString().trim();
       if (!/^https?:\/\//i.test(url)) return { ok: false, output: null, error: "web.fetch needs a valid http(s) url" };
+      const blocked = ssrfBlockReason(url);
+      if (blocked) return { ok: false, output: null, error: `refusing to fetch a ${blocked} — web.fetch is for the public internet only` };
       try {
         const r = await webFetch(url);
         return { ok: true, output: { title: r.title, url: r.url, text: r.text.slice(0, 8000) } };

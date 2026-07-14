@@ -780,6 +780,25 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
           console.warn("[aurelius] KNOWLEDGE_UPDATE_CONFIRM invalid decision:", d.decision);
           continue;
         }
+        // SECURITY: a KNOWLEDGE_UPDATE_CONFIRM is a directive the MODEL emits, and
+        // recalled corpus/memory/email text feeds the prompt — so a poisoned source
+        // could induce a confirm. Blast radius is bounded (inward, reversible,
+        // Bridge-surfaced Living-Knowledge writes) EXCEPT one class: enabling
+        // standing auto-apply (scope "autonomy") would widen every future write.
+        // Never let a model directive turn THAT on — it must be an explicit Cole
+        // action on the Bridge/HTTP. Deny + confirm-to-apply only for that scope.
+        if (d.decision === "confirmed") {
+          try {
+            const { getProposalById } = await import("./knowledge/proposals.ts");
+            const prop = await getProposalById(primaryOperatorId, d.proposalId);
+            if (prop && prop.scope === "autonomy") {
+              console.warn(`[aurelius] refusing model-emitted confirm for autonomy-scope proposal ${d.proposalId} — needs an explicit Cole tap`);
+              continue;
+            }
+          } catch (err) {
+            console.warn("[aurelius] autonomy-scope confirm guard check failed:", (err as any)?.message ?? err);
+          }
+        }
         try {
           const resolved = await resolveProposal({
             operatorId: primaryOperatorId,
@@ -1070,16 +1089,17 @@ import {
 import { computeWeeklySnapshot } from "./measurement/scoreboard.ts";
 import { startTelegramBridge, sendToCole } from "./telegram/bot.ts";
 
-// Wake Neon before the first scheduled job or app open hits it cold.
-import("./core/db/prisma.ts")
-  .then((m) => m.warmupDb())
-  .catch((err) => console.error("[db] warmup init failed:", err));
-
-// Release any confirm-proposals stranded in "acting" by a crash mid-finalize —
-// at boot none can be legitimately in flight.
-import("./autonomy/executor.ts")
-  .then((m) => m.reapStaleActing())
-  .catch((err) => console.error("[executor] reap init failed:", err));
+// Ordered DB-dependent boot: WAKE Neon first, then run the reads that would
+// otherwise race a cold DB — reap stranded confirms (inward only; see reaper).
+// Schedule-override apply + catch-up are chained after the initiative import
+// registers (below), also after warmup, so a paused/re-timed ritual isn't lost
+// to a cold-DB read at boot.
+(async () => {
+  const { warmupDb } = await import("./core/db/prisma.ts");
+  await warmupDb();
+  const { reapStaleActing } = await import("./autonomy/executor.ts");
+  await reapStaleActing();
+})().catch((err) => console.error("[boot] db-dependent init failed:", err));
 
 ensureRituals().catch((err) => console.error("[rituals] seed failed:", err));
 // The five living documents exist from first boot (founding editions).
@@ -1102,11 +1122,9 @@ import("./corpus/paperlessPoller.ts")
 import("./calendar/engine.ts")
   .then((m) => m.startCalendarSync())
   .catch((err) => console.error("[calendar] init failed:", err));
-// Missed-schedule catch-up: on boot, fire anything that was due today
-// and never ran (downtime swallows node-schedule jobs silently).
-import("./core/catchUp.ts")
-  .then((m) => m.startCatchUp())
-  .catch((err) => console.error("[catchup] init failed:", err));
+// Catch-up is started AFTER applyScheduleOverrides resolves (in the initiative
+// import's .finally below) — otherwise catch-up could read pre-override registry
+// state and fire a paused/moved ritual at its default time.
 
 // Market pulse at 06:30 — crypto/equities/macro digest into the wealth
 // corpus before the day starts. Signals only; Cole makes the calls.
@@ -1250,9 +1268,18 @@ import("./autonomy/initiative.ts")
     });
   })
   .catch((err) => console.error("[initiative] init failed:", err))
-  .finally(() => {
-    // Apply Cole-set time overrides + paused rituals over the registered defaults.
-    applyScheduleOverrides().catch((err) => console.error("[schedule] override apply failed:", err));
+  .finally(async () => {
+    // Every ritual (incl. initiative_pulse) is now registered. Apply Cole-set
+    // time overrides + paused rituals, THEN start catch-up so it sees the live
+    // (overridden/paused) state — never fires a moved or paused ritual.
+    try {
+      await applyScheduleOverrides();
+    } catch (err) {
+      console.error("[schedule] override apply failed:", err);
+    }
+    import("./core/catchUp.ts")
+      .then((m) => m.startCatchUp())
+      .catch((err) => console.error("[catchup] init failed:", err));
   });
 
 // JSON error handler — MUST be last (after all routes). Without it, a body that

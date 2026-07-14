@@ -33,6 +33,12 @@ const JOBS: CatchUpJob[] = [
     run: async () => (await import("../wealth/engine.ts")).runMarketPulse(),
   },
   {
+    name: "schedule_protection",
+    hour: 6,
+    minute: 45,
+    run: async () => (await import("../autonomy/workflows/scheduleProtection.ts")).runScheduleProtection({ days: 5 }),
+  },
+  {
     name: "morning_briefing",
     hour: 7,
     run: async () => {
@@ -140,7 +146,11 @@ export async function runCatchUp() {
     const due = new Date(now);
     due.setHours(hour, minute, 0, 0);
     if (due > now) continue; // not due yet today — the live scheduler owns it
-    if (job.expiresHour !== undefined && now.getHours() >= job.expiresHour) continue;
+    // Expiry is relative to the EFFECTIVE hour (Cole may have re-timed the job),
+    // not the hardcoded default — otherwise moving the midday check past its
+    // default expiry makes it permanently un-catchable.
+    const effectiveExpiry = job.expiresHour !== undefined ? hour + (job.expiresHour - job.hour) : undefined;
+    if (effectiveExpiry !== undefined && now.getHours() >= effectiveExpiry) continue;
     if (await ranToday(job.name, todayStart)) continue;
 
     console.log(`[catchup] ${job.name} was due ${hour}:${String(minute).padStart(2, "0")} and never ran — firing now`);

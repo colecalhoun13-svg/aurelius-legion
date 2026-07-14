@@ -155,10 +155,12 @@ export function getEffectiveTime(name: string): { hour: number; minute: number }
  * mutating the first-registered sibling. `{ job: null, candidates: [] }` = none.
  */
 function resolveJob(nameOrLabel: string): { job: NamedJob | null; candidates: NamedJob[] } {
-  const q = nameOrLabel.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  // Strip leading stop-words so "pause the debrief" / "my morning brief" resolve.
+  const normalized = nameOrLabel.trim().toLowerCase().replace(/\b(the|my|a|an)\b/g, " ").replace(/\s+/g, " ").trim();
+  const q = normalized.replace(/[\s-]+/g, "_");
   if (registry.has(q)) return { job: registry.get(q)!, candidates: [] };
 
-  const bare = nameOrLabel.trim().toLowerCase();
+  const bare = normalized;
   // Exact label match is unambiguous even if a substring would match others.
   const exactLabel = [...registry.values()].filter((j) => j.label.toLowerCase() === bare);
   if (exactLabel.length === 1) return { job: exactLabel[0], candidates: [] };
@@ -189,10 +191,12 @@ function resolveError(nameOrLabel: string, candidates: NamedJob[]): string {
 }
 
 async function readOverrides(): Promise<Record<string, string>> {
-  const { prisma } = await import("./db/prisma.ts");
-  const row = await prisma.knowledgeEntry.findFirst({
-    where: { scope: OVERRIDES_SCOPE, key: OVERRIDES_KEY, active: true },
-  });
+  const { prisma, withDb } = await import("./db/prisma.ts");
+  // withDb: this runs at boot, possibly racing a cold Neon — retry instead of
+  // throwing, or a paused/re-timed ritual silently reverts to its default.
+  const row = await withDb(() =>
+    prisma.knowledgeEntry.findFirst({ where: { scope: OVERRIDES_SCOPE, key: OVERRIDES_KEY, active: true } })
+  );
   const v = row?.value as any;
   return v && typeof v === "object" && !Array.isArray(v) ? v : {};
 }
@@ -235,10 +239,10 @@ async function writeOverride(name: string, cron: string): Promise<void> {
 }
 
 async function readDisabled(): Promise<string[]> {
-  const { prisma } = await import("./db/prisma.ts");
-  const row = await prisma.knowledgeEntry.findFirst({
-    where: { scope: OVERRIDES_SCOPE, key: DISABLED_KEY, active: true },
-  });
+  const { prisma, withDb } = await import("./db/prisma.ts");
+  const row = await withDb(() =>
+    prisma.knowledgeEntry.findFirst({ where: { scope: OVERRIDES_SCOPE, key: DISABLED_KEY, active: true } })
+  );
   const v = row?.value as any;
   return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
 }
