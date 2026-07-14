@@ -376,7 +376,7 @@ async function main() {
 
   console.log("── schedule control: Cole re-times a ritual from chat ──");
   {
-    const { scheduleNamed, setSchedule, listSchedules, parseTime, getEffectiveTime } = await import("../core/schedule.ts");
+    const { scheduleNamed, setSchedule, setEnabled, isJobEnabled, listSchedules, parseTime, getEffectiveTime } = await import("../core/schedule.ts");
     check(
       "parseTime reads 6:30 / 7am / 10pm / 22:00 / 7, rejects junk",
       JSON.stringify(parseTime("6:30")) === JSON.stringify({ hour: 6, minute: 30 }) &&
@@ -402,6 +402,17 @@ async function main() {
     check("unknown ritual rejected honestly", !bad.ok && /no scheduled ritual/i.test(bad.error ?? ""));
     const badTime = await setSchedule(`${TAG}_daily`, "banana", { persist: false });
     check("unparseable time rejected honestly", !badTime.ok && /couldn't read/i.test(badTime.error ?? ""));
+
+    // Pause / resume
+    const pause = await setEnabled(`${TAG}_daily`, false, { persist: false });
+    check("pause a ritual: disabled + catch-up skips it", pause.ok && pause.enabled === false && isJobEnabled(`${TAG}_daily`) === false);
+    check("listSchedules shows the paused ritual as disabled", listSchedules().some((r) => r.name === `${TAG}_daily` && r.enabled === false));
+    // Re-timing while paused records the new time without touching a live job.
+    const retimedWhilePaused = await setSchedule(`${TAG}_daily`, "5:00", { persist: false });
+    check("re-time while paused is recorded (applied on resume)", retimedWhilePaused.ok && retimedWhilePaused.time === "05:00");
+    const resume = await setEnabled(`${TAG}_daily`, true, { persist: false });
+    check("resume a ritual: re-enabled at its current time", resume.ok && resume.enabled === true && isJobEnabled(`${TAG}_daily`) === true);
+    check("resumed ritual keeps the time set while paused", getEffectiveTime(`${TAG}_daily`)?.hour === 5);
   }
 
   console.log("── the acting layer: autonomy grants (§2.5 Hybrid Autonomy) ──");

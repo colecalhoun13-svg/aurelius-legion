@@ -24,27 +24,30 @@ type NamedJob = {
   label: string; // human phrase, e.g. "morning briefing"
   defaultCron: string;
   currentCron: string;
-  job: any; // node-schedule Job (package ships no types)
+  job: any; // node-schedule Job (package ships no types); null while paused
+  handler: () => void | Promise<void>; // kept so a paused job can be re-created
+  enabled: boolean;
 };
 
 const registry = new Map<string, NamedJob>();
 
 const OVERRIDES_SCOPE = "system";
 const OVERRIDES_KEY = "schedule_overrides";
+const DISABLED_KEY = "schedule_disabled";
 
 /**
  * Register a named scheduled job. Wraps nodeSchedule.scheduleJob so the job can
- * later be re-timed by name. Call once per job at boot; overrides are applied
- * afterward by applyScheduleOverrides().
+ * later be re-timed OR paused by name. Call once per job at boot; overrides and
+ * pauses are applied afterward by applyScheduleOverrides().
  */
 export function scheduleNamed(
   name: string,
   defaultCron: string,
   label: string,
   handler: () => void | Promise<void>
-): nodeSchedule.Job {
+): any {
   const job = nodeSchedule.scheduleJob(name, defaultCron, handler as any);
-  registry.set(name, { name, label, defaultCron, currentCron: defaultCron, job });
+  registry.set(name, { name, label, defaultCron, currentCron: defaultCron, job, handler, enabled: true });
   return job;
 }
 
@@ -111,13 +114,20 @@ function cadence(cron: string): string {
   return `cron ${dow}`;
 }
 
-export type ScheduleRow = { name: string; label: string; time: string; cadence: string };
+export type ScheduleRow = { name: string; label: string; time: string; cadence: string; enabled: boolean };
 
 /** Current times for every registered job — for "what's my schedule?". */
 export function listSchedules(): ScheduleRow[] {
   return [...registry.values()]
-    .map((j) => ({ name: j.name, label: j.label, time: cronToTime(j.currentCron), cadence: cadence(j.currentCron) }))
+    .map((j) => ({ name: j.name, label: j.label, time: cronToTime(j.currentCron), cadence: cadence(j.currentCron), enabled: j.enabled }))
     .sort((a, b) => a.time.localeCompare(b.time));
+}
+
+/** Whether a named job is currently active (not paused). catchUp uses this so a
+ *  paused ritual is neither fired live nor caught up. Unknown name → true (don't
+ *  suppress a job we don't track). */
+export function isJobEnabled(name: string): boolean {
+  return registry.get(name)?.enabled ?? true;
 }
 
 export function knownJobNames(): string[] {
@@ -182,6 +192,76 @@ async function writeOverride(name: string, cron: string): Promise<void> {
   });
 }
 
+async function readDisabled(): Promise<string[]> {
+  const { prisma } = await import("./db/prisma.ts");
+  const row = await prisma.knowledgeEntry.findFirst({
+    where: { scope: OVERRIDES_SCOPE, key: DISABLED_KEY, active: true },
+  });
+  const v = row?.value as any;
+  return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+}
+
+async function writeDisabled(names: string[]): Promise<void> {
+  const { resolveOperatorId, setKnowledge } = await import("../knowledge/store.ts");
+  const opId = await resolveOperatorId("global");
+  if (!opId) return;
+  await setKnowledge({
+    operatorId: opId,
+    scope: OVERRIDES_SCOPE,
+    key: DISABLED_KEY,
+    value: [...new Set(names)],
+    sourceType: "system" as any,
+    sourceId: "schedule_control",
+    rationale: "Cole-paused rituals",
+    updatedBy: "cole",
+  });
+}
+
+export type SetEnabledResult = { ok: boolean; error?: string; name?: string; label?: string; enabled?: boolean };
+
+/**
+ * Pause or resume a ritual. Pausing cancels the live node-schedule job; resuming
+ * re-creates it at its current time. Persists the paused set so it survives a
+ * restart. `persist=false` is used by applyScheduleOverrides() at boot.
+ */
+export async function setEnabled(
+  nameOrLabel: string,
+  enabled: boolean,
+  opts: { persist?: boolean } = {}
+): Promise<SetEnabledResult> {
+  const persist = opts.persist ?? true;
+  const target = resolveJob(nameOrLabel);
+  if (!target) {
+    return {
+      ok: false,
+      error: `no scheduled ritual matches "${nameOrLabel}". Known: ${[...registry.values()].map((j) => j.label).join(", ")}.`,
+    };
+  }
+
+  if (enabled && !target.enabled) {
+    // Resume: re-create the job at its current time (a cancelled Job is spent).
+    target.job = nodeSchedule.scheduleJob(target.name, target.currentCron as any, target.handler as any);
+    target.enabled = true;
+  } else if (!enabled && target.enabled) {
+    // Pause: cancel all pending invocations. The handler is kept for resume.
+    if (target.job?.cancel) target.job.cancel();
+    target.job = null;
+    target.enabled = false;
+  }
+
+  if (persist) {
+    try {
+      const disabled = [...registry.values()].filter((j) => !j.enabled).map((j) => j.name);
+      await writeDisabled(disabled);
+    } catch (err) {
+      console.warn(`[schedule] persisting paused set failed (live change stands):`, (err as any)?.message ?? err);
+    }
+  }
+
+  console.log(`[schedule] ${target.name} ${target.enabled ? "resumed" : "paused"}`);
+  return { ok: true, name: target.name, label: target.label, enabled: target.enabled };
+}
+
 // Flat (non-discriminated) shape on purpose: this project runs tsc with
 // strict:false, where discriminated-union narrowing on a boolean `ok` is
 // unreliable at call sites. Optional fields + an explicit `ok` are simplest.
@@ -218,9 +298,13 @@ export async function setSchedule(
   }
 
   const newCron = retimeCron(target.currentCron, parsed.hour, parsed.minute);
-  const rescheduled = target.job.reschedule(newCron as any);
-  if (!rescheduled) {
-    return { ok: false, error: `rescheduling ${target.label} failed (invalid cron "${newCron}")` };
+  // A paused job has no live node-schedule job to reschedule — just record the
+  // new time so it takes effect when resumed.
+  if (target.enabled && target.job) {
+    const rescheduled = target.job.reschedule(newCron as any);
+    if (!rescheduled) {
+      return { ok: false, error: `rescheduling ${target.label} failed (invalid cron "${newCron}")` };
+    }
   }
   target.currentCron = newCron;
 
@@ -236,7 +320,7 @@ export async function setSchedule(
   return { ok: true, name: target.name, label: target.label, time: cronToTime(newCron), cadence: cadence(newCron) };
 }
 
-/** Boot hook — apply any Cole-set overrides on top of the registered defaults. */
+/** Boot hook — apply Cole-set time overrides AND paused rituals over the defaults. */
 export async function applyScheduleOverrides(): Promise<void> {
   try {
     const overrides = await readOverrides();
@@ -249,6 +333,15 @@ export async function applyScheduleOverrides(): Promise<void> {
       if (r.ok) applied++;
     }
     if (applied > 0) console.log(`[schedule] applied ${applied} Cole-set time override(s)`);
+
+    const disabled = await readDisabled();
+    let paused = 0;
+    for (const name of disabled) {
+      if (!registry.has(name)) continue;
+      const r = await setEnabled(name, false, { persist: false });
+      if (r.ok) paused++;
+    }
+    if (paused > 0) console.log(`[schedule] re-applied ${paused} paused ritual(s)`);
   } catch (err) {
     console.warn("[schedule] applying overrides failed (defaults stand):", (err as any)?.message ?? err);
   }

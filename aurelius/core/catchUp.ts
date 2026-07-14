@@ -127,11 +127,13 @@ export async function runCatchUp() {
 
   // Cole may have re-timed a ritual from chat; honor the LIVE time so catch-up
   // fires (or waits) at the overridden hour, not the hardcoded default below.
-  const { getEffectiveTime } = await import("./schedule.ts");
+  // A PAUSED ritual is skipped entirely — don't resurrect it via catch-up.
+  const { getEffectiveTime, isJobEnabled } = await import("./schedule.ts");
 
   let fired = 0;
   for (const job of JOBS) {
     if (job.sundayOnly && !isSunday) continue;
+    if (!isJobEnabled(job.name)) continue;
     const eff = getEffectiveTime(job.name);
     const hour = eff?.hour ?? job.hour;
     const minute = eff?.minute ?? job.minute ?? 0;
