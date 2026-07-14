@@ -231,6 +231,18 @@ async function main() {
   const f = await fredAdapter.run("macro_snapshot", {});
   check("fred tool honest about config state", fredConfigured() ? f.ok : (!f.ok && /FRED_API_KEY/.test(f.error ?? "")));
 
+  // sync_roster: keyless honest-fail (no service account in the sandbox).
+  {
+    const { googleSheetsAdapter } = await import("../tools/adapters/googleSheets.ts");
+    const sr = await googleSheetsAdapter.run("sync_roster", {});
+    check(
+      "sheets sync_roster fails honestly without a service account",
+      process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH
+        ? true
+        : !sr.ok && /SERVICE_ACCOUNT/i.test(sr.error ?? "")
+    );
+  }
+
   console.log("── engines: never a silent empty answer (fail over unless unfunded) ──");
   {
     const { isNonAnswer } = await import("../llm/router.ts");

@@ -28,8 +28,9 @@
 // adapter may extract them.
 
 import type { ToolAdapter, ToolAdapterResult } from "../types.ts";
-import { getSheetsClient } from "./googleAuth.ts";
+import { getSheetsClient, getDriveClient } from "./googleAuth.ts";
 import { prisma } from "../../core/db/prisma.ts";
+import { saveMemory } from "../../memory/memoryService.ts";
 
 // ═══════════════════════════════════════════════════════════════════
 // ACTION DEFINITIONS (for the tool catalog injected into LLM prompt)
@@ -83,6 +84,12 @@ const ACTIONS = [
     description: "Find recent training sessions across all registered athletes that warrant Aurelius review. Used for end-of-day batch reasoning (the δ flow). Returns sessions logged in the last N days that meet the analysis threshold (≥3 exercises with ≥1 working set). Does NOT do reasoning itself — just surfaces what's worth reasoning about.",
     dataSchema: '{ days?: number (default 1, look back N days), minExercises?: number (default 3), minWorkingSets?: number (default 1) }',
     example: '[TOOL: tool=google_sheets action=review_recent data={"days":2}]',
+  },
+  {
+    name: "sync_roster",
+    description:
+      "Discover and register athlete sheets automatically. Lists every spreadsheet shared with Aurelius's service account (share ONE Drive folder once — everything inside inherits) and registers any not-yet-registered sheet as an athlete, deriving the name from the file title. Use when Cole says 'sync my roster' / 'find my athlete sheets' / after sharing new sheets.",
+    dataSchema: "{} (no fields)",
   },
 ];
 
@@ -354,6 +361,133 @@ async function listAthletes(_data: Record<string, any>): Promise<ToolAdapterResu
       output: null,
       error: `list_athletes failed: ${err?.message ?? String(err)}`,
     };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SYNC ROSTER — auto-discovery. Cole shares ONE Drive folder with the
+// service account; every spreadsheet inside is visible to Drive's
+// files.list. Anything not yet registered becomes an athlete, name
+// derived from the file title. Kills the curl-per-athlete step.
+// ═══════════════════════════════════════════════════════════════════
+
+/** "Mike Johnson — In-Season 2026 Program" → "Mike Johnson".
+ *  Cut at the first separator, strip trailing boilerplate words + years.
+ *  Falls back to the full trimmed title if the heuristic empties it. */
+function deriveClientName(title: string): string {
+  const cut = title.split(/\s+[—–|]\s+|\s+-\s+|[([]/)[0] ?? title;
+  const cleaned = cut
+    .replace(/\b(program|training|sheet|log|tracker|template|20\d{2})\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || title.trim();
+}
+
+async function syncRoster(_data: Record<string, any>): Promise<ToolAdapterResult> {
+  const drive = await getDriveClient();
+  if (!drive) {
+    return {
+      ok: false,
+      output: null,
+      error:
+        "Google Sheets is not configured — set GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH to the service-account JSON, then share your athlete folder with its client_email.",
+    };
+  }
+
+  try {
+    // Everything the service account can see IS the roster — Cole only shares
+    // athlete sheets (or one folder of them) with it.
+    const files: Array<{ id: string; name: string }> = [];
+    let pageToken: string | undefined;
+    do {
+      const res = await drive.files.list({
+        q: "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
+        fields: "nextPageToken, files(id, name)",
+        pageSize: 100,
+        pageToken,
+      });
+      for (const f of res.data.files ?? []) {
+        if (f.id && f.name) files.push({ id: f.id, name: f.name });
+      }
+      pageToken = res.data.nextPageToken ?? undefined;
+    } while (pageToken);
+
+    if (files.length === 0) {
+      return {
+        ok: true,
+        output: {
+          summary:
+            "No spreadsheets are shared with Aurelius yet. Share your athlete folder (or sheets) with the service account's client_email, then run sync again.",
+          registered: [],
+          skipped: [],
+        },
+      };
+    }
+
+    // Existing registrations — never overwrite; an already-registered sheetId is
+    // skipped, and a NAME collision on a different sheet is surfaced, not guessed.
+    const existing = await prisma.memory.findMany({
+      where: { category: "clients", metadata: { path: ["kind"], equals: "sheet_registration" } },
+      orderBy: { createdAt: "desc" },
+      take: 500,
+    });
+    const knownSheetIds = new Set<string>();
+    const knownNames = new Map<string, string>(); // lowercased name → sheetId
+    for (const m of existing) {
+      const meta = m.metadata as any;
+      if (meta?.sheetId) knownSheetIds.add(meta.sheetId);
+      const nm = (meta?.clientName ?? "").toString().toLowerCase().trim();
+      if (nm && meta?.sheetId && !knownNames.has(nm)) knownNames.set(nm, meta.sheetId);
+    }
+
+    const registered: Array<{ name: string; title: string }> = [];
+    const skipped: Array<{ title: string; reason: string }> = [];
+
+    for (const f of files) {
+      if (knownSheetIds.has(f.id)) {
+        skipped.push({ title: f.name, reason: "already registered" });
+        continue;
+      }
+      const name = deriveClientName(f.name);
+      const nameKey = name.toLowerCase();
+      if (knownNames.has(nameKey) && knownNames.get(nameKey) !== f.id) {
+        skipped.push({
+          title: f.name,
+          reason: `name "${name}" is already registered to a different sheet — register this one manually with a distinct name (POST /api/aurelius/register-sheet)`,
+        });
+        continue;
+      }
+
+      await saveMemory({
+        operator: "training",
+        category: "clients",
+        value: `${name} — registered training sheet (auto-discovered from "${f.name}")`,
+        relatedOperators: ["business"],
+        metadata: {
+          clientName: name,
+          sheetId: f.id,
+          sheetTitle: f.name,
+          sport: null,
+          position: null,
+          registeredAt: new Date().toISOString(),
+          kind: "sheet_registration",
+          registeredVia: "sync_roster",
+        },
+      });
+      knownNames.set(nameKey, f.id);
+      registered.push({ name, title: f.name });
+    }
+
+    const summary =
+      registered.length > 0
+        ? `Registered ${registered.length} athlete${registered.length === 1 ? "" : "s"}: ${registered
+            .map((r) => r.name)
+            .join(", ")}${skipped.length ? ` · ${skipped.length} skipped` : ""}. If any name looks wrong, tell Cole to re-register that one manually.`
+        : `Nothing new — ${skipped.length} sheet${skipped.length === 1 ? "" : "s"} already registered or skipped.`;
+
+    return { ok: true, output: { summary, registered, skipped } };
+  } catch (err: any) {
+    return { ok: false, output: null, error: `sync_roster failed: ${err?.message ?? String(err)}` };
   }
 }
 
@@ -782,6 +916,8 @@ export const googleSheetsAdapter: ToolAdapter = {
         return updateMax(data);
       case "review_recent":
         return reviewRecent(data);
+      case "sync_roster":
+        return syncRoster(data);
       default:
         return {
           ok: false,
