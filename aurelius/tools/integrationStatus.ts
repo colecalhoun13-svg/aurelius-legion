@@ -107,8 +107,20 @@ export async function getIntegrations(): Promise<Integration[]> {
     {
       name: "Planning",
       status: registered.has("planning") ? "live" : "config",
-      desc: "Weekly session, overload detection, goal decomposition, candidates",
+      desc: "Plan the day/week, overload detection, goal decomposition — plus change or pause ritual times from chat",
       glyph: "◱",
+    },
+    {
+      name: "Productivity",
+      status: registered.has("productivity") ? "live" : "config",
+      desc: "Tasks, goals, and today's focus from chat — add/complete tasks, add goals, set focus, 'what's on today'",
+      glyph: "☑",
+    },
+    {
+      name: "Autonomy grants",
+      status: registered.has("autonomy") ? "live" : "config",
+      desc: "Manage keyholes conversationally — list, revoke (instant), or grant (files a Bridge confirm; the switch stays your hand)",
+      glyph: "⚿",
     },
     {
       name: "Gmail",
