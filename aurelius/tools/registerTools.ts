@@ -10,6 +10,8 @@ import { googleCalendarAdapter } from "./adapters/googleCalendar.ts";
 import { gmailAdapter } from "./adapters/gmail.ts";
 import { fredAdapter } from "./adapters/fred.ts";
 import { webAdapter } from "./adapters/web.ts";
+import { productivityAdapter } from "./adapters/productivity.ts";
+import { autonomyAdapter } from "./adapters/autonomy.ts";
 
 export function registerAllTools(): void {
   registerTool(googleSheetsAdapter);
@@ -18,6 +20,8 @@ export function registerAllTools(): void {
   registerTool(gmailAdapter);
   registerTool(fredAdapter);
   registerTool(webAdapter);
+  registerTool(productivityAdapter); // Cole's tasks/goals/today from chat
+  registerTool(autonomyAdapter);     // grant (gated) / revoke / list keyholes from chat
 
   // Future tools register here:
   //   registerTool(instagramAdapter);        // Phase 6

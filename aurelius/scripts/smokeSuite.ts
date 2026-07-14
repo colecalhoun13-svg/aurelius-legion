@@ -332,6 +332,48 @@ async function main() {
     check("media analysis fails honestly without a real Gemini call", honest);
   }
 
+  console.log("── self-service tools: productivity + autonomy from chat ──");
+  {
+    const { productivityAdapter } = await import("../tools/adapters/productivity.ts");
+    const addT = await productivityAdapter.run("add_task", { title: `${TAG} intake form`, priority: "high" });
+    const taskId = addT.output?.id as string | undefined;
+    check("productivity.add_task creates a task", addT.ok && !!taskId);
+    const todayR = await productivityAdapter.run("get_today", {});
+    check("productivity.get_today returns a snapshot", todayR.ok && Array.isArray(todayR.output?.tasks));
+    const compT = await productivityAdapter.run("complete_task", { title: `${TAG} intake form` });
+    check("productivity.complete_task marks it done by title", compT.ok && compT.output?.id === taskId);
+    const setF = await productivityAdapter.run("set_focus", { focus: `${TAG} ship the page` });
+    check("productivity.set_focus sets today's focus", setF.ok);
+    const addG = await productivityAdapter.run("add_goal", { name: `${TAG} sign athletes`, horizon: "quarter", target: 10 });
+    const goalId = addG.output?.id as string | undefined;
+    check("productivity.add_goal creates a goal", addG.ok && !!goalId);
+
+    const { autonomyAdapter } = await import("../tools/adapters/autonomy.ts");
+    const { isActionGranted } = await import("../autonomy/grants.ts");
+    const listG = await autonomyAdapter.run("list_grants", {});
+    check("autonomy.list_grants returns the grantable menu", listG.ok && Array.isArray(listG.output?.grantable));
+    const before = await isActionGranted("calendar.schedule_protection");
+    const grantR = await autonomyAdapter.run("grant", { actionClass: "calendar.schedule_protection" });
+    const after = await isActionGranted("calendar.schedule_protection");
+    check(
+      "autonomy.grant GATES (files a Bridge confirm, never flips the switch itself — hard rule 1)",
+      grantR.ok && !!grantR.output?.bridgeSignalId && after === before
+    );
+    const badGrant = await autonomyAdapter.run("grant", { actionClass: "email.send" });
+    check("autonomy.grant refuses an outward class", !badGrant.ok && /can't grant/i.test(badGrant.error ?? ""));
+    const revR = await autonomyAdapter.run("revoke", { actionClass: "research.ingest" });
+    check("autonomy.revoke runs directly (reducing autonomy is always safe)", revR.ok);
+
+    // cleanup this block's artifacts
+    if (taskId) {
+      await prisma.vectorEmbedding.deleteMany({ where: { sourceId: taskId } }).catch(() => {});
+      await prisma.task.delete({ where: { id: taskId } }).catch(() => {});
+    }
+    if (goalId) await prisma.goal.delete({ where: { id: goalId } }).catch(() => {});
+    if (grantR.output?.bridgeSignalId) await prisma.bridgeSignal.delete({ where: { id: grantR.output.bridgeSignalId } }).catch(() => {});
+    await prisma.dailyPlan.deleteMany({ where: { focus: { contains: TAG } } }).catch(() => {});
+  }
+
   console.log("── schedule control: Cole re-times a ritual from chat ──");
   {
     const { scheduleNamed, setSchedule, listSchedules, parseTime, getEffectiveTime } = await import("../core/schedule.ts");
