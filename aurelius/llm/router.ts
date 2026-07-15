@@ -496,12 +496,10 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
   if (task.decisionMode) {
     parts.push(
       `\n═══ DECISION MODE ═══\n` +
-      `Cole is making a real decision. Do NOT answer from generic reasoning if a framework above fits, and do NOT merely quote or name-drop one. Instead:\n` +
-      `1. Name the 1–3 frameworks (from the compiled frameworks / field synthesis above) that genuinely bear on THIS decision, and why each fits his specifics.\n` +
-      `2. RUN each on his actual situation — show what it surfaces here, especially what it RULES OUT or forces that intuition alone wouldn't.\n` +
-      `3. Where two frameworks point opposite ways, name the tension and say which governs here and why — do not average them into mush.\n` +
-      `4. Give your call, concretely.\n` +
-      `End with one line: "Lens: <the 1–2 frameworks that actually drove this call>". If no confirmed framework genuinely applies, write "Lens: none apply — reasoning from general judgment" rather than inventing one. Only name a framework if deleting it would change or weaken your conclusion.`
+      `Cole is making a real decision. Reason THROUGH the frameworks above — apply their logic to give him the single best answer, not a generic one.\n` +
+      `Do this in your own thinking, silently: identify which frameworks genuinely bear on THIS decision; run each on his actual specifics; notice what they RULE OUT or force that intuition wouldn't; and where two point opposite ways, resolve the tension deliberately (don't average).\n` +
+      `Then give him the answer that reasoning produces — clean, direct, and concrete.\n` +
+      `The lens must be LOAD-BEARING but INVISIBLE: do NOT name-drop authors, quote the frameworks, or append a "Lens:" line. The test of real application is that deleting any framework's name from your answer would leave it just as strong — the wisdom shows up in the sharpness of the call, not in citations. Let the study make the answer better, not louder.`
     );
   }
 
