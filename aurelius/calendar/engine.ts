@@ -176,6 +176,29 @@ export async function createCalendarEvent(input: {
   return event;
 }
 
+/**
+ * Delete an event upstream + locally. The INVERSE of createCalendarEvent — this
+ * is what makes a placed schedule-protection hold genuinely one-tap reversible
+ * (master-class #4). Idempotent: a 404/410 upstream (already gone) still clears
+ * the local mirror.
+ */
+export async function deleteCalendarEvent(externalId: string): Promise<{ ok: boolean }> {
+  if (!externalId) throw new Error("deleteCalendarEvent needs an externalId");
+  try {
+    const res = await calendarFetch(`/calendars/primary/events/${encodeURIComponent(externalId)}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 404 && res.status !== 410) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`event delete failed: ${res.status} ${body.slice(0, 150)}`);
+    }
+  } catch (err) {
+    // Surface a real upstream error, but still remove the local mirror so the
+    // undo isn't left half-done.
+    console.warn("[calendar] delete upstream issue (removing local mirror):", (err as any)?.message ?? err);
+  }
+  await prisma.calendarEvent.deleteMany({ where: { externalId } });
+  return { ok: true };
+}
+
 // ── Reads: always the local mirror ───────────────────────────────────
 
 export async function listEventsRange(from: Date, to: Date) {

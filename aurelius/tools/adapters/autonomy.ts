@@ -13,9 +13,11 @@
 //     land on Cole's explicit tap. One tap, and it's his.
 
 import type { ToolAdapter, ToolAdapterResult } from "../types.ts";
+import { prisma } from "../../core/db/prisma.ts";
 import { revokeAutonomy, listActiveGrants } from "../../autonomy/grants.ts";
 import { checkGrantable, listGrantableClasses, getActionClass } from "../../autonomy/actionClasses.ts";
-import { executeAction } from "../../autonomy/executor.ts";
+import { executeAction, undoAction } from "../../autonomy/executor.ts";
+import { getTrustLedger, suggestNextGrant } from "../../autonomy/trustLedger.ts";
 
 export const autonomyAdapter: ToolAdapter = {
   name: "autonomy",
@@ -42,13 +44,26 @@ export const autonomyAdapter: ToolAdapter = {
       dataSchema: '{ actionClass: string }',
       example: '[TOOL: autonomy.revoke {"actionClass": "calendar.schedule_protection"}]',
     },
+    {
+      name: "undo",
+      description:
+        "Reverse Aurelius's most recent reversible action (e.g. delete a focus-block hold it just placed). Use for 'undo that' / 'undo the last thing you did'. Pass bridgeSignalId to undo a specific one.",
+      dataSchema: '{ bridgeSignalId?: string }',
+      example: '[TOOL: autonomy.undo {}]',
+    },
   ],
 
   async run(action, data): Promise<ToolAdapterResult> {
     switch (action) {
       case "list_grants": {
-        const [active, grantable] = [await listActiveGrants(), listGrantableClasses()];
+        const [active, grantable, ledger, suggestions] = [
+          await listActiveGrants(),
+          listGrantableClasses(),
+          await getTrustLedger(),
+          await suggestNextGrant(),
+        ];
         const activeKeys = new Set(active.map((g) => g.actionClass));
+        const ledgerBy = new Map(ledger.map((r) => [r.actionClass, r]));
         return {
           ok: true,
           output: {
@@ -56,9 +71,41 @@ export const autonomyAdapter: ToolAdapter = {
               ? `on: ${active.map((g) => g.actionClass).join(", ")}`
               : "no keyholes granted — Aurelius proposes everything, acts on nothing",
             active: active.map((g) => ({ actionClass: g.actionClass, grantedAt: g.grantedAt })),
-            grantable: grantable.map((c: any) => ({ key: c.key, description: c.description, on: activeKeys.has(c.key) })),
+            grantable: grantable.map((c: any) => {
+              const l = ledgerBy.get(c.key);
+              return {
+                key: c.key,
+                description: c.description,
+                on: activeKeys.has(c.key),
+                // The trust record — evidence for whether to widen this keyhole.
+                trackRecord: l ? { acted: l.acted, confirmed: l.confirmed, undone: l.undone, failed: l.failed } : null,
+              };
+            }),
+            // "You've confirmed X 3×, no undos — want me to just handle it?"
+            suggestions,
           },
         };
+      }
+
+      case "undo": {
+        // Undo a specific signal, or the most recent reversible action.
+        let signalId = data?.bridgeSignalId ? String(data.bridgeSignalId) : "";
+        if (!signalId) {
+          const recent = await prisma.bridgeSignal.findFirst({
+            where: { status: "acted" },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          });
+          // Only pick it if it actually carries an undo action.
+          const hasUndo = ((recent?.actions as any[]) ?? []).some((a) => a?.action === "undo_action");
+          if (!recent || !hasUndo) {
+            return { ok: false, output: null, error: "nothing recent to undo (no reversible action on the record)." };
+          }
+          signalId = recent.id;
+        }
+        const r = await undoAction(signalId);
+        if (!r.ok) return { ok: false, output: null, error: r.error };
+        return { ok: true, output: { summary: "Undone — I reversed that.", bridgeSignalId: signalId } };
       }
 
       case "grant": {

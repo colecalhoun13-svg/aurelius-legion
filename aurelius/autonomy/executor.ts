@@ -24,7 +24,7 @@
 import { prisma } from "../core/db/prisma.ts";
 import { runTraced } from "../core/trace.ts";
 import { decideAction } from "./grants.ts";
-import { getActionFinalizer } from "./actionRegistry.ts";
+import { getActionFinalizer, getActionInverse, hasActionInverse } from "./actionRegistry.ts";
 
 export type PreparedAction = {
   title: string;
@@ -58,6 +58,18 @@ export async function executeAction(args: {
       () => finalizer(prepared.payload),
       { finalized: true }
     );
+    // If this action has a registered inverse, attach a one-tap Undo carrying
+    // what undo needs (the payload + the finalizer's result). The actionClass is
+    // recorded on every executed signal so the trust ledger can attribute it.
+    const undoable = hasActionInverse(args.actionClass);
+    const actions: any[] = [{ action: "executed", actionClass: args.actionClass }];
+    if (undoable) {
+      actions.push({
+        label: "Undo",
+        action: "undo_action",
+        payload: { actionClass: args.actionClass, actionPayload: prepared.payload ?? null, result: result ?? null },
+      });
+    }
     const sig = await prisma.bridgeSignal.create({
       data: {
         kind: "background_result",
@@ -70,7 +82,8 @@ export async function executeAction(args: {
         title: prepared.title,
         body:
           prepared.body +
-          `\n\n_Done on its own under grant \`${args.actionClass}\`. Reversible — tell me if this was wrong and I'll undo it._`,
+          `\n\n_Done on its own under grant \`${args.actionClass}\`.${undoable ? " Tap Undo (or say “undo that”) and I'll reverse it." : " Reversible — tell me if this was wrong."}_`,
+        actions,
       },
     });
     return { finalized: true, reason: decision.reason, bridgeSignalId: sig.id, result };
@@ -200,7 +213,17 @@ export async function confirmAction(
       () => finalizer(confirm.payload.actionPayload),
       { confirmedBy: "cole" }
     );
-    await prisma.bridgeSignal.update({ where: { id: sig.id }, data: { status: "acted" } });
+    // Attach a one-tap Undo if this class has a registered inverse (keep the
+    // original confirm action for the record).
+    const nextActions: any[] = [...actions];
+    if (hasActionInverse(actionClass)) {
+      nextActions.push({
+        label: "Undo",
+        action: "undo_action",
+        payload: { actionClass, actionPayload: confirm.payload.actionPayload ?? null, result: result ?? null },
+      });
+    }
+    await prisma.bridgeSignal.update({ where: { id: sig.id }, data: { status: "acted", actions: nextActions } });
     return { ok: true, result };
   } catch (err: any) {
     // Release the claim so Cole can retry — the outward action did NOT ship.
@@ -208,5 +231,52 @@ export async function confirmAction(
       .updateMany({ where: { id: sig.id, status: "acting" }, data: { status: "pending" } })
       .catch(() => {});
     return { ok: false, error: err?.message ?? "finalize failed" };
+  }
+}
+
+/**
+ * Reverse an executed action — the real "I'll undo it" (master-class #4). Runs
+ * the registered inverse with the original payload + the finalizer's result, then
+ * marks the signal "undone". Atomic claim (acted → undoing → undone) so a
+ * double-tap can't run the inverse twice.
+ */
+export async function undoAction(bridgeSignalId: string): Promise<{ ok: boolean; result?: any; error?: string }> {
+  const sig = await prisma.bridgeSignal.findUnique({ where: { id: bridgeSignalId } });
+  if (!sig) return { ok: false, error: "signal not found" };
+  if (sig.status === "undone") return { ok: true, result: "already undone" };
+  if (sig.status !== "acted") return { ok: false, error: `can only undo an executed action (this one is ${sig.status})` };
+
+  const actions = (sig.actions as any[]) ?? [];
+  const undo = actions.find((a) => a?.action === "undo_action");
+  const actionClass = undo?.payload?.actionClass;
+  if (!undo || !actionClass) return { ok: false, error: "this action has no undo" };
+
+  const inverse = getActionInverse(actionClass);
+  if (!inverse) return { ok: false, error: `no inverse registered for ${actionClass}` };
+
+  // Atomic claim: acted → undoing (only one caller wins).
+  const claim = await prisma.bridgeSignal.updateMany({
+    where: { id: sig.id, status: "acted" },
+    data: { status: "undoing" },
+  });
+  if (claim.count === 0) return { ok: true, result: "already undoing/undone" };
+
+  try {
+    const result = await runTraced(
+      "action",
+      `undo:${actionClass}`,
+      () => inverse(undo.payload.actionPayload, undo.payload.result),
+      { undoneBy: "cole" }
+    );
+    await prisma.bridgeSignal.update({
+      where: { id: sig.id },
+      data: { status: "undone", body: sig.body + `\n\n_Undone._` },
+    });
+    return { ok: true, result };
+  } catch (err: any) {
+    await prisma.bridgeSignal
+      .updateMany({ where: { id: sig.id, status: "undoing" }, data: { status: "acted" } })
+      .catch(() => {});
+    return { ok: false, error: err?.message ?? "undo failed" };
   }
 }

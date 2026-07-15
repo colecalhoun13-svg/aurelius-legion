@@ -5,7 +5,7 @@
 // confirm-later path can find a finalizer. Adding a new acting workflow = write
 // its finalizer + register it here.
 
-import { registerActionFinalizer } from "./actionRegistry.ts";
+import { registerActionFinalizer, registerActionInverse } from "./actionRegistry.ts";
 import { finalizeScheduleProtection } from "./workflows/scheduleProtection.ts";
 import { finalizeInboxDraft } from "./workflows/inboxTriage.ts";
 import { finalizeContentPublish } from "./workflows/contentPublish.ts";
@@ -19,6 +19,11 @@ export function registerAllActions(): void {
   if (registered) return;
   registered = true;
   registerActionFinalizer("calendar.schedule_protection", finalizeScheduleProtection);
+  // Real undo: reversing a placed focus-block hold = deleting the event it created.
+  registerActionInverse("calendar.schedule_protection", async (_payload, result) => {
+    const { deleteCalendarEvent } = await import("../calendar/engine.ts");
+    return deleteCalendarEvent(result?.externalId);
+  });
   registerActionFinalizer("inbox.triage_draft", finalizeInboxDraft);
   // Outward: publishing content. executeAction always GATES this (outward class),
   // so the finalizer only runs on Cole's Bridge confirm.

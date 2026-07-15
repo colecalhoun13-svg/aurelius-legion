@@ -695,6 +695,58 @@ async function main() {
     await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
   }
 
+  console.log("── trust ledger + real undo (§2.5, master-class #4) ──");
+  {
+    const { registerActionFinalizer, registerActionInverse } = await import("../autonomy/actionRegistry.ts");
+    const { executeAction, undoAction } = await import("../autonomy/executor.ts");
+    const { getTrustLedger } = await import("../autonomy/trustLedger.ts");
+    const { grantAutonomy } = await import("../autonomy/grants.ts");
+    const { resolveOperatorId } = await import("../knowledge/store.ts");
+
+    // A finalizer that "creates" something + an inverse that "deletes" it.
+    let created = 0, deleted = 0;
+    registerActionFinalizer("research.ingest", async () => { created++; return { externalId: `${TAG}_evt` }; });
+    registerActionInverse("research.ingest", async (_p, result) => { if (result?.externalId) deleted++; return { ok: true }; });
+    await grantAutonomy({ actionClass: "research.ingest", note: "smoke" });
+
+    const exec = await executeAction({
+      actionClass: "research.ingest",
+      prepare: async () => ({ title: `${TAG} undo test`, body: "held a thing", domain: "personal", payload: { n: 1 } }),
+    });
+    const sig = await prisma.bridgeSignal.findUnique({ where: { id: exec.bridgeSignalId } });
+    const hasUndo = ((sig?.actions as any[]) ?? []).some((a) => a?.action === "undo_action");
+    check("an executed action with an inverse gets a one-tap Undo", exec.finalized && created === 1 && hasUndo);
+
+    const undo = await undoAction(exec.bridgeSignalId);
+    const after = await prisma.bridgeSignal.findUnique({ where: { id: exec.bridgeSignalId } });
+    check("undo runs the inverse and marks the signal undone", undo.ok && deleted === 1 && after?.status === "undone");
+
+    const undo2 = await undoAction(exec.bridgeSignalId);
+    check("re-undo is a no-op (inverse runs exactly once)", undo2.ok && deleted === 1);
+
+    // Ledger aggregation from traces — deterministic via direct inserts (runTraced
+    // writes are fire-and-forget, so don't race them here).
+    const opId = await resolveOperatorId("global");
+    if (opId) {
+      await prisma.logEntry.createMany({
+        data: [
+          { operatorId: opId, type: "trace", level: "info", message: `action:${TAG}.cls`, context: { status: "ok" } as any },
+          { operatorId: opId, type: "trace", level: "info", message: `action:confirm:${TAG}.cls`, context: { status: "ok" } as any },
+          { operatorId: opId, type: "trace", level: "info", message: `action:undo:${TAG}.cls`, context: { status: "ok" } as any },
+        ],
+      });
+      const ledger = await getTrustLedger();
+      const row = ledger.find((r) => r.actionClass === `${TAG}.cls`);
+      check("trust ledger aggregates acted/confirmed/undone from action traces", !!row && row.acted === 1 && row.confirmed === 1 && row.undone === 1);
+      await prisma.logEntry.deleteMany({ where: { message: { contains: `${TAG}.cls` } } });
+    } else {
+      check("trust ledger (skipped — no global operator)", true);
+    }
+
+    await prisma.bridgeSignal.deleteMany({ where: { id: exec.bridgeSignalId } });
+    await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
+  }
+
   // ── cleanup (smoke artifacts only) ──
   await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });
   await prisma.corpusDocument.delete({ where: { id: doc.id } });
