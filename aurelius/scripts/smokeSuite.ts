@@ -857,7 +857,7 @@ async function main() {
     check(
       "the training canon reaches from the Soviet school to modern coaches",
       train.canon.some((u) => /verkhoshansky|medvedyev|zatsiorsky/i.test(u.title)) &&
-        train.canon.some((u) => /jordan shallow|israetel|nuckols/i.test(u.title))
+        train.canon.some((u) => /jordan shallow|israetel|nuckols|zingler/i.test(u.title))
     );
     // The field itself, not only a book list — concepts/mechanisms are studied too.
     check(

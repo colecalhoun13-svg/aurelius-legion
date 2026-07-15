@@ -13,11 +13,14 @@
 //               wealth: compounding, risk of ruin, valuation). So Aurelius doesn't
 //               just read a book list — it learns the field.
 //
-// A SELF-EXPANSION engine keeps the list growing: as a field nears the end, it
-// researches what else to read AND which sub-topics it still needs, and appends
-// them to a persistent per-domain queue. Every Sunday night it studies the next
-// unit for each field: deep research (LLM + open academic sources) → four-write
-// ingest into the second brain (domain-tagged) → refresh the field's living wiki.
+// A GAP-DRIVEN self-expansion engine keeps it growing: it starts from the seed,
+// and as a field runs low it looks at what it has ACTUALLY studied and ingested,
+// assesses its own gaps (missing works AND uncovered concepts/debates), and queues
+// those to fill. Every Sunday night it studies the next unit for each field: deep
+// research (LLM + open academic sources) → four-write ingest into the second brain
+// (domain-tagged) → refresh the field's living wiki (the synthesized understanding).
+// The curriculum is not a separate store — it is the ENGINE that fills the second
+// brain and the wiki. The only state it keeps is a per-domain cursor + gap queue.
 //
 // Safety/consistency: INWARD auto-ingestion (like RSS/weekend pulse) — corpus
 // documents, reversible, traced. NOT Living Knowledge (still propose→confirm).
@@ -124,6 +127,7 @@ export const CURRICULUM: Track[] = [
       "Triphasic Training — Cal Dietz",
       "Westside / the conjugate method — Louie Simmons",
       "Base Strength — Alexander Bromley",
+      "Zingler Strength — programming and coaching",
       "Pavel Tsatsouline — strength as a skill",
     ],
     [
@@ -366,30 +370,53 @@ const MAX_DISCOVERIES_PER_EXPAND = 12;
 const MAX_QUEUE = 400;
 
 /**
- * Ask an LLM for the next things to study in this field — missing classics, the
- * Eastern-bloc/international traditions, the best CURRENT thinkers, AND core
- * sub-topics/concepts not yet covered — excluding what's already on the list.
- * Returns [] on any failure (keyless included).
+ * GAP-DRIVEN self-expansion. Rather than blindly appending "more of the field,"
+ * this grounds the search in what Aurelius has ACTUALLY studied and ingested for
+ * the domain (its real corpus coverage), then asks: given this, what are my
+ * biggest remaining gaps — the works, authors, schools, and core concepts/
+ * mechanisms/debates that would most increase real mastery? It queues those.
+ * This is the metacognition Cole asked for: start from the seed, then see its own
+ * gaps and research to fill them. Returns [] on any failure (keyless included).
  */
-async function expandCanon(track: Track, existing: Unit[]): Promise<Unit[]> {
-  const known = existing.map((u) => u.title).slice(-140).join("; ");
+async function fillKnowledgeGaps(track: Track, planned: Unit[]): Promise<Unit[]> {
+  // What has this field ACTUALLY ingested? (the studied units, most recent first)
+  let coveredTitles: string[] = [];
+  try {
+    const docs = await prisma.corpusDocument.findMany({
+      where: { domain: track.domain },
+      select: { title: true },
+      orderBy: { createdAt: "desc" },
+      take: 250,
+    });
+    coveredTitles = docs.map((d) => d.title.replace(/^Curriculum · [^:]+:\s*/, "").trim());
+  } catch {
+    /* corpus read failed — fall back to the planned list only */
+  }
+  const covered = coveredTitles.slice(0, 160).join("; ") || "(nothing studied yet)";
+  const onDeck = planned.map((u) => u.title).slice(-80).join("; ");
+
   const prompt =
-    `You are curating a lifelong learning plan to make someone DEEPLY versed in ${track.label} — both its ` +
-    `literature and its actual subject matter. List ${MAX_DISCOVERIES_PER_EXPAND} more things to study: a mix of ` +
-    `essential works/authors/schools (foundational classics still missing, the Soviet/Eastern-bloc and ` +
-    `international traditions where relevant, and the strongest current thinkers) AND core sub-topics, ` +
-    `concepts, mechanisms, or debates of the field itself that aren't yet covered. ` +
-    `Do NOT repeat anything already on this list: ${known}. ` +
-    `Return ONE per line as "Work, author, or topic — one-line why". No preamble, no numbering, nothing else.`;
+    `You are directing self-education to become DEEPLY versed in ${track.label} — its literature AND its actual ` +
+    `subject matter. Here is what has already been STUDIED and ingested:\n${covered}\n\n` +
+    (onDeck ? `Already planned (don't repeat): ${onDeck}\n\n` : "") +
+    `Assess the coverage honestly and identify the most important GAPS: essential works/authors/schools that are ` +
+    `missing (including foundational classics, the Soviet/Eastern-bloc and international traditions where relevant, ` +
+    `and the strongest current thinkers), AND core concepts, mechanisms, or live debates of the field that are ` +
+    `absent or under-covered. Rank by how much each would increase real mastery. ` +
+    `Return the top ${MAX_DISCOVERIES_PER_EXPAND} as ONE per line: "Work, author, or topic — why it's a gap". ` +
+    `No preamble, no numbering, nothing else.`;
+
   let text = "";
   try {
-    const r = await runLLM({ taskType: "curriculum_discovery", operator: track.operator, input: prompt });
+    const r = await runLLM({ taskType: "curriculum_gap_analysis", operator: track.operator, input: prompt });
     text = r?.text ?? "";
   } catch {
     return [];
   }
   if (!text || engineUnavailableText(text)) return [];
-  return parseDiscoveries(text, track.label, existing).slice(0, MAX_DISCOVERIES_PER_EXPAND);
+  // Dedup against BOTH the planned list and what's already been ingested.
+  const against: Unit[] = [...planned, ...coveredTitles.map((t) => ({ title: t, query: "" }))];
+  return parseDiscoveries(text, track.label, against).slice(0, MAX_DISCOVERIES_PER_EXPAND);
 }
 
 const UNITS_PER_DOMAIN_PER_WEEK = 1;
@@ -430,7 +457,7 @@ export async function runCurriculumIngest(opts?: {
       let list = [...trk.canon, ...state.queue];
 
       if (list.length - state.index <= EXPAND_WHEN_REMAINING && state.queue.length < MAX_QUEUE) {
-        const added = await expandCanon(trk, list);
+        const added = await fillKnowledgeGaps(trk, list);
         if (added.length > 0) {
           state = { ...state, queue: [...state.queue, ...added].slice(0, MAX_QUEUE), discoveries: state.discoveries + 1 };
           await setState(globalId, trk.domain, state);
