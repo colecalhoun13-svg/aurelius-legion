@@ -121,6 +121,17 @@ export async function syncCalendar(opts: { daysBack?: number; daysAhead?: number
   }
 
   console.log(`[calendar] sync: ${upserted} events upserted, ${removed} removed`);
+
+  // Event-driven anticipation (master-class #2): the 15-min sync is where new
+  // conflicts first appear. If something got booked over a protected focus block,
+  // surface it NOW (salience decides whether it also pings the phone) instead of
+  // waiting for tomorrow's briefing. Non-fatal.
+  try {
+    await detectAndSurfaceConflicts(timeMax);
+  } catch (err) {
+    console.warn("[calendar] conflict scan failed (non-fatal):", (err as any)?.message ?? err);
+  }
+
   return { ok: true as const, upserted, removed, window: { from: timeMin, to: timeMax } };
 }
 
@@ -254,6 +265,55 @@ export async function findAvailability(opts: {
     });
   }
   return out;
+}
+
+// A protected focus/deep-work block — the thing worth defending from double-booking.
+const FOCUS_RE = /deep\s*work|deep-work|focus block|focus time/i;
+
+/**
+ * Scan the upcoming window for a NON-focus event overlapping a protected focus
+ * block and surface it (once per conflict pair). This is the "anticipates vs
+ * cron" moment: Cole hears about the double-booking when it lands, not the next
+ * morning. Deduped by the two events' ids so a persistent conflict pings once.
+ */
+export async function detectAndSurfaceConflicts(timeMax: Date): Promise<number> {
+  const now = new Date();
+  const events = await prisma.calendarEvent.findMany({
+    where: { endAt: { gt: now }, startAt: { lte: timeMax } },
+    orderBy: { startAt: "asc" },
+  });
+  const isAllDay = (e: any) => !!(e.raw as any)?.allDay;
+  const focus = events.filter((e) => FOCUS_RE.test(e.title) && !isAllDay(e));
+  if (focus.length === 0) return 0;
+
+  const { surfaceSignal } = await import("../core/bridge.ts");
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const fmt = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+  let surfaced = 0;
+  for (const f of focus) {
+    const overlaps = events.filter(
+      (e) => e.id !== f.id && !FOCUS_RE.test(e.title) && !isAllDay(e) && e.startAt < f.endAt && e.endAt > f.startAt
+    );
+    for (const c of overlaps) {
+      const sourceId = `conflict:${f.externalId}:${c.externalId}`;
+      const exists = await prisma.bridgeSignal.count({ where: { sourceType: "calendar_conflict", sourceId } });
+      if (exists > 0) continue;
+      await surfaceSignal({
+        kind: "risk",
+        domain: "personal",
+        sourceType: "calendar_conflict",
+        sourceId,
+        severity: "attention",
+        title: "Conflict on your protected focus time",
+        body: `"${c.title}" (${fmt(c.startAt)}–${fmt(c.endAt)}) overlaps your held "${f.title}". Move one, or tell me to reschedule it.`,
+        dueAt: f.startAt,
+      });
+      surfaced++;
+    }
+  }
+  if (surfaced > 0) console.log(`[calendar] surfaced ${surfaced} focus-time conflict(s)`);
+  return surfaced;
 }
 
 // ── Boot + background sync ───────────────────────────────────────────

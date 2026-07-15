@@ -261,6 +261,53 @@ async function main() {
     }
   }
 
+  console.log("── salience: anticipation over cron ──");
+  {
+    const { scoreSalience, shouldPushNow } = await import("../core/salience.ts");
+    check(
+      "salience scores a critical risk above an info background result",
+      scoreSalience({ kind: "risk", severity: "critical" }) > scoreSalience({ kind: "background_result", severity: "info" })
+    );
+    check(
+      "shouldPushNow: critical always pushes; low-salience info never does",
+      shouldPushNow({ kind: "risk", severity: "critical" }) === true &&
+        shouldPushNow({ kind: "background_result", severity: "info" }) === false
+    );
+
+    // surfaceSignal files the row; push is dormant (no Telegram token) so pushed=false.
+    const { surfaceSignal } = await import("../core/bridge.ts");
+    const r = await surfaceSignal({
+      kind: "background_result",
+      sourceType: "smoke_salience",
+      sourceId: `${TAG}_sig`,
+      severity: "info",
+      title: `${TAG} quiet signal`,
+      body: "low salience — stays on the Bridge",
+    });
+    const filed = await prisma.bridgeSignal.findUnique({ where: { id: r.id } });
+    check("surfaceSignal files the signal and doesn't push a low-salience one", !!filed && r.pushed === false);
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "smoke_salience" } });
+
+    // Event-driven calendar conflict: a non-focus event over a Deep Work block
+    // surfaces once, then dedups.
+    const { detectAndSurfaceConflicts } = await import("../calendar/engine.ts");
+    const soon = new Date(Date.now() + 3 * 3600_000);
+    const end = new Date(soon.getTime() + 90 * 60000);
+    const focus = await prisma.calendarEvent.create({
+      data: { externalId: `${TAG}_focus`, domain: "personal", title: "Deep Work (protected)", startAt: soon, endAt: end, syncedAt: new Date(), raw: { allDay: false } as any },
+    });
+    const clash = await prisma.calendarEvent.create({
+      data: { externalId: `${TAG}_clash`, domain: "personal", title: `${TAG} Team Sync`, startAt: new Date(soon.getTime() + 15 * 60000), endAt: end, syncedAt: new Date(), raw: { allDay: false } as any },
+    });
+    const first = await detectAndSurfaceConflicts(new Date(Date.now() + 7 * 86400_000));
+    const second = await detectAndSurfaceConflicts(new Date(Date.now() + 7 * 86400_000));
+    check("a new event over a focus block surfaces a conflict once, then dedups", first === 1 && second === 0);
+
+    // cleanup
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "calendar_conflict" } });
+    await prisma.calendarEvent.deleteMany({ where: { id: { in: [focus.id, clash.id] } } });
+  }
+
   console.log("── new tools: gmail + fred (keyless: honest connect/config fails) ──");
   const { gmailAdapter } = await import("../tools/adapters/gmail.ts");
   const { fredAdapter } = await import("../tools/adapters/fred.ts");
