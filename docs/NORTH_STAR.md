@@ -550,3 +550,50 @@ grant record + action-with-review executor + first live grant
 `calendar × schedule-protection`. **Blocked on Cole:** the Plan A switches
 (`EMBEDDINGS_PROVIDER=gemini` + re-embed, publish OAuth consent) and the
 Mac Mini deploy to prove always-on.
+
+## State update — 2026-07-15 (acting layer BUILT · master-class 1–7 · council hardening)
+
+**This entry supersedes §4 "The frontier" and §6 Block 4 where they read as
+unbuilt.** Since 2026-07-13 the acting layer described there as the frontier has
+been fully built and verified.
+
+- **The Autonomy Grant system is live (§2.5 realized).** Grant record + Cole-only
+  writer (`autonomy/grants.ts`), the two-lock action taxonomy (`actionClasses.ts`:
+  `checkGrantable` refuses outward/training/`autonomy`, and `isActionGranted`
+  returns false for a non-grantable class even if a row exists), the
+  action-with-review executor (`executor.ts`: act-now under grant, else gate),
+  real **undo/inverse** (`registerActionInverse`, `undoAction`), and the **trust
+  ledger** (`trustLedger.ts`: acted/confirmed/undone counts + `suggestNextGrant`).
+  First live grant `calendar.schedule_protection` runs on the 06:45 cron, places
+  real holds, and is one-tap reversible. Outward classes (`email.send`,
+  `content.publish`, `wealth.trade`) are gated by construction and independently
+  red-teamed — no path finalizes them without Cole's Bridge tap, and autonomy
+  cannot self-escalate.
+- **Master-class 1–7 shipped** on top: chat-mined heuristics, salience/anticipation,
+  reranked retrieval, trust ledger + undo, the confronting Command Deck
+  (`deck.biggestRisk`), semantic operator routing (embedding-blended), and the
+  single trace-thread view (`/traces`, `withTrace`/`traceId` through
+  routeLLM → tools → executeAction).
+- **Council hardening pass (this session).** A five-seat independent audit found and
+  fixed: the `confirmAction` claim was a blacklist (a *dismissed*/*undone* proposal
+  was still confirmable → could re-ship a rejected outward publish) — now a
+  whitelist of `["pending","surfaced"]`; `backfillEmbeddings` embedded `scope="system"`
+  OAuth tokens into the vector index — now excluded (hard rule 6); `deleteCalendarEvent`
+  swallowed upstream failures and reported success (undo could lie) — now fails loudly;
+  re-embedding never purged stale tail chunks — now does; the scheduled spine bypassed
+  the cold-Neon `withDb` retry — `runTraced` now warms the DB first; plus the honest-failure
+  guard consolidated to one source (`llm/nonAnswer.ts`), the two interval pollers traced,
+  and several smaller integrity fixes. Smoke suite **117/117 green**, `tsc` clean both sides.
+- **Correction:** §4's note that `self/selfUpgradeEngine.ts` has "known TS errors" is
+  stale — backend `tsc --noEmit` is clean (exit 0). That path stays parked (Block 11),
+  but it does not currently break the type-check.
+
+**The frontier now** is (1) making the built acting/trust layer **legible and operable
+from the UI** — undo works only via chat (no button/route), grants happen only via chat,
+and the trust ledger has no screen; the sharpest next arc is an Autonomy surface (active
+grants + track record + `suggestNextGrant` + one-tap grant/revoke) and wiring undo to a
+button on `/deck` and `/bridge`; (2) the outward/income engines (still correctly parked
+pending Cole's real business data; the draft→gate→confirm rails already exist); and
+(3) always-on deployment (Mac Mini) to prove "runs for days." **Blocked on Cole:** the
+embeddings provider switch (keys are in — confirm `EMBEDDINGS_PROVIDER` isn't pinned to
+`mock`), and the always-on deploy.

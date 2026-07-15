@@ -10,6 +10,7 @@
 // briefing ships anyway — a ritual never fails to fire for lack of a key.
 
 import { prisma } from "../core/db/prisma.ts";
+import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { runLLM } from "../llm/runLLM.ts";
 import { extractDirectives } from "../llm/directiveParser.ts";
 import { getToday } from "../productivity/service.ts";
@@ -34,7 +35,7 @@ export async function ensureRituals() {
 
 // LLM text that indicates no engine answered (keyless environment).
 function isEngineUnavailable(text: string): boolean {
-  return /_API_KEY is not configured|engine is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
+  return engineUnavailableText(text);
 }
 
 async function voiceOver(skeleton: string, instruction: string): Promise<string> {

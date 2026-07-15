@@ -489,7 +489,7 @@ export async function listProjectsWithProgress() {
 export async function getDeck(dateStr?: string) {
   const { start, dstr } = dayRange(dateStr);
 
-  const [today, projects, pendingSignals, overnight] = await Promise.all([
+  const [today, projects, pendingSignals, overnight, overdueTotal] = await Promise.all([
     getToday(dstr),
     listProjectsWithProgress(),
     prisma.bridgeSignal.findMany({
@@ -504,6 +504,10 @@ export async function getDeck(dateStr?: string) {
       orderBy: { createdAt: "desc" },
       take: 6,
     }),
+    // TRUE overdue count — getToday caps its overdue LIST at 20, but the deck's
+    // whole job is to confront: with >20 overdue it must not undercount. Count,
+    // don't measure a capped array. (Mirrors getToday's overdue predicate.)
+    prisma.task.count({ where: { dueDate: { lt: start }, status: { notIn: ["done", "abandoned"] } } }),
   ]);
 
   // Hero metrics — the confrontation row
@@ -511,7 +515,7 @@ export async function getDeck(dateStr?: string) {
     (p) => p.daysToTarget !== null && p.daysToTarget < 7 && p.progressPct < 80
   );
   const hero = {
-    overdue: today.overdue.length,
+    overdue: overdueTotal,
     openToday: today.tasks.length,
     doneToday: today.doneToday,
     followThrough: today.stats.followThrough, // % of stated intent executed (7d)
@@ -539,13 +543,18 @@ export async function getDeck(dateStr?: string) {
       (a, b) =>
         (a.daysToTarget! - a.progressPct / 20) - (b.daysToTarget! - b.progressPct / 20)
     )[0];
-    const days = worst.daysToTarget === 0 ? "due today" : `${worst.daysToTarget}d left`;
+    const days =
+      worst.daysToTarget! === 0
+        ? "due today"
+        : worst.daysToTarget! < 0
+          ? `${Math.abs(worst.daysToTarget!)}d overdue`
+          : `${worst.daysToTarget}d left`;
     biggestRisk = `"${worst.name}" is ${worst.progressPct}% done with ${days} — it will slip unless you move it today.`;
-  } else if (today.overdue.length >= 3) {
-    biggestRisk = `${today.overdue.length} tasks are overdue — the backlog is compounding. Clear the oldest or cut them.`;
+  } else if (overdueTotal >= 3) {
+    biggestRisk = `${overdueTotal} tasks are overdue — the backlog is compounding. Clear the oldest or cut them.`;
   } else if (typeof today.stats.followThrough === "number" && today.stats.followThrough < 50) {
     biggestRisk = `Follow-through is ${today.stats.followThrough}% this week — you're stating more than you're finishing. Pick fewer, finish them.`;
-  } else if (today.overdue.length > 0) {
+  } else if (overdueTotal > 0) {
     biggestRisk = `1 task is overdue: "${today.overdue[0].title}" — close it before it becomes a habit.`;
   } else if (today.tasks.length === 0 && today.plan?.focus == null) {
     biggestRisk = `No focus set and nothing on the deck — the risk is drift. Name one thing that matters today.`;

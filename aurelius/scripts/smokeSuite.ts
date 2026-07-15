@@ -279,6 +279,16 @@ async function main() {
     check("semanticRecall dedups identical chunk text across sources", dupes.length === 1);
     await deleteEmbeddingsForSource("note", `${TAG}_r1`);
     await deleteEmbeddingsForSource("corpus_doc", `${TAG}_r2`);
+
+    // Re-embedding a source into FEWER chunks must purge the stale tail chunks
+    // (Council fix) — else superseded text lingers in the index and resurfaces
+    // as a confident, wrong hit.
+    const longText = `${TAG} ` + "deload volume fatigue protocol ".repeat(80); // >1600 chars → multiple chunks
+    const nLong = await embedSource({ sourceType: "note", sourceId: `${TAG}_shrink`, text: longText, operatorId: null, domain: "personal" });
+    const nShort = await embedSource({ sourceType: "note", sourceId: `${TAG}_shrink`, text: `${TAG} short now`, operatorId: null, domain: "personal" });
+    const remaining = await prisma.vectorEmbedding.count({ where: { sourceType: "note", sourceId: `${TAG}_shrink` } });
+    check("re-embedding into fewer chunks purges the stale tail chunks", nLong > 1 && nShort === 1 && remaining === 1);
+    await deleteEmbeddingsForSource("note", `${TAG}_shrink`);
   }
 
   console.log("── salience: anticipation over cron ──");
@@ -651,6 +661,20 @@ async function main() {
     const before = finalizedCount;
     await Promise.all([confirmAction(race.bridgeSignalId), confirmAction(race.bridgeSignalId)]);
     check("concurrent confirm finalizes exactly once (atomic claim)", finalizedCount === before + 1);
+
+    // A DISMISSED proposal must NOT be confirmable. A later /confirm (a stale
+    // tab, a retry) on something Cole rejected must not run its finalizer —
+    // "Dismiss" means no. (Council fix: whitelist claimable states ["pending",
+    // "surfaced"] instead of blacklisting only ["acting","acted"].)
+    const toDismiss = await executeAction({ actionClass: "research.ingest", prepare: prep });
+    await prisma.bridgeSignal.update({ where: { id: toDismiss.bridgeSignalId }, data: { status: "dismissed" } });
+    const beforeDismiss = finalizedCount;
+    await confirmAction(toDismiss.bridgeSignalId);
+    const dismissedSig = await prisma.bridgeSignal.findUnique({ where: { id: toDismiss.bridgeSignalId } });
+    check(
+      "a dismissed proposal cannot be confirmed (finalizer stays unrun, status stays dismissed)",
+      finalizedCount === beforeDismiss && dismissedSig?.status === "dismissed"
+    );
 
     // Outward action can never finalize on its own (no standing grant possible).
     const beforeOutward = finalizedCount;

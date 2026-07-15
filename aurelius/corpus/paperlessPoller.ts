@@ -12,6 +12,7 @@
 // never re-ingest.
 
 import { prisma } from "../core/db/prisma.ts";
+import { runTraced } from "../core/trace.ts";
 import { ingestDocument } from "./ingest.ts";
 
 function config(): { url: string; token: string } | null {
@@ -117,8 +118,11 @@ export function startPaperlessPoller() {
   }
   if (timer) return;
   console.log("[paperless] poller live (every 10 min)");
+  // Traced like the rest of the spine so a failing 10-min poll is visible.
   timer = setInterval(() => {
-    pollPaperlessOnce().catch((err) => console.warn("[paperless] poll failed:", err));
+    runTraced("poll", "paperless", () => pollPaperlessOnce()).catch((err) =>
+      console.warn("[paperless] poll failed:", err)
+    );
   }, 10 * 60 * 1000);
-  pollPaperlessOnce().catch(() => {});
+  runTraced("poll", "paperless", () => pollPaperlessOnce()).catch(() => {});
 }

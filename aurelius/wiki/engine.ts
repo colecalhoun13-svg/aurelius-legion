@@ -13,11 +13,12 @@
 // Hard rule carried: the wiki cites only what exists — never invents.
 
 import { prisma } from "../core/db/prisma.ts";
+import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { runLLM } from "../llm/runLLM.ts";
 import { embedSourceSafe } from "../retrieval/embedPipeline.ts";
 
 function engineUnavailable(text: string): boolean {
-  return /_API_KEY is not configured|engine is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
+  return engineUnavailableText(text);
 }
 
 async function gatherDomainMaterial(domain: string) {

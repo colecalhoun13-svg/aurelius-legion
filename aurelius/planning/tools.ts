@@ -20,6 +20,7 @@
 // suggestions in the inbox; the plan is a briefing, not a fait accompli.
 
 import { prisma } from "../core/db/prisma.ts";
+import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { runLLM } from "../llm/runLLM.ts";
 import { extractDirectives } from "../llm/directiveParser.ts";
 import { computeOperatorScore } from "../measurement/operatorScore.ts";
@@ -112,7 +113,7 @@ export async function detectOverload() {
 }
 
 function engineUnavailable(text: string): boolean {
-  return /_API_KEY is not configured|engine is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
+  return engineUnavailableText(text);
 }
 
 /**

@@ -73,7 +73,15 @@ async function send(chatId: string | number, text: string) {
 /** Push a message to Cole's chat. No-op (false) when the bridge is dormant. */
 export async function sendToCole(text: string): Promise<boolean> {
   const chat = allowedChat();
-  if (!token() || !chat) return false;
+  if (!token()) return false; // fully dormant — no bot at all, stay quiet (rule 4)
+  if (!chat) {
+    // HALF-configured: token set but no chat id (Cole hasn't sent his first
+    // message). Silently returning false here made rituals compute a briefing,
+    // drop it, and still trace status:"ok" — an observability lie (rule 3). Fail
+    // loudly, once-ish, so the half-wired bridge is visible instead of eating pushes.
+    console.warn("[telegram] push dropped — TELEGRAM_CHAT_ID unset (send the bot a message to bind it).");
+    return false;
+  }
   try {
     await send(chat, text);
     return true;
@@ -242,19 +250,31 @@ async function handleCommand(chatId: string | number, text: string) {
       // to quick-capture only if the pipeline is unreachable or returns nothing.
       try {
         const port = process.env.PORT || "3001";
-        const res = await fetch(`http://localhost:${port}/api/aurelius`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text }),
-        });
-        const data: any = await res.json().catch(() => ({}));
-        const reply = (data?.reply ?? "").toString().trim();
+        // Bounded timeout: this fetch is awaited INSIDE the getUpdates poll loop,
+        // so a hung pipeline (wedged provider, stuck tool) with no timeout would
+        // freeze the entire bot — no further messages processed until restart.
+        // On timeout we abort and fall through to quick-capture.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 90_000);
+        let reply = "";
+        try {
+          const res = await fetch(`http://localhost:${port}/api/aurelius`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text }),
+            signal: ctrl.signal,
+          });
+          const data: any = await res.json().catch(() => ({}));
+          reply = (data?.reply ?? "").toString().trim();
+        } finally {
+          clearTimeout(timer);
+        }
         if (reply) {
           await send(chatId, reply);
           return;
         }
       } catch (err) {
-        console.warn("[telegram] chat pipeline unreachable — capturing to inbox instead:", (err as any)?.message ?? err);
+        console.warn("[telegram] chat pipeline unreachable/timed out — capturing to inbox instead:", (err as any)?.message ?? err);
       }
       await quickCapture({ content: text, captureContext: "telegram" });
       await send(chatId, "Captured to your inbox.");

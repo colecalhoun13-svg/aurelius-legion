@@ -7,7 +7,7 @@
 // console output. Writes are fire-and-forget: telemetry must never
 // break the thing it observes.
 
-import { prisma } from "./db/prisma.ts";
+import { prisma, warmupDb } from "./db/prisma.ts";
 import { currentTraceId, withTrace } from "./traceContext.ts";
 
 let _opId: string | null | undefined;
@@ -111,6 +111,11 @@ export async function runTraced<T>(
     // can't double-fire a job the live scheduler is mid-flight on. (Requests skip
     // this — they don't race a catch-up and don't need the extra row.)
     if (kind === "schedule" || kind === "catchup") {
+      // Wake Neon FIRST. The always-on spine is exactly the path the cold-start
+      // retry exists for: after an idle night Neon sleeps, and without this the
+      // first morning ritual's first query (starting with markStarted's own
+      // write) would hard-fail once with no retry and silently never reach Cole.
+      await warmupDb();
       await markStarted(kind, name);
     }
     try {

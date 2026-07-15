@@ -12,6 +12,7 @@
 // every entry point fails honestly with the connect instruction.
 
 import { prisma } from "../core/db/prisma.ts";
+import { runTraced } from "../core/trace.ts";
 import {
   calendarFetch,
   isCalendarConnected,
@@ -184,16 +185,19 @@ export async function createCalendarEvent(input: {
  */
 export async function deleteCalendarEvent(externalId: string): Promise<{ ok: boolean }> {
   if (!externalId) throw new Error("deleteCalendarEvent needs an externalId");
-  try {
-    const res = await calendarFetch(`/calendars/primary/events/${encodeURIComponent(externalId)}`, { method: "DELETE" });
-    if (!res.ok && res.status !== 404 && res.status !== 410) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`event delete failed: ${res.status} ${body.slice(0, 150)}`);
-    }
-  } catch (err) {
-    // Surface a real upstream error, but still remove the local mirror so the
-    // undo isn't left half-done.
-    console.warn("[calendar] delete upstream issue (removing local mirror):", (err as any)?.message ?? err);
+  // A 404/410 means the event is already gone upstream → idempotent success, and
+  // we clear the local mirror. ANY OTHER failure (network, 5xx, or auth lapsed —
+  // calendarFetch throws "not connected" when the token is null, which is a REAL
+  // risk given the ~7-day OAuth refresh expiry) must propagate: if we swallowed it,
+  // returned ok, cleared the mirror, and reported "undone" to Cole, the event would
+  // still exist on Google and the next 15-min sync would silently re-upsert it —
+  // an undo that lies (hard rule 3). So we do NOT clear the mirror on a genuine
+  // failure, and we throw so undoAction keeps the signal "acted" and tells Cole
+  // the undo didn't go through.
+  const res = await calendarFetch(`/calendars/primary/events/${encodeURIComponent(externalId)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 404 && res.status !== 410) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`event delete failed: ${res.status} ${body.slice(0, 150)}`);
   }
   await prisma.calendarEvent.deleteMany({ where: { externalId } });
   return { ok: true };
@@ -357,8 +361,15 @@ export async function startCalendarSync() {
   if (syncTimer) return;
   // The interval checks connection itself, so completing OAuth mid-run
   // wakes the sync with no restart.
+  // Traced like the rest of the spine (CLAUDE.md: "all traced via core/trace.ts")
+  // so a 15-min sync that starts failing is visible on /traces, not silent.
   syncTimer = setInterval(() => {
-    syncCalendar().catch((err) => console.warn("[calendar] sync failed:", err?.message ?? err));
+    runTraced("poll", "calendar_sync", () => syncCalendar()).catch((err) =>
+      console.warn("[calendar] sync failed:", err?.message ?? err)
+    );
   }, 15 * 60 * 1000);
-  if (connected) syncCalendar().catch((err) => console.warn("[calendar] initial sync failed:", err?.message ?? err));
+  if (connected)
+    runTraced("poll", "calendar_sync", () => syncCalendar()).catch((err) =>
+      console.warn("[calendar] initial sync failed:", err?.message ?? err)
+    );
 }

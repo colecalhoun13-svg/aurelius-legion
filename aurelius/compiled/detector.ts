@@ -165,6 +165,16 @@ async function persistProposals(
       continue;
     }
 
+    // Respect a correction: if Cole DISCARDED this exact pattern before, don't
+    // resurrect it as a brand-new proposal (which would re-nag him on the Bridge
+    // and, if re-confirmed, re-enter reasoning — defeating "a corrected pattern
+    // stops steering"). A discarded twin means: leave it dead.
+    const discardedTwin = await prisma.compiledPattern.findFirst({
+      where: { operatorId, domain, entityKey, patternType: p.patternType, status: "discarded" },
+      select: { id: true },
+    });
+    if (discardedTwin) continue;
+
     const created = await prisma.compiledPattern.create({
       data: {
         operatorId,

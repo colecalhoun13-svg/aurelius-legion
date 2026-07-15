@@ -18,6 +18,7 @@
 // always; missions never touch Living Knowledge directly, never act outward.
 
 import { prisma } from "../core/db/prisma.ts";
+import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { runLLM } from "../llm/runLLM.ts";
 import { runResearch } from "../research/researchEngine.ts";
 import { semanticRecall } from "../retrieval/retrieve.ts";
@@ -170,7 +171,7 @@ Write the result directly — tactical, grounded in the material above, no fille
   });
   // No engine = no synthesis. Fail honestly rather than filing (and
   // ingesting into the corpus) an error message dressed as a report.
-  if (/_API_KEY is not configured|engine is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(response.text)) {
+  if (engineUnavailableText(response.text)) {
     throw new Error("no LLM engine available for synthesis");
   }
   return response.text;

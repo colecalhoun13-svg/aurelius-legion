@@ -512,16 +512,11 @@ function providerConfigured(p: string): boolean {
   return !!process.env[PROVIDER_KEYS[p] ?? ""]?.trim();
 }
 
-// True when `text` is an engine's "I can't run" string rather than a real
-// answer. Must match EVERY adapter's keyless message, not just Anthropic's:
-//   • anthropicEngine → "Anthropic engine is not configured. Missing ANTHROPIC_API_KEY."
-//   • the other five   → "<PROVIDER>_API_KEY is not configured."  (e.g. GROQ_API_KEY)
-// and the router's own all-providers-down line. Missing any of these lets a
-// config string be served as the answer (no failover) or filed as content —
-// the exact silent-failure class the sweeps flagged.
-export function engineUnavailableText(text: string): boolean {
-  return /_API_KEY is not configured|engine is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
-}
+// The honest-failure guard now lives in one leaf module (llm/nonAnswer.ts) so
+// every call site shares one regex. Imported for local use (isNonAnswer) and
+// re-exported to preserve the public API.
+import { engineUnavailableText } from "./nonAnswer.ts";
+export { engineUnavailableText };
 
 // Anything that isn't a usable answer → the router should fail over to the next
 // engine. Covers: empty/blank text, a missing key, and adapter-level API/fetch

@@ -195,15 +195,21 @@ export async function confirmAction(
   const finalizer = getActionFinalizer(actionClass);
   if (!finalizer) return { ok: false, error: `no finalizer registered for ${actionClass}` };
 
-  // Atomic claim: flip pending/attention → acting only if not already claimed.
+  // Atomic claim: flip → acting only from a genuinely confirmable state. This is
+  // a WHITELIST, not a blacklist: only "pending" (the normal gate) and "surfaced"
+  // (the reaper's outward-review state) may be confirmed. A blacklist of
+  // ["acting","acted"] would let a DISMISSED or UNDONE proposal be confirmed by a
+  // later /confirm (a stale tab, a retry) — re-shipping an outward publish Cole
+  // rejected, or resurrecting a hold he undid. "Dismiss" and "Undo" must mean no.
   // The DB serializes concurrent updateManys; exactly one gets count === 1.
   const claim = await prisma.bridgeSignal.updateMany({
-    where: { id: sig.id, status: { notIn: ["acting", "acted"] } },
+    where: { id: sig.id, status: { in: ["pending", "surfaced"] } },
     data: { status: "acting" },
   });
   if (claim.count === 0) {
-    // Someone else already claimed or completed it — don't double-execute.
-    return { ok: true, result: "already claimed" };
+    // Not in a confirmable state (already claimed/acted, or dismissed/undone) —
+    // don't run the finalizer.
+    return { ok: true, result: "not confirmable (already handled or withdrawn)" };
   }
 
   try {

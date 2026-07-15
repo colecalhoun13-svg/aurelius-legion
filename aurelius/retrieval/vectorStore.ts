@@ -148,6 +148,26 @@ export async function deleteEmbeddingsForSource(
   );
 }
 
+/**
+ * Delete stale tail chunks left over when a source is re-embedded into FEWER
+ * chunks than before. upsertEmbedding overwrites chunk 0..N-1 but never removes
+ * old chunk N.., so an edited/shortened source would otherwise leave superseded
+ * text in the index that resurfaces as a confident (wrong) hit. Called after a
+ * re-embed with the new chunk count.
+ */
+export async function deleteEmbeddingChunksFrom(
+  sourceType: EmbeddingSourceType,
+  sourceId: string,
+  fromChunkIndex: number
+): Promise<void> {
+  await prisma.$executeRawUnsafe(
+    `DELETE FROM "VectorEmbedding" WHERE "sourceType" = $1 AND "sourceId" = $2 AND "chunkIndex" >= $3`,
+    sourceType,
+    sourceId,
+    fromChunkIndex
+  );
+}
+
 export async function countEmbeddings(): Promise<number> {
   const rows: any[] = await prisma.$queryRawUnsafe(
     `SELECT COUNT(*)::int AS n FROM "VectorEmbedding"`

@@ -14,6 +14,7 @@
 // which is exactly what that metric is for.
 
 import { prisma } from "../core/db/prisma.ts";
+import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { semanticRecall } from "../retrieval/retrieve.ts";
 import { embedSourceSafe } from "../retrieval/embedPipeline.ts";
 
@@ -22,13 +23,7 @@ const FRESH_DAYS = 14;   // knowledge moves; stale conclusions don't serve
 const MIN_QUESTION = 12; // chars — below this, matching is noise
 const MIN_ANSWER = 40;   // don't compile one-word replies
 
-function engineUnavailableText(text: string): boolean {
-  // Match every engine's keyless string ("<PROVIDER>_API_KEY is not configured.",
-  // "Anthropic engine is not configured.") and the all-down line — but NOT a
-  // legitimate "your calendar is not configured" answer (Aurelius is
-  // dormant-until-configured by design), so anchor to _API_KEY / "engine".
-  return /_API_KEY is not configured|engine is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
-}
+// engineUnavailableText now imported from llm/nonAnswer.ts (single source of truth).
 
 /** Only these task types are semantically re-servable — never realtime. */
 const REUSABLE_TASK_TYPES = new Set(["chat", "summary", "analysis", "quick_reply"]);
