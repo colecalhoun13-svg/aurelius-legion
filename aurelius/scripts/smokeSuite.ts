@@ -18,6 +18,7 @@ import { getKnowledge, resolveOperatorId } from "../knowledge/store.ts";
 import { computeWeeklySnapshot } from "../measurement/scoreboard.ts";
 import { runInitiativePulse } from "../autonomy/initiative.ts";
 import { synthesizeWikiPage } from "../wiki/engine.ts";
+import { getDeck } from "../productivity/service.ts";
 
 let passed = 0;
 let failed = 0;
@@ -746,6 +747,13 @@ async function main() {
     await prisma.bridgeSignal.deleteMany({ where: { id: exec.bridgeSignalId } });
     await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
   }
+
+  // ── command deck: the confronting home screen (master-class #5) ──
+  console.log("── command deck: biggest-risk line + inline bridge ──");
+  const deck = await getDeck();
+  check("deck names a single biggest-risk line", typeof deck.biggestRisk === "string" && deck.biggestRisk.length > 0);
+  check("deck inlines the pending-Bridge queue", Array.isArray(deck.bridge));
+  check("deck surfaces the overnight 'while you were away' row", Array.isArray(deck.overnight));
 
   // ── cleanup (smoke artifacts only) ──
   await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });

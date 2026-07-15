@@ -489,13 +489,20 @@ export async function listProjectsWithProgress() {
 export async function getDeck(dateStr?: string) {
   const { start, dstr } = dayRange(dateStr);
 
-  const [today, projects, pendingSignals] = await Promise.all([
+  const [today, projects, pendingSignals, overnight] = await Promise.all([
     getToday(dstr),
     listProjectsWithProgress(),
     prisma.bridgeSignal.findMany({
       where: { status: { in: ["pending", "surfaced"] } },
       orderBy: [{ createdAt: "desc" }],
       take: 12,
+    }),
+    // What Aurelius finalized on its own overnight (granted inward actions),
+    // awaiting Cole's eye — the "here's what I did while you slept" row.
+    prisma.bridgeSignal.findMany({
+      where: { status: "acted", createdAt: { gte: new Date(Date.now() - 20 * 3600 * 1000) } },
+      orderBy: { createdAt: "desc" },
+      take: 6,
     }),
   ]);
 
@@ -519,9 +526,37 @@ export async function getDeck(dateStr?: string) {
     ).length,
   };
 
+  // The biggest risk right now — ONE line, computed, ranked worst-first. The
+  // deck's whole job is to confront, so it names the single thing most likely
+  // to cost Cole, not a wall of stats. Order matters: a project about to slip
+  // its deadline outranks a pile of overdue tasks outranks a broken follow-
+  // through streak. When nothing's on fire, say so plainly (no false alarms).
+  let biggestRisk: string;
+  if (behindProjects.length > 0) {
+    // Worst = closest to target with least progress. Sort by slack (days left
+    // minus a progress cushion) ascending; the smallest slack is the sharpest.
+    const worst = [...behindProjects].sort(
+      (a, b) =>
+        (a.daysToTarget! - a.progressPct / 20) - (b.daysToTarget! - b.progressPct / 20)
+    )[0];
+    const days = worst.daysToTarget === 0 ? "due today" : `${worst.daysToTarget}d left`;
+    biggestRisk = `"${worst.name}" is ${worst.progressPct}% done with ${days} — it will slip unless you move it today.`;
+  } else if (today.overdue.length >= 3) {
+    biggestRisk = `${today.overdue.length} tasks are overdue — the backlog is compounding. Clear the oldest or cut them.`;
+  } else if (typeof today.stats.followThrough === "number" && today.stats.followThrough < 50) {
+    biggestRisk = `Follow-through is ${today.stats.followThrough}% this week — you're stating more than you're finishing. Pick fewer, finish them.`;
+  } else if (today.overdue.length > 0) {
+    biggestRisk = `1 task is overdue: "${today.overdue[0].title}" — close it before it becomes a habit.`;
+  } else if (today.tasks.length === 0 && today.plan?.focus == null) {
+    biggestRisk = `No focus set and nothing on the deck — the risk is drift. Name one thing that matters today.`;
+  } else {
+    biggestRisk = `Nothing's on fire. Protect the focus block and do the work you already named.`;
+  }
+
   return {
     date: dstr,
     hero,
+    biggestRisk,
     plan: today.plan,
     tasks: today.tasks,
     overdue: today.overdue,
@@ -530,6 +565,7 @@ export async function getDeck(dateStr?: string) {
     stats: today.stats,
     projects,
     bridge: pendingSignals,
+    overnight,
     activity: today.activity,
   };
 }
