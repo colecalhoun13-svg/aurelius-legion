@@ -930,6 +930,16 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       )
       .catch(() => {});
 
+    // Close the compile loop: mine this exchange for a recurring heuristic
+    // (fire-and-forget — never blocks the reply). Everyday chat now compiles, not
+    // just the training room; a repeated kind of exchange becomes a Bridge-
+    // confirmable heuristic that then grounds future prompts.
+    if (primaryOperatorId) {
+      import("./compiled/chatCompiler.ts")
+        .then((m) => m.compileFromChat({ operatorId: primaryOperatorId!, operatorName: primary, input: message, answer: cleanedText }))
+        .catch(() => {});
+    }
+
     // Telemetry read for the response meta — must NOT sink a fully-computed
     // answer. A DB blip on this count previously threw inside res.json()'s
     // object literal (it's in the outer try), discarding the whole turn and

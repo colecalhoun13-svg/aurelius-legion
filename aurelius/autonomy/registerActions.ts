@@ -10,6 +10,7 @@ import { finalizeScheduleProtection } from "./workflows/scheduleProtection.ts";
 import { finalizeInboxDraft } from "./workflows/inboxTriage.ts";
 import { finalizeContentPublish } from "./workflows/contentPublish.ts";
 import { finalizeResearchIngest } from "./workflows/researchIngest.ts";
+import { confirmHeuristic } from "../compiled/chatCompiler.ts";
 import { grantAutonomy } from "./grants.ts";
 
 let registered = false;
@@ -25,6 +26,9 @@ export function registerAllActions(): void {
   // Inward: run a proposed research mission end-to-end + ingest its report.
   // Granted → the initiative pulse runs its own proposals; else Cole confirms.
   registerActionFinalizer("research.ingest", finalizeResearchIngest);
+  // Confirm a chat-mined heuristic → it starts grounding future reasoning. Always
+  // gated (unknown class), so it only fires on Cole's Bridge tap.
+  registerActionFinalizer("pattern.confirm", async (payload: any) => confirmHeuristic(payload?.patternId));
   // Applying a grant is Cole's hand on the switch (hard rule 1). When the web
   // chat asks to grant a keyhole, the autonomy tool files a GATED proposal;
   // this finalizer runs only when Cole taps Confirm on the Bridge.

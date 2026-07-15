@@ -217,6 +217,50 @@ async function main() {
   await prisma.conversationTurn.deleteMany({ where: { content: { contains: TAG } } });
   await prisma.knowledgeProposal.deleteMany({ where: { intentClassId: "persona_calibration" } });
 
+  console.log("── compile loop: everyday chat mines a confirmable heuristic ──");
+  {
+    const { compileFromChat, confirmHeuristic } = await import("../compiled/chatCompiler.ts");
+    const { resolveOperatorId } = await import("../knowledge/store.ts");
+    const opId = await resolveOperatorId("global");
+    if (!opId) {
+      check("compile loop (skipped — no global operator in sandbox)", true);
+    } else {
+      const input = `${TAG} how should I structure my athlete deadlift accessory programming`;
+      const answer =
+        `Anchor accessory work to the main deadlift pattern: hamstrings and upper back, moderate volume, progress reps before load.`;
+      // 3 similar exchanges → a proposed heuristic (2 don't cross the threshold).
+      for (let i = 0; i < 3; i++) await compileFromChat({ operatorId: opId, operatorName: "strategy", input, answer });
+
+      const proposed = await prisma.compiledPattern.findMany({
+        where: { operatorId: opId, domain: "chat_compiled", status: "proposed_heuristic" },
+      });
+      check("3 similar chat exchanges compile into one proposed heuristic", proposed.length === 1);
+
+      const pid = proposed[0]?.id;
+      const sig = pid
+        ? await prisma.bridgeSignal.findFirst({ where: { sourceType: "heuristic_confirm", sourceId: `pattern:${pid}` } })
+        : null;
+      check("the heuristic is gated onto the Bridge for a one-tap confirm", !!sig && sig!.status === "pending");
+
+      // A 4th similar turn must NOT file a second confirm (deduped).
+      await compileFromChat({ operatorId: opId, operatorName: "strategy", input, answer });
+      check("re-surfacing the same heuristic is deduped", (await prisma.bridgeSignal.count({ where: { sourceType: "heuristic_confirm" } })) === 1);
+
+      // The full Bridge path: confirm → the pattern.confirm finalizer grounds it.
+      const { registerActionFinalizer } = await import("../autonomy/actionRegistry.ts");
+      registerActionFinalizer("pattern.confirm", async (payload: any) => confirmHeuristic(payload?.patternId));
+      const { confirmAction } = await import("../autonomy/executor.ts");
+      const confirmed = sig ? await confirmAction(sig.id) : { ok: false };
+      const after = pid ? await prisma.compiledPattern.findUnique({ where: { id: pid } }) : null;
+      check("Bridge confirm makes the heuristic ground future chat (confirmed_heuristic)", confirmed.ok && after?.status === "confirmed_heuristic");
+
+      // cleanup
+      await prisma.reasoningCacheEntry.deleteMany({ where: { operatorId: opId, domain: "chat_compiled" } });
+      await prisma.compiledPattern.deleteMany({ where: { operatorId: opId, domain: "chat_compiled" } });
+      await prisma.bridgeSignal.deleteMany({ where: { sourceType: "heuristic_confirm" } });
+    }
+  }
+
   console.log("── new tools: gmail + fred (keyless: honest connect/config fails) ──");
   const { gmailAdapter } = await import("../tools/adapters/gmail.ts");
   const { fredAdapter } = await import("../tools/adapters/fred.ts");
