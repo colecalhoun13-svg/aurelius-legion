@@ -1,39 +1,45 @@
 // aurelius/learning/curriculum.ts
 //
-// THE CURRICULUM — auto-learning the canon of every field, one week at a time.
+// THE CURRICULUM — auto-learning the canon of every field, and GROWING it.
 //
-// The initiative pulse REACTS (it refreshes stale/thin domains). This is the
-// other half Cole asked for: proactive, systematic study. Each operator carries
-// an ordered CANON — the foundational literature of its field (strategy reads
-// Sun Tzu and Musashi; wealth reads Buffett, Munger, Taleb; identity reads the
-// Stoics) — and every Sunday night Aurelius works through the next unit for each
-// domain: it researches the work (LLM knowledge + open academic sources), ingests
-// the synthesis into the second brain (four-write, domain-tagged), and refreshes
-// the domain's living wiki page. A per-domain cursor advances so it never re-reads
-// the same unit; when a canon is exhausted it shifts to "stay current" mode
-// (recent developments in the field). Over months, every operator becomes deeply
-// versed in its literature — so its reasoning for Cole is grounded in the best
-// thinking humanity has on that domain, not just the model's default.
+// Two halves:
+//   1. A large SEED CANON per operator — the foundational + modern literature of
+//      its field (strategy: Sun Tzu, Musashi, …; training: the Soviet school,
+//      Zatsiorsky, Verkhoshansky, plus modern coaches like Israetel, Nuckols,
+//      Jordan Shallow; wealth: Buffett, Munger, Taleb; identity: the Stoics).
+//   2. A SELF-EXPANSION engine — as Aurelius nears the end of a field's list, it
+//      RESEARCHES what else a serious practitioner should read (classics it's
+//      missing, the Eastern-bloc/international traditions, and the best current
+//      thinkers) and APPENDS those works to a persistent per-domain queue. So the
+//      reading list is never a fixed ceiling: it keeps growing ahead of the
+//      cursor, the way a scholar's does. When even the discovery pass runs dry it
+//      shifts to "stay current" (recent developments).
 //
-// Safety/consistency: this is INWARD auto-ingestion into the brain (like RSS and
-// the weekend pulse) — corpus documents, reversible, traced. It does NOT write
-// Living Knowledge (persona/facts), which still goes through propose→confirm.
-// Honest failure (hard rule 3): if no LLM engine answers, the unit is SKIPPED —
-// never ingested as content — and the cursor does NOT advance, so it retries next
-// week. The cursor lives under scope="system" (never embedded, never in recall).
+// Every Sunday night it studies the next unit for each field: deep research
+// (LLM + open academic sources) → four-write ingest into the second brain
+// (domain-tagged) → refresh the field's living wiki. A per-domain cursor advances
+// so nothing is re-read.
+//
+// Safety/consistency: INWARD auto-ingestion into the brain (like RSS/weekend
+// pulse) — corpus documents, reversible, traced. It does NOT write Living
+// Knowledge (persona/facts), which still goes through propose→confirm. Honest
+// failure (hard rule 3): no LLM engine → the unit is SKIPPED, never filed as
+// content, and the cursor does NOT advance. The cursor/queue live under
+// scope="system" (never embedded, never in recall).
 
 import { prisma } from "../core/db/prisma.ts";
 import { resolveOperatorId } from "../knowledge/store.ts";
 import { runResearch } from "../research/researchEngine.ts";
+import { runLLM } from "../llm/runLLM.ts";
 import { ingestDocument } from "../corpus/ingest.ts";
 import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { surfaceSignal } from "../core/bridge.ts";
 
-type Unit = { title: string; query: string };
+export type Unit = { title: string; query: string };
 type Track = { operator: string; domain: string; label: string; canon: Unit[] };
 
-// One shared prompt frame so every synthesis comes back grounded AND applied to
-// Cole's life, not an abstract book report.
+// One shared prompt frame so every synthesis is grounded AND applied to Cole's
+// life, not an abstract book report.
 function studyQuery(work: string, field: string): string {
   return (
     `Study "${work}". Extract its core framework and the specific, durable principles a serious ` +
@@ -43,145 +49,277 @@ function studyQuery(work: string, field: string): string {
   );
 }
 
-// ── THE CANON ────────────────────────────────────────────────────────
-// Ordered foundational literature per operator. Curated, not exhaustive — the
-// spine of each field. Extend freely; the cursor just walks the list.
+function unit(work: string, field: string): Unit {
+  return { title: work, query: studyQuery(work, field) };
+}
+
+// ── THE SEED CANON ───────────────────────────────────────────────────
+// Ordered, deep, but NOT a ceiling — the self-expansion engine grows each list.
 export const CURRICULUM: Track[] = [
   {
     operator: "strategy",
     domain: "strategy",
     label: "Strategy",
     canon: [
-      { title: "Sun Tzu — The Art of War", query: studyQuery("The Art of War by Sun Tzu", "strategy: timing, positioning, winning before fighting, knowing self and terrain") },
-      { title: "Miyamoto Musashi — The Book of Five Rings", query: studyQuery("The Book of Five Rings by Miyamoto Musashi", "strategy: mastery through fundamentals, adaptability, the way of the disciplined operator") },
-      { title: "Robert Greene — The 48 Laws of Power", query: studyQuery("The 48 Laws of Power by Robert Greene", "strategy and social dynamics, used ethically for self-protection and leverage") },
-      { title: "Robert Greene — Mastery", query: studyQuery("Mastery by Robert Greene", "the path to world-class skill: apprenticeship, deliberate practice, creative-active phase") },
-      { title: "Richard Rumelt — Good Strategy / Bad Strategy", query: studyQuery("Good Strategy Bad Strategy by Richard Rumelt", "the kernel of strategy: diagnosis, guiding policy, coherent action; spotting fluff") },
-      { title: "Carl von Clausewitz — On War", query: studyQuery("On War by Carl von Clausewitz", "friction, the culminating point, war as politics by other means, the fog of uncertainty") },
-      { title: "B.H. Liddell Hart — Strategy (the indirect approach)", query: studyQuery("Strategy by B.H. Liddell Hart", "the indirect approach: dislocate before you strike, avoid the enemy's strength") },
-      { title: "John Boyd — the OODA loop", query: studyQuery("John Boyd's OODA loop and 'Patterns of Conflict'", "operating inside the opponent's decision cycle; tempo and orientation as edge") },
-      { title: "Machiavelli — The Prince", query: studyQuery("The Prince by Niccolò Machiavelli", "power, realism over idealism, virtù and fortuna — read critically, applied ethically") },
-      { title: "Naval Ravikant — leverage & specific knowledge", query: studyQuery("Naval Ravikant's writing on leverage, specific knowledge, and judgment", "building leverage: code, media, capital, and compounding judgment") },
-    ],
+      "The Art of War — Sun Tzu",
+      "The Book of Five Rings — Miyamoto Musashi",
+      "The 48 Laws of Power — Robert Greene",
+      "Mastery — Robert Greene",
+      "The 33 Strategies of War — Robert Greene",
+      "Good Strategy / Bad Strategy — Richard Rumelt",
+      "On War — Carl von Clausewitz",
+      "Strategy: The Indirect Approach — B.H. Liddell Hart",
+      "Patterns of Conflict / the OODA loop — John Boyd",
+      "The Prince — Niccolò Machiavelli",
+      "The 36 Stratagems (Chinese classic)",
+      "Hagakure — Yamamoto Tsunetomo",
+      "The Art of Worldly Wisdom — Baltasar Gracián",
+      "Thinking in Bets — Annie Duke",
+      "Superforecasting — Philip Tetlock",
+      "The Prize / grand strategy & geopolitics",
+      "Naval Ravikant — leverage, specific knowledge, judgment",
+      "Seeking Wisdom / worldly mental models — Peter Bevelin",
+    ].map((w) => unit(w, "strategy: timing, positioning, leverage, and deciding under uncertainty")),
   },
   {
     operator: "training",
     domain: "training",
     label: "Training",
     canon: [
-      { title: "Zatsiorsky & Kraemer — Science and Practice of Strength Training", query: studyQuery("Science and Practice of Strength Training by Zatsiorsky and Kraemer", "programming strength: the three methods, overload, specificity, fatigue management") },
-      { title: "Mel Siff — Supertraining", query: studyQuery("Supertraining by Mel Siff", "advanced strength science: the force-velocity curve, work capacity, adaptation") },
-      { title: "Brad Schoenfeld — hypertrophy mechanisms", query: studyQuery("Brad Schoenfeld's research on the mechanisms of muscle hypertrophy", "mechanical tension, volume landmarks, proximity to failure, frequency") },
-      { title: "Helms et al. — The Muscle & Strength Pyramids", query: studyQuery("The Muscle and Strength Training Pyramids by Eric Helms", "the priority hierarchy: adherence, volume/intensity/frequency, progression, deload") },
-      { title: "Periodization models — linear, block, DUP", query: studyQuery("periodization models: linear, block, and daily undulating periodization", "structuring training over time; when each model wins; managing peaking and fatigue") },
-      { title: "Autoregulation — RPE and RIR", query: studyQuery("autoregulation in strength training via RPE and reps-in-reserve", "adjusting load to daily readiness; velocity-based and RIR-based approaches") },
-      { title: "Prilepin's chart & intensity management", query: studyQuery("Prilepin's chart and intensity/volume management in strength sport", "optimal reps per intensity zone; managing total tonnage") },
-      { title: "Connective tissue & tendon adaptation", query: studyQuery("tendon and connective tissue adaptation to loading", "building resilient tendons; loading protocols; why tissue adapts slower than muscle") },
-    ],
+      // The Soviet / Eastern-bloc school
+      "Science and Practice of Strength Training — Zatsiorsky & Kraemer",
+      "Supertraining — Mel Siff & Yuri Verkhoshansky",
+      "Special Strength Training: A Practical Manual for Coaches — Yuri Verkhoshansky",
+      "Fundamentals of Special Strength Training in Sport — Verkhoshansky",
+      "A System of Multi-Year Training in Weightlifting — A.S. Medvedyev",
+      "The Training of the Weightlifter — R.A. Roman",
+      "Transfer of Training in Sports — Anatoliy Bondarchuk",
+      "Block Periodization — Vladimir Issurin",
+      "Fundamentals of Sports Training — Lev Matveyev",
+      "Managing the Training of Weightlifters — Laputin & Oleshko",
+      // Modern strength & hypertrophy science
+      "Science and Development of Muscle Hypertrophy — Brad Schoenfeld",
+      "The Muscle & Strength Training Pyramids — Eric Helms",
+      "Scientific Principles of Strength Training — Mike Israetel / Renaissance Periodization",
+      "Stronger by Science (volume, intensity, frequency) — Greg Nuckols",
+      "The Muscle Doc — Dr. Jordan Shallow (biomechanics, pre-hab, resilient lifting)",
+      "Triphasic Training — Cal Dietz",
+      "The Juggernaut Method / powerlifting programming — Chad Wesley Smith",
+      "Base Strength / Peak Strength — Alexander Bromley",
+      "Westside / the conjugate method — Louie Simmons",
+      "Practical Programming for Strength Training — Rippetoe & Baker",
+      "Periodization models: linear, block, and daily undulating (DUP)",
+      "Autoregulation: RPE and reps-in-reserve (RIR)",
+      "Prilepin's chart and intensity/volume management",
+      "Tendon and connective-tissue adaptation to loading",
+      "Pavel Tsatsouline — strength as a skill, greasing the groove",
+      "Christian Thibaudeau — neurotyping and advanced hypertrophy methods",
+    ].map((w) => unit(w, "strength & physique training: programming, adaptation, recovery, and technique")),
   },
   {
     operator: "athlete",
     domain: "athlete",
     label: "Athletic Performance",
     canon: [
-      { title: "Matthew Walker — Why We Sleep", query: studyQuery("Why We Sleep by Matthew Walker", "sleep as the foundation of recovery, performance, and decision quality") },
-      { title: "Tudor Bompa — Periodization for sport", query: studyQuery("Periodization: Theory and Methodology of Training by Tudor Bompa", "peaking for competition; sequencing qualities across a season") },
-      { title: "Mihaly Csikszentmihalyi — Flow", query: studyQuery("Flow by Mihaly Csikszentmihalyi", "the psychology of optimal performance; conditions that produce flow states") },
-      { title: "Recovery science — HRV, fatigue, deload", query: studyQuery("recovery science: heart-rate variability, fatigue monitoring, and deloading", "reading the body's readiness signals; when to push and when to back off") },
-      { title: "Speed & power development", query: studyQuery("speed and power development for athletes", "rate of force development, plyometrics, the force-velocity spectrum") },
-      { title: "Mental toughness & resilience", query: studyQuery("mental toughness and resilience in elite sport", "building the mind that performs under pressure; discomfort tolerance") },
-    ],
+      "Why We Sleep — Matthew Walker",
+      "Periodization: Theory and Methodology of Training — Tudor Bompa",
+      "Flow — Mihaly Csikszentmihalyi",
+      "The Sports Gene — David Epstein",
+      "Peak: Secrets from the New Science of Expertise — Anders Ericsson",
+      "Endure — Alex Hutchinson (the limits of performance)",
+      "recovery science: HRV, monitoring fatigue, and deloading",
+      "speed & power development: rate of force development, plyometrics",
+      "movement & mobility: the Kelly Starrett / FRC approaches",
+      "sport psychology & mental toughness under pressure",
+      "peaking and tapering for competition",
+      "return-to-play and injury-prevention frameworks",
+    ].map((w) => unit(w, "athletic performance: recovery, expertise, psychology, and peaking")),
   },
   {
     operator: "wealth",
     domain: "wealth",
     label: "Wealth & Investing",
     canon: [
-      { title: "Morgan Housel — The Psychology of Money", query: studyQuery("The Psychology of Money by Morgan Housel", "behavior over intelligence; the role of patience, compounding, and enough") },
-      { title: "Charlie Munger — Poor Charlie's Almanack (mental models)", query: studyQuery("Poor Charlie's Almanack and Charlie Munger's latticework of mental models", "multidisciplinary mental models; inversion; avoiding standard stupidities") },
-      { title: "Warren Buffett — the shareholder letters", query: studyQuery("Warren Buffett's Berkshire Hathaway shareholder letters", "value investing, moats, circle of competence, long-term ownership") },
-      { title: "Nassim Taleb — Antifragile", query: studyQuery("Antifragile by Nassim Nicholas Taleb", "gaining from disorder; convexity; the barbell strategy; via negativa") },
-      { title: "Nassim Taleb — Fooled by Randomness / The Black Swan", query: studyQuery("Fooled by Randomness and The Black Swan by Nassim Taleb", "randomness, fat tails, and surviving rare high-impact events") },
-      { title: "John Bogle — The Little Book of Common Sense Investing", query: studyQuery("The Little Book of Common Sense Investing by John Bogle", "low-cost index investing; why costs and behavior dominate returns") },
-      { title: "Ray Dalio — Principles & the All-Weather idea", query: studyQuery("Principles by Ray Dalio and the All-Weather portfolio concept", "radical transparency, diversification across environments, risk parity intuition") },
-      { title: "Risk of ruin, position sizing, the Kelly criterion", query: studyQuery("risk of ruin, position sizing, and the Kelly criterion", "never blowing up; sizing bets to survive and compound") },
-    ],
+      "The Psychology of Money — Morgan Housel",
+      "Poor Charlie's Almanack (mental models) — Charlie Munger",
+      "The Berkshire Hathaway shareholder letters — Warren Buffett",
+      "The Intelligent Investor — Benjamin Graham",
+      "Antifragile — Nassim Taleb",
+      "Fooled by Randomness — Nassim Taleb",
+      "The Black Swan — Nassim Taleb",
+      "Skin in the Game — Nassim Taleb",
+      "The Little Book of Common Sense Investing — John Bogle",
+      "Principles — Ray Dalio",
+      "The Most Important Thing — Howard Marks",
+      "Just Keep Buying — Nick Maggiulli",
+      "The Millionaire Next Door — Stanley & Danko",
+      "Margin of Safety — Seth Klarman",
+      "risk of ruin, position sizing, and the Kelly criterion",
+      "compounding, time value, and the mathematics of wealth",
+    ].map((w) => unit(w, "wealth & investing: compounding, risk, behavior, and capital allocation")),
   },
   {
     operator: "business",
     domain: "business",
     label: "Business",
     canon: [
-      { title: "Alex Hormozi — $100M Offers", query: studyQuery("$100M Offers by Alex Hormozi", "building a grand-slam offer; value equation; making price irrelevant") },
-      { title: "Alex Hormozi — $100M Leads", query: studyQuery("$100M Leads by Alex Hormozi", "lead generation: the core four; turning attention into engaged leads") },
-      { title: "Peter Drucker — The Effective Executive", query: studyQuery("The Effective Executive by Peter Drucker", "managing oneself; effectiveness as a habit; decisions and contribution") },
-      { title: "Michael Porter — Competitive Strategy (five forces)", query: studyQuery("Competitive Strategy by Michael Porter and the five forces", "industry structure; sources of durable advantage; positioning") },
-      { title: "Clayton Christensen — jobs to be done / disruption", query: studyQuery("The Innovator's Dilemma and Jobs to Be Done by Clayton Christensen", "why incumbents fail; understanding the job a customer hires you for") },
-      { title: "Eric Ries — The Lean Startup", query: studyQuery("The Lean Startup by Eric Ries", "build-measure-learn; validated learning; the minimum viable product") },
-      { title: "Jim Collins — Good to Great", query: studyQuery("Good to Great by Jim Collins", "level 5 leadership; the hedgehog concept; the flywheel; first who then what") },
-      { title: "Michael Gerber — The E-Myth (systems & SOPs)", query: studyQuery("The E-Myth Revisited by Michael Gerber", "working ON the business not IN it; systemizing via SOPs; franchise thinking") },
-    ],
+      "$100M Offers — Alex Hormozi",
+      "$100M Leads — Alex Hormozi",
+      "The Effective Executive — Peter Drucker",
+      "Management (essentials) — Peter Drucker",
+      "Competitive Strategy / the five forces — Michael Porter",
+      "The Innovator's Dilemma & Jobs to Be Done — Clayton Christensen",
+      "The Lean Startup — Eric Ries",
+      "Good to Great — Jim Collins",
+      "Built to Last — Collins & Porras",
+      "Blue Ocean Strategy — Kim & Mauborgne",
+      "Crossing the Chasm — Geoffrey Moore",
+      "The E-Myth Revisited (systems & SOPs) — Michael Gerber",
+      "Zero to One — Peter Thiel",
+      "The Hard Thing About Hard Things — Ben Horowitz",
+      "Traction / EOS — Gino Wickman",
+      "Purple Cow / remarkable marketing — Seth Godin",
+    ].map((w) => unit(w, "business: offers, strategy, operations, and building durable advantage")),
   },
   {
     operator: "content",
     domain: "content",
     label: "Content & Persuasion",
     canon: [
-      { title: "David Ogilvy — Ogilvy on Advertising", query: studyQuery("Ogilvy on Advertising by David Ogilvy", "big ideas, headlines, research-driven persuasion, respecting the audience") },
-      { title: "Eugene Schwartz — Breakthrough Advertising", query: studyQuery("Breakthrough Advertising by Eugene Schwartz", "market awareness and sophistication stages; channeling existing desire") },
-      { title: "Joseph Sugarman — The Adweek Copywriting Handbook", query: studyQuery("The Adweek Copywriting Handbook by Joseph Sugarman", "the slippery slide; psychological triggers; every element sells the next") },
-      { title: "Robert Cialdini — Influence", query: studyQuery("Influence by Robert Cialdini", "the six (now seven) principles of persuasion, used ethically") },
-      { title: "Donald Miller — Building a StoryBrand", query: studyQuery("Building a StoryBrand by Donald Miller", "the customer as hero, you as guide; clarifying the message") },
-      { title: "Joseph Campbell — the Hero's Journey", query: studyQuery("The Hero with a Thousand Faces by Joseph Campbell", "the monomyth; narrative structure that resonates universally") },
-      { title: "Short-form attention & hooks", query: studyQuery("the mechanics of short-form video hooks and retention", "earning the first three seconds; open loops; pattern interrupts; platform dynamics") },
-    ],
+      "Ogilvy on Advertising — David Ogilvy",
+      "Breakthrough Advertising — Eugene Schwartz",
+      "The Adweek Copywriting Handbook — Joseph Sugarman",
+      "Influence — Robert Cialdini",
+      "Made to Stick — Chip & Dan Heath",
+      "Building a StoryBrand — Donald Miller",
+      "The Hero with a Thousand Faces — Joseph Campbell",
+      "Contagious: Why Things Catch On — Jonah Berger",
+      "Everybody Writes — Ann Handley",
+      "The War of Art — Steven Pressfield",
+      "short-form video: hooks, retention, and platform mechanics",
+      "the psychology of attention and the first three seconds",
+      "Gary Vaynerchuk — jab, jab, jab, right hook (give before ask)",
+    ].map((w) => unit(w, "content & persuasion: attention, story, copy, and audience")),
   },
   {
     operator: "identity",
     domain: "identity",
     label: "Identity & Purpose",
     canon: [
-      { title: "Marcus Aurelius — Meditations", query: studyQuery("Meditations by Marcus Aurelius", "Stoic self-governance; the view from above; duty, impermanence, the inner citadel") },
-      { title: "Seneca — Letters from a Stoic", query: studyQuery("Letters from a Stoic by Seneca", "time as the only real currency; practicing adversity; living deliberately") },
-      { title: "Epictetus — The Enchiridion", query: studyQuery("The Enchiridion by Epictetus", "the dichotomy of control; distinguishing what is and isn't up to us") },
-      { title: "Viktor Frankl — Man's Search for Meaning", query: studyQuery("Man's Search for Meaning by Viktor Frankl", "meaning as the deepest drive; the last human freedom; purpose through suffering") },
-      { title: "James Clear — Atomic Habits (identity-based habits)", query: studyQuery("Atomic Habits by James Clear", "identity-based habits; systems over goals; the 1% compounding of self") },
-      { title: "Ryan Holiday — Ego Is the Enemy", query: studyQuery("Ego Is the Enemy by Ryan Holiday", "ego as the obstacle to mastery; humility, restraint, and the long game") },
-      { title: "Carl Jung — individuation & the shadow", query: studyQuery("Carl Jung's concepts of individuation and the shadow", "integrating the shadow; becoming whole; the process of individuation") },
-    ],
+      "Meditations — Marcus Aurelius",
+      "Letters from a Stoic — Seneca",
+      "The Enchiridion & Discourses — Epictetus",
+      "Man's Search for Meaning — Viktor Frankl",
+      "Atomic Habits (identity-based habits) — James Clear",
+      "Ego Is the Enemy — Ryan Holiday",
+      "The Obstacle Is the Way — Ryan Holiday",
+      "individuation and the shadow — Carl Jung",
+      "Thus Spoke Zarathustra / amor fati — Friedrich Nietzsche",
+      "The Way of the Superior Man — David Deida",
+      "Can't Hurt Me — David Goggins",
+      "Ikigai and the search for purpose",
+      "Tao Te Ching — Lao Tzu",
+    ].map((w) => unit(w, "identity & purpose: self-governance, meaning, discipline, and becoming")),
   },
 ];
 
-type Cursor = { index: number; cycles: number };
+type State = { index: number; cycles: number; queue: Unit[]; discoveries: number };
 
-// The cursor lives under scope="system" so it is NEVER embedded into the vector
-// index (backfill/freshness both exclude scope="system") — it's control state,
-// not knowledge.
-async function getCursor(operatorId: string, domain: string): Promise<Cursor> {
+function defaultState(): State {
+  return { index: 0, cycles: 0, queue: [], discoveries: 0 };
+}
+
+// State lives under scope="system" so it is NEVER embedded into the vector index
+// (backfill/freshness both exclude scope="system") — it's control state.
+async function getState(operatorId: string, domain: string): Promise<State> {
   const row = await prisma.knowledgeEntry.findUnique({
     where: { operatorId_scope_key: { operatorId, scope: "system", key: `curriculum:${domain}` } },
   });
   const v = (row?.value as any) ?? {};
-  return { index: typeof v.index === "number" ? v.index : 0, cycles: typeof v.cycles === "number" ? v.cycles : 0 };
+  return {
+    index: typeof v.index === "number" ? v.index : 0,
+    cycles: typeof v.cycles === "number" ? v.cycles : 0,
+    queue: Array.isArray(v.queue) ? (v.queue as Unit[]) : [],
+    discoveries: typeof v.discoveries === "number" ? v.discoveries : 0,
+  };
 }
 
-async function setCursor(operatorId: string, domain: string, cursor: Cursor): Promise<void> {
+async function setState(operatorId: string, domain: string, state: State): Promise<void> {
   await prisma.knowledgeEntry.upsert({
     where: { operatorId_scope_key: { operatorId, scope: "system", key: `curriculum:${domain}` } },
-    update: { value: cursor as any, updatedBy: "curriculum" },
+    update: { value: state as any, updatedBy: "curriculum" },
     create: {
       operatorId,
       scope: "system",
       key: `curriculum:${domain}`,
-      value: cursor as any,
+      value: state as any,
       sourceType: "curriculum_cursor",
       createdBy: "system",
     },
   });
 }
 
-// Cost guard: each unit is a DEEP research run (multiple LLM calls + academic
-// source fetches). One per domain per week keeps the Sunday burst bounded.
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/**
+ * Parse an LLM discovery response into new study units, deduped against what's
+ * already on the list. PURE (no I/O) so it's unit-testable. Each line is
+ * expected as "Work or Author — why"; we take the part before the dash as title.
+ */
+export function parseDiscoveries(text: string, field: string, existing: Unit[]): Unit[] {
+  const knownNorms = existing.map((u) => norm(u.title));
+  const out: Unit[] = [];
+  const seen = new Set<string>();
+  for (const rawLine of (text ?? "").split(/\r?\n/)) {
+    let line = rawLine.trim();
+    if (!line) continue;
+    // strip leading bullets / numbering ("1.", "-", "•", "*")
+    line = line.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim();
+    // title = the part before an em/en/hyphen or colon separator
+    const title = line.split(/\s+[—–\-:]\s+/)[0]!.trim().replace(/^["'“]|["'”]$/g, "");
+    if (!title || title.length < 3 || title.length > 140) continue;
+    const n = norm(title);
+    if (!n || seen.has(n)) continue;
+    // dedup vs existing: skip if either contains the other (loose title match)
+    if (knownNorms.some((k) => k === n || k.includes(n) || n.includes(k))) continue;
+    seen.add(n);
+    out.push(unit(title, field));
+  }
+  return out;
+}
+
+const EXPAND_WHEN_REMAINING = 4;    // discover more once a field is within 4 of the end
+const MAX_DISCOVERIES_PER_EXPAND = 12;
+const MAX_QUEUE = 300;              // hard ceiling so the list can't grow unbounded
+
+/**
+ * Ask an LLM for the next works a serious practitioner in this field should read —
+ * classics still missing, the Eastern-bloc/international traditions, and the best
+ * current thinkers — excluding everything already on the list. Returns [] on any
+ * failure (keyless included), so the caller just carries on.
+ */
+async function expandCanon(track: Track, existing: Unit[]): Promise<Unit[]> {
+  const known = existing.map((u) => u.title).slice(-120).join("; ");
+  const prompt =
+    `You are curating a lifelong reading list to make someone DEEPLY well-read in ${track.label}. ` +
+    `List ${MAX_DISCOVERIES_PER_EXPAND} more essential or influential works/authors/schools a serious ` +
+    `practitioner should study — include foundational classics still missing, the Soviet/Eastern-bloc ` +
+    `and international traditions where relevant, and the strongest CURRENT thinkers. ` +
+    `Do NOT repeat anything already on this list: ${known}. ` +
+    `Return ONE per line as "Work or Author — one-line why". No preamble, no numbering, nothing else.`;
+  let text = "";
+  try {
+    const r = await runLLM({ taskType: "curriculum_discovery", operator: track.operator, input: prompt });
+    text = r?.text ?? "";
+  } catch {
+    return [];
+  }
+  if (!text || engineUnavailableText(text)) return [];
+  return parseDiscoveries(text, track.label, existing).slice(0, MAX_DISCOVERIES_PER_EXPAND);
+}
+
+// Cost guard: each unit is a DEEP research run. One per domain per week keeps the
+// Sunday burst bounded (plus at most one discovery call per domain when near the end).
 const UNITS_PER_DOMAIN_PER_WEEK = 1;
 const MAX_UNITS_PER_RUN = 8;
 
@@ -189,90 +327,93 @@ export type CurriculumResult = {
   ok: boolean;
   studied: { domain: string; title: string }[];
   skipped: { domain: string; title: string; reason: string }[];
+  discovered: { domain: string; count: number }[];
   error?: string;
 };
 
 /**
- * Study the next curriculum unit for each field (or one domain, for testing).
- * Runs SEQUENTIALLY so at most one deep-research mission is in flight at a time.
+ * Study the next curriculum unit for each field (or one, for testing), expanding
+ * the reading list first when a field is running low. Sequential — at most one
+ * deep-research run in flight at a time.
  */
 export async function runCurriculumIngest(opts?: {
   onlyDomain?: string;
   maxUnits?: number;
 }): Promise<CurriculumResult> {
   const globalId = await resolveOperatorId("global");
-  if (!globalId) return { ok: false, studied: [], skipped: [], error: "no global operator" };
+  if (!globalId) return { ok: false, studied: [], skipped: [], discovered: [], error: "no global operator" };
 
-  const tracks = opts?.onlyDomain
-    ? CURRICULUM.filter((t) => t.domain === opts.onlyDomain)
-    : CURRICULUM;
+  const tracks = opts?.onlyDomain ? CURRICULUM.filter((t) => t.domain === opts.onlyDomain) : CURRICULUM;
   const cap = opts?.maxUnits ?? MAX_UNITS_PER_RUN;
 
   const studied: { domain: string; title: string }[] = [];
   const skipped: { domain: string; title: string; reason: string }[] = [];
+  const discovered: { domain: string; count: number }[] = [];
   const touched = new Set<string>();
   let count = 0;
 
   for (const track of tracks) {
     if (count >= cap) break;
-    // (UNITS_PER_DOMAIN_PER_WEEK is 1 today; the loop below would extend to N.)
     for (let u = 0; u < UNITS_PER_DOMAIN_PER_WEEK && count < cap; u++) {
-      const cursor = await getCursor(globalId, track.domain);
-      const done = cursor.index >= track.canon.length;
-      const unit: Unit = done
+      let state = await getState(globalId, track.domain);
+      let list = [...track.canon, ...state.queue];
+
+      // Grow the reading list before it runs out, so the syllabus stays ahead
+      // of the cursor (Cole's ask: "read way more as it grows").
+      if (list.length - state.index <= EXPAND_WHEN_REMAINING && state.queue.length < MAX_QUEUE) {
+        const added = await expandCanon(track, list);
+        if (added.length > 0) {
+          state = { ...state, queue: [...state.queue, ...added].slice(0, MAX_QUEUE), discoveries: state.discoveries + 1 };
+          await setState(globalId, track.domain, state);
+          list = [...track.canon, ...state.queue];
+          discovered.push({ domain: track.domain, count: added.length });
+        }
+      }
+
+      const done = state.index >= list.length;
+      const studyUnit: Unit = done
         ? {
-            title: `Staying current — ${track.label} (cycle ${cursor.cycles + 1})`,
+            title: `Staying current — ${track.label} (cycle ${state.cycles + 1})`,
             query:
               `What are the most important recent developments, refinements, or debates in ${track.label} ` +
-              `that a serious practitioner should absorb now? Focus on what has genuinely changed or sharpened. ` +
-              `Be specific and actionable, and connect it to how it should change real decisions.`,
+              `that a serious practitioner should absorb now? Focus on what has genuinely changed or sharpened, ` +
+              `and connect it to how it should change real decisions. Be specific and actionable.`,
           }
-        : track.canon[cursor.index]!;
+        : list[state.index]!;
 
       try {
-        const res = await runResearch({ query: unit.query, operator: track.operator, depth: "deep" });
+        const res = await runResearch({ query: studyUnit.query, operator: track.operator, depth: "deep" });
         const body = [res.synthesis, ...(res.insights ?? [])].filter(Boolean).join("\n\n");
 
-        // Honest failure (hard rule 3): no engine / empty → SKIP. Never file an
-        // error string as studied content, and DON'T advance the cursor — retry
-        // next week when a provider is available.
-        if (
-          !body ||
-          body.trim().length < 80 ||
-          engineUnavailableText(body) ||
-          engineUnavailableText(res.synthesis ?? "")
-        ) {
-          skipped.push({ domain: track.domain, title: unit.title, reason: "no research engine / empty synthesis" });
+        // Honest failure: no engine / empty → SKIP, don't ingest, don't advance.
+        if (!body || body.trim().length < 80 || engineUnavailableText(body) || engineUnavailableText(res.synthesis ?? "")) {
+          skipped.push({ domain: track.domain, title: studyUnit.title, reason: "no research engine / empty synthesis" });
           continue;
         }
 
         await ingestDocument({
-          title: `Curriculum · ${track.label}: ${unit.title}`,
-          content: `# ${unit.title}\n\n${body}`,
+          title: `Curriculum · ${track.label}: ${studyUnit.title}`,
+          content: `# ${studyUnit.title}\n\n${body}`,
           sourceType: "research",
           domain: track.domain,
           operatorName: track.operator,
           triggeredBy: "self_directed",
-          // Idempotent per unit: a re-run the same week won't double-file.
-          dedupKey: `curriculum:${track.domain}:${done ? `maint:${cursor.cycles}` : cursor.index}`,
+          dedupKey: `curriculum:${track.domain}:${done ? `maint:${state.cycles}` : `idx:${state.index}`}`,
         });
 
-        studied.push({ domain: track.domain, title: unit.title });
+        studied.push({ domain: track.domain, title: studyUnit.title });
         touched.add(track.domain);
         count++;
-
-        // Advance: canon units step the index; maintenance runs bump the cycle.
-        await setCursor(globalId, track.domain, done
-          ? { index: cursor.index, cycles: cursor.cycles + 1 }
-          : { index: cursor.index + 1, cycles: cursor.cycles });
+        await setState(globalId, track.domain, done
+          ? { ...state, cycles: state.cycles + 1 }
+          : { ...state, index: state.index + 1 });
       } catch (err: any) {
-        skipped.push({ domain: track.domain, title: unit.title, reason: err?.message ?? String(err) });
+        skipped.push({ domain: track.domain, title: studyUnit.title, reason: err?.message ?? String(err) });
       }
     }
   }
 
-  // Let each studied field's living wiki absorb the new reading now (the 09:00
-  // wiki sweep already ran earlier Sunday; refresh the touched domains here).
+  // Let each studied field's living wiki absorb the new reading now.
   if (touched.size > 0) {
     try {
       const { synthesizeWikiPage } = await import("../wiki/engine.ts");
@@ -297,6 +438,7 @@ export async function runCurriculumIngest(opts?: {
         title: `Studied ${studied.length} work${studied.length === 1 ? "" : "s"} this week`,
         body:
           studied.map((s) => `• ${labelFor(s.domain)}: ${s.title}`).join("\n") +
+          (discovered.length ? `\n\n(+${discovered.reduce((n, d) => n + d.count, 0)} new works added to the reading list.)` : "") +
           `\n\nAbsorbed into the second brain and each field's wiki — grounding future decisions.`,
       });
     } catch (err) {
@@ -305,30 +447,31 @@ export async function runCurriculumIngest(opts?: {
   }
 
   console.log(
-    `[curriculum] studied ${studied.length}, skipped ${skipped.length}` +
-      (skipped.length ? ` (skips: ${skipped.map((s) => s.domain).join(", ")})` : "")
+    `[curriculum] studied ${studied.length}, skipped ${skipped.length}, discovered ${discovered.reduce((n, d) => n + d.count, 0)}`
   );
-  return { ok: true, studied, skipped };
+  return { ok: true, studied, skipped, discovered };
 }
 
 function labelFor(domain: string): string {
   return CURRICULUM.find((t) => t.domain === domain)?.label ?? domain;
 }
 
-/** How far through each field's canon Aurelius has read — for a status view. */
+/** How far through each field's (seed + discovered) list Aurelius has read. */
 export async function getCurriculumProgress(): Promise<
-  { domain: string; label: string; read: number; total: number; cycles: number }[]
+  { domain: string; label: string; read: number; total: number; discovered: number; cycles: number }[]
 > {
   const globalId = await resolveOperatorId("global");
-  const out: { domain: string; label: string; read: number; total: number; cycles: number }[] = [];
+  const out: { domain: string; label: string; read: number; total: number; discovered: number; cycles: number }[] = [];
   for (const track of CURRICULUM) {
-    const cursor = globalId ? await getCursor(globalId, track.domain) : { index: 0, cycles: 0 };
+    const state = globalId ? await getState(globalId, track.domain) : defaultState();
+    const total = track.canon.length + state.queue.length;
     out.push({
       domain: track.domain,
       label: track.label,
-      read: Math.min(cursor.index, track.canon.length),
-      total: track.canon.length,
-      cycles: cursor.cycles,
+      read: Math.min(state.index, total),
+      total,
+      discovered: state.queue.length,
+      cycles: state.cycles,
     });
   }
   return out;

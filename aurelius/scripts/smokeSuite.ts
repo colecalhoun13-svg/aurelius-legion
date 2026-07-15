@@ -837,7 +837,7 @@ async function main() {
   // ── curriculum: auto-learning the canon of every field ──
   console.log("── curriculum: the auto-learning canon ──");
   {
-    const { CURRICULUM, getCurriculumProgress } = await import("../learning/curriculum.ts");
+    const { CURRICULUM, getCurriculumProgress, parseDiscoveries } = await import("../learning/curriculum.ts");
     const domains = new Set(CURRICULUM.map((t) => t.domain));
     check(
       "curriculum covers all seven operator fields",
@@ -845,13 +845,30 @@ async function main() {
         ["strategy", "training", "athlete", "wealth", "business", "content", "identity"].every((d) => domains.has(d))
     );
     check(
-      "every track has a non-empty canon of well-formed study units",
-      CURRICULUM.every((t) => t.canon.length >= 5 && t.canon.every((u) => !!u.title && u.query.length > 40))
+      "every track has a deep, well-formed seed canon (>=10 units)",
+      CURRICULUM.every((t) => t.canon.length >= 10 && t.canon.every((u) => !!u.title && u.query.length > 40))
     );
     const strat = CURRICULUM.find((t) => t.domain === "strategy")!;
     check(
       "the strategy canon includes Sun Tzu and Musashi (as specified)",
       strat.canon.some((u) => /sun tzu/i.test(u.title)) && strat.canon.some((u) => /musashi/i.test(u.title))
+    );
+    const train = CURRICULUM.find((t) => t.domain === "training")!;
+    check(
+      "the training canon reaches from the Soviet school to modern coaches",
+      train.canon.some((u) => /verkhoshansky|medvedyev|zatsiorsky/i.test(u.title)) &&
+        train.canon.some((u) => /jordan shallow|israetel|nuckols/i.test(u.title))
+    );
+    // Self-expansion: the discovery parser adds NEW works and dedups known ones.
+    const seedForParse = [{ title: "The Art of War — Sun Tzu", query: "" }];
+    const parsed = parseDiscoveries(
+      "1. The Art of War — Sun Tzu (already known)\n- On War — Clausewitz — friction\n• The Prince — Machiavelli",
+      "strategy",
+      seedForParse as any
+    );
+    check(
+      "curriculum self-expansion parses new works and dedups known ones",
+      parsed.length >= 2 && !parsed.some((u) => /art of war/i.test(u.title)) && parsed.some((u) => /on war/i.test(u.title))
     );
 
     // Cursor → progress round-trip (deterministic; no research/network). The
