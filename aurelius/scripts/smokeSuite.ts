@@ -859,6 +859,13 @@ async function main() {
       train.canon.some((u) => /verkhoshansky|medvedyev|zatsiorsky/i.test(u.title)) &&
         train.canon.some((u) => /jordan shallow|israetel|nuckols/i.test(u.title))
     );
+    // The field itself, not only a book list — concepts/mechanisms are studied too.
+    check(
+      "every field studies the topics/concepts of the field, not only works",
+      train.canon.some((u) => /hypertrophy|fitness-fatigue|periodization|energy system/i.test(u.title)) &&
+        CURRICULUM.find((t) => t.domain === "strategy")!.canon.some((u) => /game theory|order thinking|opportunity cost|bayesian/i.test(u.title)) &&
+        CURRICULUM.find((t) => t.domain === "wealth")!.canon.some((u) => /compounding|risk of ruin|valuation|diversification/i.test(u.title))
+    );
     // Self-expansion: the discovery parser adds NEW works and dedups known ones.
     const seedForParse = [{ title: "The Art of War — Sun Tzu", query: "" }];
     const parsed = parseDiscoveries(
