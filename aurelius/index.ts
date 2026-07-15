@@ -9,7 +9,7 @@ import express, { type Request, type Response } from "express";
 import cors from "cors";
 
 // Multi-operator routing
-import { routeOperatorsSemantic } from "./router/operatorRouter.ts";
+import { routeOperatorsSemantic, isDecisionQuery } from "./router/operatorRouter.ts";
 // Smart LLM routing
 import { runLLM } from "./llm/runLLM.ts";
 import { routeLLM } from "./llm/router.ts";
@@ -673,6 +673,8 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       options,
       needsRealtime,
       hasMultimodal,
+      // Real decision → run the frameworks through the application harness.
+      decisionMode: isDecisionQuery(message),
       knowledgeContext: primaryOperatorId
         ? { operatorId: primaryOperatorId, operatorName: primary }
         : undefined,
@@ -1295,6 +1297,15 @@ scheduleNamed("curriculum_ingest", "0 22 * * 0", "curriculum ingest", () => {
     const { runCurriculumIngest } = await import("./learning/curriculum.ts");
     return runCurriculumIngest();
   }).catch((err) => console.error("[curriculum] failed:", err));
+});
+// Decision Curriculum — Sunday 21:00: study COLE's own corrections and propose the
+// decision-heuristics they imply (mined from his reversals, not a book). Runs
+// before the canon curriculum so the week's mined principles are freshest.
+scheduleNamed("decision_curriculum", "0 21 * * 0", "decision curriculum", () => {
+  runTraced("schedule", "decision_curriculum", async () => {
+    const { runDecisionCurriculum } = await import("./learning/decisionCurriculum.ts");
+    return runDecisionCurriculum();
+  }).catch((err) => console.error("[decisionCurriculum] failed:", err));
 });
 // Initiative — 08:00 daily, after the briefing: Aurelius scans its own
 // state and proposes missions. Proposed only; Cole launches.

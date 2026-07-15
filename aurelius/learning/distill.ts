@@ -58,43 +58,67 @@ export async function distillAndProposeHeuristic(args: {
     const heuristic = parseHeuristics(text)[0];
     if (!heuristic) return 0;
 
-    const pattern = await prisma.compiledPattern.create({
-      data: {
-        operatorId,
-        domain: args.domain,
-        entityKey: null,
-        patternType: "heuristic",
-        patternSignature: { recurringReasoningTheme: heuristic, source: `curriculum: ${args.unitTitle}` } as any,
-        status: "proposed_heuristic",
-        evidence: [args.unitTitle],
-        supportCount: 1,
-        confidenceScore: 0.5,
-      },
+    await fileProposedHeuristic({
+      operatorId,
+      domain: args.domain,
+      heuristic,
+      source: `curriculum: ${args.unitTitle}`,
+      surfaceTitle: `A principle worth reasoning from (${args.domain})`,
+      surfaceBody:
+        `From studying "${args.unitTitle}":\n\n“${heuristic}”\n\n` +
+        `Confirm and I'll reason from it in ${args.domain} decisions going forward. Ignore and it stays an observation.`,
     });
-
-    // Surface for confirm through the pattern.confirm gate (ungrantable → GATES to
-    // a pending Bridge confirm; the finalizer flips it to confirmed_heuristic).
-    const sourceId = `pattern:${pattern.id}`;
-    const already = await prisma.bridgeSignal.count({ where: { sourceType: "heuristic_confirm", sourceId } });
-    if (already === 0) {
-      const { executeAction } = await import("../autonomy/executor.ts");
-      await executeAction({
-        actionClass: "pattern.confirm",
-        sourceType: "heuristic_confirm",
-        sourceId,
-        prepare: async () => ({
-          title: `A principle worth reasoning from (${args.domain})`,
-          body:
-            `From studying "${args.unitTitle}":\n\n“${heuristic}”\n\n` +
-            `Confirm and I'll reason from it in ${args.domain} decisions going forward. Ignore and it stays an observation.`,
-          domain: "personal",
-          payload: { patternId: pattern.id },
-        }),
-      });
-    }
     return 1;
   } catch (err) {
     console.warn("[distill] non-fatal:", (err as any)?.message ?? err);
     return 0;
   }
+}
+
+/**
+ * Create a proposed_heuristic CompiledPattern and surface it for Cole's confirm
+ * through the pattern.confirm gate (ungrantable → executeAction GATES it to a
+ * pending Bridge confirm; the finalizer flips it to confirmed_heuristic, after
+ * which it grounds reasoning via Layer 5.4). Shared by curriculum distillation
+ * AND the Decision Curriculum (heuristics mined from Cole's own corrections).
+ * `source` is kept in the DB for audit but NOT rendered into the reasoning prompt.
+ */
+export async function fileProposedHeuristic(args: {
+  operatorId: string;
+  domain: string;
+  heuristic: string;
+  source: string;
+  surfaceTitle: string;
+  surfaceBody: string;
+}): Promise<string | null> {
+  const pattern = await prisma.compiledPattern.create({
+    data: {
+      operatorId: args.operatorId,
+      domain: args.domain,
+      entityKey: null,
+      patternType: "heuristic",
+      patternSignature: { recurringReasoningTheme: args.heuristic, source: args.source } as any,
+      status: "proposed_heuristic",
+      evidence: [args.source],
+      supportCount: 1,
+      confidenceScore: 0.5,
+    },
+  });
+  const sourceId = `pattern:${pattern.id}`;
+  const already = await prisma.bridgeSignal.count({ where: { sourceType: "heuristic_confirm", sourceId } });
+  if (already === 0) {
+    const { executeAction } = await import("../autonomy/executor.ts");
+    await executeAction({
+      actionClass: "pattern.confirm",
+      sourceType: "heuristic_confirm",
+      sourceId,
+      prepare: async () => ({
+        title: args.surfaceTitle,
+        body: args.surfaceBody,
+        domain: "personal",
+        payload: { patternId: pattern.id },
+      }),
+    });
+  }
+  return pattern.id;
 }

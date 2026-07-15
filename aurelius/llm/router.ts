@@ -57,6 +57,7 @@ export type LLMTask = {
   options?: LLMOptions;
   needsRealtime?: boolean;
   hasMultimodal?: boolean;
+  decisionMode?: boolean;          // Cole is asking a real call → run the frameworks, don't quote
   // Phase 4.5 — Knowledge update propose/confirm context
   knowledgeContext?: {
     operatorId: string;
@@ -365,11 +366,30 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
   if (recallOperatorId) {
     try {
       const { loadOperatorPatternsForPrompt } = await import("../compiled/reasoningHelper.ts");
+      // Primary lens — its frameworks, fit-ranked to THIS decision (not top-N by
+      // confidence), so the ones that actually bear on the question are what load.
       const patternBlock = await loadOperatorPatternsForPrompt({
         operatorId: recallOperatorId,
         limit: 10,
+        role: "primary",
+        query: task.input,
       });
       if (patternBlock) parts.push("\n" + patternBlock);
+
+      // Secondary lenses bring THEIR frameworks too — so the lenses that should
+      // collide on a real decision actually do, instead of the primary reasoning
+      // alone. Thinner (they contribute, they don't dominate).
+      for (const sec of operators.secondaries ?? []) {
+        const secId = await resolveOperatorId(sec).catch(() => null);
+        if (!secId || secId === recallOperatorId) continue;
+        const secBlock = await loadOperatorPatternsForPrompt({
+          operatorId: secId,
+          limit: 4,
+          role: "secondary",
+          query: task.input,
+        });
+        if (secBlock) parts.push("\n" + secBlock);
+      }
     } catch (err) {
       console.warn("[ROUTER] compiled-pattern layer failed (non-fatal):", err);
     }
@@ -381,14 +401,19 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
   // random chunk of it happens to surface in recall. Bounded; never fatal.
   try {
     const { prisma } = await import("../core/db/prisma.ts");
-    const page = await prisma.wikiPage.findUnique({
-      where: { slug: operators.primary },
-      select: { title: true, content: true },
+    const slugs = [operators.primary, ...(operators.secondaries ?? [])];
+    const pages = await prisma.wikiPage.findMany({
+      where: { slug: { in: slugs } },
+      select: { slug: true, title: true, content: true },
     });
-    if (page?.content && page.content.trim().length > 40) {
-      const top = page.content.trim().slice(0, 1400);
+    const bySlug = new Map(pages.map((p) => [p.slug, p]));
+    for (const slug of slugs) {
+      const page = bySlug.get(slug);
+      if (!page?.content || page.content.trim().length <= 40) continue;
+      const isPrimary = slug === operators.primary;
+      const top = page.content.trim().slice(0, isPrimary ? 1400 : 500);
       parts.push(
-        `\n═══ FIELD SYNTHESIS · ${page.title} (your current understanding of the field) ═══\n${top}\n\nReason from this synthesis where it applies; update it if new evidence contradicts it.`
+        `\n═══ FIELD SYNTHESIS · ${page.title}${isPrimary ? "" : " (secondary lens)"} ═══\n${top}\n\nReason from this synthesis where it applies; update it if new evidence contradicts it.`
       );
     }
   } catch (err) {
@@ -460,6 +485,24 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     }
 
     parts.push(knowledgeLines.join("\n"));
+  }
+
+  // DECISION MODE — the application harness. When Cole is making a real call, this
+  // forces the model to RUN the frameworks above on his specifics rather than
+  // recall or quote them. The `Lens:` line is the honesty check: a framework is
+  // only applied if deleting its name would weaken the answer (if the same
+  // conclusion survives without it, it was decoration). Placed last so it's the
+  // final instruction the model reads before answering.
+  if (task.decisionMode) {
+    parts.push(
+      `\n═══ DECISION MODE ═══\n` +
+      `Cole is making a real decision. Do NOT answer from generic reasoning if a framework above fits, and do NOT merely quote or name-drop one. Instead:\n` +
+      `1. Name the 1–3 frameworks (from the compiled frameworks / field synthesis above) that genuinely bear on THIS decision, and why each fits his specifics.\n` +
+      `2. RUN each on his actual situation — show what it surfaces here, especially what it RULES OUT or forces that intuition alone wouldn't.\n` +
+      `3. Where two frameworks point opposite ways, name the tension and say which governs here and why — do not average them into mush.\n` +
+      `4. Give your call, concretely.\n` +
+      `End with one line: "Lens: <the 1–2 frameworks that actually drove this call>". If no confirmed framework genuinely applies, write "Lens: none apply — reasoning from general judgment" rather than inventing one. Only name a framework if deleting it would change or weaken your conclusion.`
+    );
   }
 
   return parts.join("\n");

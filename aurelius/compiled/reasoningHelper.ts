@@ -207,29 +207,72 @@ async function fetchRelevantPatterns(args: {
 export async function loadOperatorPatternsForPrompt(args: {
   operatorId: string;
   limit?: number;
+  role?: "primary" | "secondary";
+  query?: string; // when set, FIT-RANK to this decision, not raw confidence
 }): Promise<string> {
   const usableStatuses: PatternStatus[] = ["auto_factual", "confirmed_heuristic"];
-  const patterns = await prisma.compiledPattern.findMany({
+  // Fetch a wider set, then rank down BY FIT to the decision on the table — the
+  // frameworks that matter are the ones this decision triggers, not the operator's
+  // most-confident in general (a lens you didn't select for the cut can only be
+  // name-dropped). Falls back to confidence when there's no query.
+  let patterns = await prisma.compiledPattern.findMany({
     where: { operatorId: args.operatorId, status: { in: usableStatuses } },
     orderBy: { confidenceScore: "desc" },
-    take: args.limit ?? 10,
+    take: 40,
   });
   if (patterns.length === 0) return "";
 
-  const lines: string[] = ["═══ COMPILED PATTERNS (what you've learned holds true) ═══"];
+  const limit = args.limit ?? 10;
+  if (args.query && args.query.trim()) {
+    const q = fitTokens(args.query);
+    patterns = [...patterns]
+      .sort((a, b) => fitScore(b, q) - fitScore(a, q) || (b.confidenceScore ?? 0) - (a.confidenceScore ?? 0))
+      .slice(0, limit);
+  } else {
+    patterns = patterns.slice(0, limit);
+  }
+
+  const roleTag = args.role === "secondary" ? " · secondary lens" : "";
+  const lines: string[] = [`═══ COMPILED FRAMEWORKS${roleTag} (learned — reason THROUGH these) ═══`];
   for (const p of patterns) {
-    const conf = ((p.confidenceScore ?? 0) * 100).toFixed(0);
-    lines.push(
-      `- [${p.patternType} · ${p.status} · ${conf}% confidence · ${p.supportCount ?? 0} instances]`
-    );
-    const summary = summarizePatternSignature(p.patternSignature);
-    if (summary) lines.push(`  ${summary}`);
+    // Render the RULE, stripped of its citation — the point of activation over
+    // retrieval is that the lens acts without announcing which book it came from
+    // (rendering "source: The Art of War" invites the name-drop). Provenance stays
+    // in the DB for audit, out of the reasoning surface.
+    const rule = renderRule(p.patternSignature);
+    if (rule) lines.push(`- ${rule}`);
   }
   lines.push("");
   lines.push(
-    "These are patterns you compiled from repeated experience with Cole — learned, not assumed. Reason FROM them where they apply instead of re-deriving from scratch, and update your view if new evidence contradicts one."
+    "These are frameworks you compiled from Cole's canon and his own decisions. Apply their LOGIC to his specific situation — RUN the reasoning, don't restate the rule. Where two point opposite ways, name the tension and say which one governs here and why — don't average them."
   );
   return lines.join("\n");
+}
+
+// The rule text, citation stripped. Prefers the distilled theme; else summarizes
+// the signature excluding the `source` field.
+function renderRule(sig: any): string {
+  if (sig && typeof sig === "object" && typeof sig.recurringReasoningTheme === "string") {
+    return sig.recurringReasoningTheme.trim();
+  }
+  if (typeof sig !== "object" || sig === null) return "";
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(sig)) {
+    if (key === "source" || value === null || value === undefined) continue;
+    parts.push(typeof value === "object" ? `${key}: ${JSON.stringify(value).slice(0, 80)}` : `${key}: ${value}`);
+  }
+  return parts.join(", ");
+}
+
+const FIT_STOP = new Set(["the", "and", "for", "that", "with", "should", "would", "when", "this", "your", "you", "have", "are", "was", "his", "her", "them", "into", "from", "what", "how", "why"]);
+function fitTokens(s: string): Set<string> {
+  return new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3 && !FIT_STOP.has(w)));
+}
+function fitScore(p: { patternSignature: any }, q: Set<string>): number {
+  const text = renderRule(p.patternSignature).toLowerCase();
+  let n = 0;
+  for (const t of q) if (text.includes(t)) n++;
+  return n;
 }
 
 /**

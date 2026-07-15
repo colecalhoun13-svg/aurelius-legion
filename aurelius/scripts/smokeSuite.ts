@@ -904,6 +904,42 @@ async function main() {
     const filed = await distillAndProposeHeuristic({ operatorName: "strategy", domain: "strategy", unitTitle: `${TAG} test`, synthesisBody: "x".repeat(120) });
     check("distill files nothing when no LLM engine (honest failure)", filed === 0);
 
+    // ── reason-through-the-lens (design-council build) ──
+    const { isDecisionQuery } = await import("../router/operatorRouter.ts");
+    check(
+      "decision detector fires on real decisions, not on facts/chat",
+      isDecisionQuery("should I take this client or protect my training?") === true &&
+        isDecisionQuery("which is better, block or DUP periodization?") === true &&
+        isDecisionQuery("what time is my next meeting") === false
+    );
+
+    // The framework render APPLIES (reason-through) and strips the citation so it
+    // can't be name-dropped from the prompt.
+    const lensOp = await resolveOperatorId("global");
+    if (lensOp) {
+      const pat = await prisma.compiledPattern.create({
+        data: {
+          operatorId: lensOp, domain: "strategy", entityKey: null, patternType: "heuristic",
+          patternSignature: { recurringReasoningTheme: `${TAG} When downside is irreversible, size to survive being wrong`, source: "curriculum: The Art of War" } as any,
+          status: "confirmed_heuristic", evidence: ["x"], supportCount: 1, confidenceScore: 0.9,
+        },
+      });
+      const { loadOperatorPatternsForPrompt } = await import("../compiled/reasoningHelper.ts");
+      const block = await loadOperatorPatternsForPrompt({ operatorId: lensOp, query: "irreversible downside decision", role: "primary" });
+      check(
+        "framework render shows the rule, strips the book citation, instructs to apply",
+        block.includes(`${TAG} When downside is irreversible`) && !/The Art of War/.test(block) && /apply their logic/i.test(block)
+      );
+      await prisma.compiledPattern.delete({ where: { id: pat.id } });
+    } else {
+      check("framework render (skipped — no global operator)", true);
+    }
+
+    // Decision Curriculum: honest-failure safe (keyless → proposes nothing, no throw).
+    const { runDecisionCurriculum } = await import("../learning/decisionCurriculum.ts");
+    const dc = await runDecisionCurriculum();
+    check("decision curriculum runs honestly with no LLM engine", dc.ok === true && dc.proposed === 0);
+
     // Cursor → progress round-trip (deterministic; no research/network). The
     // cursor lives under scope="system" so it never enters the vector index.
     const curOp = await resolveOperatorId("global");

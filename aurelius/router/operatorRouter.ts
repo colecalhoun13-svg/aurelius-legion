@@ -373,3 +373,14 @@ export async function routeOperatorsSemantic(message: string): Promise<OperatorR
 export function routeOperator(message: string): string {
   return routeOperators(message).primary;
 }
+
+// Is Cole asking for a real DECISION (vs. a fact, a chat, a task)? Decision turns
+// get the application harness (Decision Mode) so the operator reasons THROUGH its
+// frameworks instead of quoting them. Deliberately a touch eager — a false
+// positive just asks the model to show its reasoning, which is rarely wrong.
+const DECISION_RE =
+  /\b(should i|should we|worth it|which\b|\bvs\.?\b|versus|better\b|best\b|do i|is it (smart|worth|wise|better)|go with|pick|choose|decide|deciding|trade[- ]?off|or should|what would you do|help me (decide|choose)|make the call)\b/i;
+
+export function isDecisionQuery(message: string): boolean {
+  return DECISION_RE.test(message ?? "");
+}
