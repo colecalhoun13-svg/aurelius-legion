@@ -596,27 +596,49 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
   try {
     // Multi-operator routing — semantic (embedding-blended) when available,
     // keyword otherwise (master-class #6).
+    // ── Trigger 0: convene the Operator Council (opt-in tribunal) ──
+    // "council this" / "pressure-test this" — Cole wants to SEE the lenses argue,
+    // then resolve in one voice. Strip the trigger BEFORE routing so the trigger
+    // words can't skew the lenses, route ONCE, and hand that routing to the
+    // council — the seats always match the operators the response reports.
+    const councilAsk = taskType !== "reflect" && isCouncilTrigger(message);
+    if (councilAsk) {
+      message = stripCouncilTrigger(message);
+      if (message.trim().length < 4) {
+        return res.json({
+          reply: "The council needs a decision to sit on — give me the call you're weighing.",
+          operators: { primary: "global", secondaries: [] },
+          meta: { mode: "council", council: { ok: false, seats: [], error: "no decision given" } },
+          reviewed: null,
+        });
+      }
+    }
+
     const routing = await routeOperatorsSemantic(message);
     const { primary, secondaries } = routing;
 
-    // ── Trigger 0: convene the Operator Council (opt-in tribunal) ──
-    // "council this" / "pressure-test this" — Cole wants to SEE the lenses argue,
-    // then resolve in one voice. Everyday decisions stay in invisible Decision Mode.
-    if (taskType !== "reflect" && isCouncilTrigger(message)) {
-      const result = await deliberate(stripCouncilTrigger(message));
-      return res.json({
-        reply: formatDeliberation(result),
-        operators: { primary, secondaries },
-        meta: {
-          mode: "council",
-          council: {
-            ok: result.ok,
-            seats: result.seats.map((s) => s.operator),
-            error: result.error ?? null,
+    let councilFellThrough = false;
+    if (councilAsk) {
+      if (secondaries.length > 0 && message.trim().length >= 4) {
+        const result = await deliberate(message, { routing });
+        return res.json({
+          reply: formatDeliberation(result),
+          operators: { primary, secondaries },
+          meta: {
+            mode: "council",
+            council: {
+              ok: result.ok,
+              seats: result.seats.map((s) => s.operator),
+              error: result.error ?? null,
+            },
           },
-        },
-        reviewed: null,
-      });
+          reviewed: null,
+        });
+      }
+      // Only one lens routed — a council of one arguing with itself is spend
+      // without disagreement. Answer in Decision Mode instead (lens still
+      // load-bearing, just invisible).
+      councilFellThrough = true;
     }
 
     // ── Trigger 3: user-explicit reflection ──
@@ -695,7 +717,8 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       needsRealtime,
       hasMultimodal,
       // Real decision → run the frameworks through the application harness.
-      decisionMode: isDecisionQuery(message),
+      // A council ask that couldn't seat two lenses is by definition a decision.
+      decisionMode: isDecisionQuery(message) || councilFellThrough,
       knowledgeContext: primaryOperatorId
         ? { operatorId: primaryOperatorId, operatorName: primary }
         : undefined,

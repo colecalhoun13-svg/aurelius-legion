@@ -58,6 +58,21 @@ export async function recordCorrection(input: CorrectionInput) {
       });
       applied = true;
     }
+  } else if (input.targetType === "reasoning_output") {
+    // Cole corrected a DECISION (not a specific rule) → the outcome loop decays
+    // the patterns that informed it. Graded, not fatal: a rule that keeps landing
+    // in corrected decisions falls below the trust floor and stops loading;
+    // Cole's direct hand on a pattern (above) remains the outright kill.
+    try {
+      const { decayRecentlyFired } = await import("../compiled/outcomeLoop.ts");
+      const n = await decayRecentlyFired({ reason: input.reason });
+      if (n > 0) {
+        applied = true;
+        console.log(`[corrections] decayed ${n} pattern(s) that informed the corrected decision`);
+      }
+    } catch (err) {
+      console.warn("[corrections] outcome decay failed (correction still recorded):", err);
+    }
   }
 
   const row = await prisma.correction.create({

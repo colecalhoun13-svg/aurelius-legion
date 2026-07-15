@@ -209,14 +209,20 @@ export async function loadOperatorPatternsForPrompt(args: {
   limit?: number;
   role?: "primary" | "secondary";
   query?: string; // when set, FIT-RANK to this decision by situation, not raw confidence
+  fired?: string[]; // out-param: ids of the patterns that made the cut (outcome loop)
 }): Promise<string> {
   const usableStatuses: PatternStatus[] = ["auto_factual", "confirmed_heuristic"];
   const limit = args.limit ?? 10;
 
+  // Trust floor (outcome loop): a rule that kept informing decisions Cole then
+  // corrected decays below this and stops loading — wrong lenses age out instead
+  // of steering forever. Provenance/evidence stay in the DB for audit.
+  const { TRUST_FLOOR } = await import("./outcomeLoop.ts");
+
   // Candidate pool: usable patterns by confidence. This is the fallback ordering
   // AND the metadata source (confidence, provenance) for the fit ranking below.
   let pool = await prisma.compiledPattern.findMany({
-    where: { operatorId: args.operatorId, status: { in: usableStatuses } },
+    where: { operatorId: args.operatorId, status: { in: usableStatuses }, confidenceScore: { gte: TRUST_FLOOR } },
     orderBy: { confidenceScore: "desc" },
     take: 40,
   });
@@ -237,7 +243,7 @@ export async function loadOperatorPatternsForPrompt(args: {
       const missingIds = fit.map((f) => f.id).filter((id) => !have.has(id));
       if (missingIds.length) {
         const extra = await prisma.compiledPattern.findMany({
-          where: { id: { in: missingIds }, operatorId: args.operatorId, status: { in: usableStatuses } },
+          where: { id: { in: missingIds }, operatorId: args.operatorId, status: { in: usableStatuses }, confidenceScore: { gte: TRUST_FLOOR } },
         });
         pool = [...pool, ...extra];
       }
@@ -267,7 +273,10 @@ export async function loadOperatorPatternsForPrompt(args: {
     // (rendering "source: The Art of War" invites the name-drop). Provenance stays
     // in the DB for audit, out of the reasoning surface.
     const rule = renderRule(p.patternSignature);
-    if (rule) lines.push(`- ${rule}`);
+    if (rule) {
+      lines.push(`- ${rule}`);
+      args.fired?.push(p.id); // outcome loop: these are the rules that informed the turn
+    }
   }
   lines.push("");
   lines.push(

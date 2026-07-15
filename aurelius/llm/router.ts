@@ -366,6 +366,7 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
   if (recallOperatorId) {
     try {
       const { loadOperatorPatternsForPrompt } = await import("../compiled/reasoningHelper.ts");
+      const fired: string[] = []; // outcome loop: which rules informed this turn
       // Primary lens — its frameworks, fit-ranked to THIS decision (not top-N by
       // confidence), so the ones that actually bear on the question are what load.
       const patternBlock = await loadOperatorPatternsForPrompt({
@@ -373,6 +374,7 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
         limit: 10,
         role: "primary",
         query: task.input,
+        fired,
       });
       if (patternBlock) parts.push("\n" + patternBlock);
 
@@ -387,8 +389,18 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
           limit: 4,
           role: "secondary",
           query: task.input,
+          fired,
         });
         if (secBlock) parts.push("\n" + secBlock);
+      }
+
+      // Real decision → record which rules informed it (fire-and-forget; joins the
+      // request's trace thread). This is the audit trail AND the outcome loop's
+      // input: corrections decay exactly these, quiet weeks reinforce them.
+      if (task.decisionMode && fired.length > 0) {
+        import("../compiled/outcomeLoop.ts")
+          .then(({ recordPatternsFired }) => recordPatternsFired(fired, task.input))
+          .catch(() => {});
       }
     } catch (err) {
       console.warn("[ROUTER] compiled-pattern layer failed (non-fatal):", err);

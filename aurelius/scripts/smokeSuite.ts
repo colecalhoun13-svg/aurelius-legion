@@ -907,10 +907,12 @@ async function main() {
     // ── reason-through-the-lens (design-council build) ──
     const { isDecisionQuery } = await import("../router/operatorRouter.ts");
     check(
-      "decision detector fires on real decisions, not on facts/chat",
+      "decision detector fires on real decisions, not on facts/chat/lookups",
       isDecisionQuery("should I take this client or protect my training?") === true &&
         isDecisionQuery("which is better, block or DUP periodization?") === true &&
-        isDecisionQuery("what time is my next meeting") === false
+        isDecisionQuery("what time is my next meeting") === false &&
+        isDecisionQuery("what's the best time to call?") === false &&
+        isDecisionQuery("which doc did I save yesterday?") === false
     );
 
     // The framework render APPLIES (reason-through) and strips the citation so it
@@ -1007,6 +1009,56 @@ async function main() {
       await deleteEmbeddingsForSource("compiled_pattern", pA.id);
       await deleteEmbeddingsForSource("compiled_pattern", pB.id);
       await prisma.compiledPattern.deleteMany({ where: { id: { in: [pA.id, pB.id] } } });
+
+      // ── Outcome loop (decision spine #2): fire → decay on correction → reinforce survivors ──
+      const { recordPatternsFired, decayRecentlyFired, reinforceSurvivors, TRUST_FLOOR, DECAY_STEP, REINFORCE_STEP } =
+        await import("../compiled/outcomeLoop.ts");
+      const mk = (theme: string) =>
+        prisma.compiledPattern.create({
+          data: { operatorId: semOp, domain: "strategy", entityKey: null, patternType: "heuristic",
+            patternSignature: { recurringReasoningTheme: `${TAG} ${theme}`, source: "cole's corrections" } as any,
+            status: "confirmed_heuristic", evidence: ["smoke"], supportCount: 1, confidenceScore: 0.5 },
+        });
+      const pWrong = await mk("When smoke-wrong, do the wrong thing");
+      const pRight = await mk("When smoke-right, do the right thing");
+
+      // A decision fires pWrong; Cole corrects it → pWrong decays.
+      await recordPatternsFired([pWrong.id], `${TAG} decision one`);
+      const nDecayed = await decayRecentlyFired({ reason: `smoke ${TAG}` });
+      const afterDecay = await prisma.compiledPattern.findUnique({ where: { id: pWrong.id } });
+      check(
+        "correcting a decision decays the patterns that informed it",
+        nDecayed >= 1 && Math.abs((afterDecay?.confidenceScore ?? 0) - (0.5 - DECAY_STEP)) < 1e-6
+      );
+
+      // A later decision fires pRight; no correction → weekly grading reinforces it, not pWrong.
+      await recordPatternsFired([pRight.id], `${TAG} decision two`);
+      const nReinforced = await reinforceSurvivors({ sinceDays: 1 });
+      const afterReinforce = await prisma.compiledPattern.findUnique({ where: { id: pRight.id } });
+      const wrongAfter = await prisma.compiledPattern.findUnique({ where: { id: pWrong.id } });
+      check(
+        "quiet survivors reinforce; decayed patterns are excluded from the reward",
+        nReinforced >= 1 &&
+          Math.abs((afterReinforce?.confidenceScore ?? 0) - (0.5 + REINFORCE_STEP)) < 1e-6 &&
+          Math.abs((wrongAfter?.confidenceScore ?? 0) - (0.5 - DECAY_STEP)) < 1e-6
+      );
+
+      // Repeatedly-wrong rules fall below the trust floor and stop loading.
+      await prisma.compiledPattern.update({ where: { id: pWrong.id }, data: { confidenceScore: TRUST_FLOOR - 0.05 } });
+      const blkFloor = await loadOperatorPatternsForPrompt({ operatorId: semOp, role: "primary" });
+      check(
+        "patterns below the trust floor stop loading into prompts",
+        !blkFloor.includes("smoke-wrong") // pRight may or may not render depending on other patterns; the floor test is pWrong's absence
+      );
+
+      // Cleanup (smoke artifacts only — filter trace rows by the TAG in their context).
+      await prisma.compiledPattern.deleteMany({ where: { id: { in: [pWrong.id, pRight.id] } } });
+      await prisma.logEntry.deleteMany({
+        where: { message: "decision:patterns_fired", context: { path: ["decision"], string_contains: TAG } },
+      });
+      await prisma.logEntry.deleteMany({
+        where: { message: "decision:patterns_decayed", context: { path: ["reason"], string_contains: TAG } },
+      });
     } else {
       check("semantic when-retrieval (skipped — no global operator)", true);
     }

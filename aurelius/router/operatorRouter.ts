@@ -376,10 +376,11 @@ export function routeOperator(message: string): string {
 
 // Is Cole asking for a real DECISION (vs. a fact, a chat, a task)? Decision turns
 // get the application harness (Decision Mode) so the operator reasons THROUGH its
-// frameworks instead of quoting them. Deliberately a touch eager — a false
-// positive just asks the model to show its reasoning, which is rarely wrong.
+// frameworks instead of quoting them. Requires decision FRAMING — bare
+// "which/best/better" fire on plain lookups ("which meeting is next?", "best time
+// to call?") and would bolt the harness onto factual turns.
 const DECISION_RE =
-  /\b(should i|should we|worth it|which\b|\bvs\.?\b|versus|better\b|best\b|do i|is it (smart|worth|wise|better)|go with|pick|choose|decide|deciding|trade[- ]?off|or should|what would you do|help me (decide|choose)|make the call)\b/i;
+  /\b(should (i|we)|worth it|which (one|option|way|route|approach|should|would|is better)|\bvs\.?\b|versus|do i|is it (smart|worth|wise|better)|better to|go with|pick|choose|decide|deciding|trade[- ]?off|or should|what would you do|help me (decide|choose)|make the call)\b/i;
 
 export function isDecisionQuery(message: string): boolean {
   return DECISION_RE.test(message ?? "");

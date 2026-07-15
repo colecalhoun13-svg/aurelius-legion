@@ -47,15 +47,20 @@ export function stripCouncilTrigger(message: string): string {
     .trim();
 }
 
-export async function deliberate(decision: string, opts?: { maxSeats?: number }): Promise<DeliberationResult> {
+export async function deliberate(
+  decision: string,
+  opts?: { maxSeats?: number; routing?: { primary: string; secondaries: string[] } }
+): Promise<DeliberationResult> {
   const maxSeats = opts?.maxSeats ?? DEFAULT_MAX_SEATS;
   const clean = (decision ?? "").trim();
   if (clean.length < 4) {
     return { ok: false, decision: clean, seats: [], synthesis: "", error: "no decision given to the council" };
   }
 
-  // Convene: the routed lenses (primary + secondaries) become the seats.
-  const routing = await routeOperatorsSemantic(clean);
+  // Convene: the routed lenses (primary + secondaries) become the seats. The chat
+  // handler routes the stripped decision once and passes it in — no double route,
+  // and the seats always match the operators the response reports.
+  const routing = opts?.routing ?? (await routeOperatorsSemantic(clean));
   const seatOps = [routing.primary, ...routing.secondaries].filter((v, i, a) => a.indexOf(v) === i).slice(0, maxSeats);
 
   // Hear each lens fully — each reasons as PRIMARY, so buildSystemPrompt loads its
