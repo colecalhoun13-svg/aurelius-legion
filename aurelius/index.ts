@@ -10,6 +10,7 @@ import cors from "cors";
 
 // Multi-operator routing
 import { routeOperatorsSemantic, isDecisionQuery } from "./router/operatorRouter.ts";
+import { deliberate, formatDeliberation, stripCouncilTrigger, isCouncilTrigger } from "./council/deliberate.ts";
 // Smart LLM routing
 import { runLLM } from "./llm/runLLM.ts";
 import { routeLLM } from "./llm/router.ts";
@@ -597,6 +598,26 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
     // keyword otherwise (master-class #6).
     const routing = await routeOperatorsSemantic(message);
     const { primary, secondaries } = routing;
+
+    // ── Trigger 0: convene the Operator Council (opt-in tribunal) ──
+    // "council this" / "pressure-test this" — Cole wants to SEE the lenses argue,
+    // then resolve in one voice. Everyday decisions stay in invisible Decision Mode.
+    if (taskType !== "reflect" && isCouncilTrigger(message)) {
+      const result = await deliberate(stripCouncilTrigger(message));
+      return res.json({
+        reply: formatDeliberation(result),
+        operators: { primary, secondaries },
+        meta: {
+          mode: "council",
+          council: {
+            ok: result.ok,
+            seats: result.seats.map((s) => s.operator),
+            error: result.error ?? null,
+          },
+        },
+        reviewed: null,
+      });
+    }
 
     // ── Trigger 3: user-explicit reflection ──
     // taskType: "reflect" routes through reflection-specific flow.

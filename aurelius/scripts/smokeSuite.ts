@@ -940,6 +940,27 @@ async function main() {
     const dc = await runDecisionCurriculum();
     check("decision curriculum runs honestly with no LLM engine", dc.ok === true && dc.proposed === 0);
 
+    // ── Operator Council tribunal (deliberate) ──
+    const { deliberate, stripCouncilTrigger, isCouncilTrigger } = await import("../council/deliberate.ts");
+    check(
+      "council trigger fires on explicit convene, not on plain decisions",
+      isCouncilTrigger("council this: should I take the client?") === true &&
+        isCouncilTrigger("pressure-test this move") === true &&
+        isCouncilTrigger("convene the council on my Q3 plan") === true &&
+        isCouncilTrigger("should I take this client?") === false
+    );
+    check(
+      "stripCouncilTrigger removes the trigger phrase, keeps the decision",
+      stripCouncilTrigger("council this: take the client or protect training?") === "take the client or protect training?" &&
+        stripCouncilTrigger("pressure-test this — move to Austin") === "move to Austin"
+    );
+    // Honest-failure: no LLM engine → the council refuses to invent a verdict.
+    const del = await deliberate("should I take the client or protect my training block?");
+    check("council fails honestly with no LLM engine (ok:false, no fabricated verdict)", del.ok === false && !!del.error);
+    // Empty decision → guarded, never convenes.
+    const delEmpty = await deliberate("  ");
+    check("council rejects an empty decision", delEmpty.ok === false);
+
     // Cursor → progress round-trip (deterministic; no research/network). The
     // cursor lives under scope="system" so it never enters the vector index.
     const curOp = await resolveOperatorId("global");
