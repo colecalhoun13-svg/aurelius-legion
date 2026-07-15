@@ -637,19 +637,25 @@ export async function runCurriculumIngest(opts?: {
   }
 
   if (studied.length > 0) {
+    const digestTitle = `Studied ${studied.length} unit${studied.length === 1 ? "" : "s"} this week`;
+    const digestBody =
+      studied.map((s) => `• ${labelFor(s.domain)}: ${s.title}`).join("\n") +
+      (discovered.length ? `\n\n(+${discovered.reduce((n, d) => n + d.count, 0)} new works/topics added to the plan.)` : "") +
+      (proposedHeuristics > 0 ? `\n\n${proposedHeuristics} principle${proposedHeuristics === 1 ? "" : "s"} proposed for confirm — tap to let them steer my reasoning.` : "") +
+      `\n\nAbsorbed into the second brain and each field's wiki. See /library for the shelves.`;
     try {
       await surfaceSignal({
         kind: "background_result",
         domain: "personal",
         sourceType: "curriculum",
         severity: "info",
-        title: `Studied ${studied.length} unit${studied.length === 1 ? "" : "s"} this week`,
-        body:
-          studied.map((s) => `• ${labelFor(s.domain)}: ${s.title}`).join("\n") +
-          (discovered.length ? `\n\n(+${discovered.reduce((n, d) => n + d.count, 0)} new works/topics added to the plan.)` : "") +
-          (proposedHeuristics > 0 ? `\n\n${proposedHeuristics} principle${proposedHeuristics === 1 ? "" : "s"} proposed for confirm — tap to let them steer my reasoning.` : "") +
-          `\n\nAbsorbed into the second brain and each field's wiki — grounding future decisions.`,
+        title: digestTitle,
+        body: digestBody,
       });
+      // A weekly learning digest is a deliberate, legible report — push it directly
+      // (a low-salience info signal would otherwise sit unseen on the Bridge).
+      const { sendToCole } = await import("../telegram/bot.ts");
+      await sendToCole(`📚 ${digestTitle}\n\n${digestBody}`);
     } catch (err) {
       console.warn("[curriculum] summary signal failed:", (err as any)?.message ?? err);
     }

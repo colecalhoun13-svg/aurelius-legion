@@ -19,6 +19,7 @@ const NAV_GLYPHS: Record<string, string> = {
   Aurelius: "♛",
   "Second Brain": "❈",
   Wiki: "✍",
+  Library: "📖",
   Engines: "⚙",
   Traces: "🜸",
   Settings: "✦",
