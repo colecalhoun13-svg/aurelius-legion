@@ -22,6 +22,10 @@ function confirmableAction(s: Signal): SignalAction | undefined {
   return (s.actions ?? undefined)?.find?.((a) => a?.action === "confirm_action");
 }
 
+function undoableAction(s: Signal): SignalAction | undefined {
+  return (s.actions ?? undefined)?.find?.((a) => a?.action === "undo_action");
+}
+
 type Deck = {
   date: string;
   hero: {
@@ -130,6 +134,26 @@ export default function DeckPage() {
     });
     await load();
   }, [load]);
+
+  // Reverse an action Aurelius took on its own (runs its registered inverse).
+  const undo = useCallback(async (id: string) => {
+    if (busy) return;
+    setBusy(id);
+    try {
+      const res = await fetch("/api/autonomy/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ signalId: id }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        window.alert(`Couldn't undo: ${j.error ?? res.status}`);
+      }
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  }, [busy, load]);
 
   // Cole confirms a gated action → backend runs its finalizer (places the
   // hold, drafts the reply, …). Same endpoint the Bridge page uses.
@@ -298,9 +322,15 @@ export default function DeckPage() {
             {deck.overnight.map((s) => (
               <li key={s.id} className="text-xs text-neutral-500 flex items-start gap-2 px-1">
                 <span className="text-emerald-500/70 mt-px">✓</span>
-                <span><span className="text-neutral-400">{s.title}</span>
+                <span className="flex-1"><span className="text-neutral-400">{s.title}</span>
                   <span className="text-neutral-600"> · {s.kind.replace(/_/g, " ")}</span>
                 </span>
+                {undoableAction(s) && s.status !== "undone" && (
+                  <button onClick={() => undo(s.id)} disabled={busy === s.id}
+                    className="text-[11px] border border-amber-500/40 rounded px-2 py-0.5 hover:bg-amber-500/15 text-amber-300/90 disabled:opacity-50 shrink-0">
+                    {busy === s.id ? "…" : "Undo"}
+                  </button>
+                )}
               </li>
             ))}
           </ul>

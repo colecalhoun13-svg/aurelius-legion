@@ -50,6 +50,11 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     path: "/bridge",
     description: "Signals from Aurelius's background work",
   },
+  autonomy: {
+    name: "Autonomy",
+    path: "/autonomy",
+    description: "The keyholes — grant, revoke, undo; the trust you've earned it",
+  },
   aurelius: {
     name: "Aurelius",
     path: "/aurelius",
