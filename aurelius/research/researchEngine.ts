@@ -24,6 +24,7 @@ import { llmResearch } from "./researchAdapters/llmResearchAdapter.ts";
 import { fuseResearchResults } from "./researchFusion.ts";
 
 import { getOperatorProfile } from "../core/operatorProfiles.ts";
+import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { runLLM } from "../llm/runLLM.ts";
 import { saveMemory } from "../memory/memoryService.ts";
 
@@ -51,6 +52,12 @@ const FEATURES = {
 
 function looksLikeLLMError(text: string): boolean {
   if (!text) return true;
+  // The keyless/config strings the adapters actually emit ("Anthropic engine is
+  // not configured. Missing ANTHROPIC_API_KEY.", "GROQ_API_KEY is not
+  // configured.", "All configured LLM providers failed") are matched by the
+  // single-source guard — without this, a keyless synthesis got filed as research
+  // memory (hard rule 3) and then flowed into wiki synthesis.
+  if (engineUnavailableText(text)) return true;
   const lower = text.toLowerCase();
   return (
     lower.includes("api error") ||

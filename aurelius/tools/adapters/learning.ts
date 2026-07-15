@@ -5,7 +5,9 @@
 // ritual. Pure delegation to learning/curriculum.ts.
 
 import type { ToolAdapter, ToolAdapterResult } from "../types.ts";
-import { runCurriculumIngest, getCurriculumProgress } from "../../learning/curriculum.ts";
+import { runCurriculumIngest, getCurriculumProgress, CURRICULUM } from "../../learning/curriculum.ts";
+
+const KNOWN_DOMAINS = new Set(CURRICULUM.map((t) => t.domain));
 
 export const learningAdapter: ToolAdapter = {
   name: "learning",
@@ -44,8 +46,19 @@ export const learningAdapter: ToolAdapter = {
       }
 
       case "study_now": {
-        const domain = data?.domain ? String(data.domain) : undefined;
-        const maxUnits = data?.maxUnits != null ? Number(data.maxUnits) : undefined;
+        const domain = data?.domain ? String(data.domain).trim().toLowerCase() : undefined;
+        // Validate a hostile/garbled maxUnits rather than silently no-op'ing.
+        let maxUnits: number | undefined;
+        if (data?.maxUnits != null) {
+          const n = Number(data.maxUnits);
+          if (!Number.isFinite(n) || n < 1) {
+            return { ok: false, output: null, error: `maxUnits must be a positive number (got ${JSON.stringify(data.maxUnits)})` };
+          }
+          maxUnits = Math.min(Math.floor(n), 20);
+        }
+        if (domain && !KNOWN_DOMAINS.has(domain)) {
+          return { ok: false, output: null, error: `unknown field "${domain}". Known: ${[...KNOWN_DOMAINS].join(", ")}` };
+        }
         const res = await runCurriculumIngest({ onlyDomain: domain, maxUnits });
         if (!res.ok) return { ok: false, output: null, error: res.error ?? "curriculum run failed" };
         return {

@@ -36,7 +36,11 @@ async function gatherDomainMaterial(domain: string) {
       select: { value: true, category: true, createdAt: true },
     }),
     prisma.knowledgeEntry.findMany({
-      where: { active: true },
+      // Exclude scope="system" — credentials AND internal control state (the
+      // curriculum cursor) live there. Without this, the cursor row (updated
+      // every study run) was among the 25 most-recent and got rendered into the
+      // synthesis prompt as "CONFIRMED LIVING KNOWLEDGE", crowding out real facts.
+      where: { active: true, scope: { not: "system" } },
       orderBy: { updatedAt: "desc" },
       take: 25,
       select: { scope: true, key: true, value: true },

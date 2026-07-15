@@ -877,19 +877,30 @@ async function main() {
       "curriculum self-expansion parses new works and dedups known ones",
       parsed.length >= 2 && !parsed.some((u) => /art of war/i.test(u.title)) && parsed.some((u) => /on war/i.test(u.title))
     );
+    // Bug-test fixes: non-ASCII titles survive; short generic tokens don't over-dedup.
+    const robust = parseDiscoveries(
+      "孫子兵法 — a classic in its own script\nFlow states and arousal regulation — a real sub-topic",
+      "strategy",
+      [{ title: "Flow", query: "" }] as any
+    );
+    check(
+      "parseDiscoveries keeps non-ASCII titles and doesn't let short tokens over-dedup",
+      robust.some((u) => /孫子兵法/.test(u.title)) && robust.some((u) => /flow states/i.test(u.title))
+    );
 
     // Cursor → progress round-trip (deterministic; no research/network). The
     // cursor lives under scope="system" so it never enters the vector index.
     const curOp = await resolveOperatorId("global");
     if (curOp) {
+      const studiedSeed = { studied: ["the art of war sun tzu", "the book of five rings miyamoto musashi"], cycles: 0 };
       await prisma.knowledgeEntry.upsert({
         where: { operatorId_scope_key: { operatorId: curOp, scope: "system", key: "curriculum:strategy" } },
-        update: { value: { index: 2, cycles: 0 } as any },
-        create: { operatorId: curOp, scope: "system", key: "curriculum:strategy", value: { index: 2, cycles: 0 } as any, sourceType: "curriculum_cursor", createdBy: "system" },
+        update: { value: studiedSeed as any },
+        create: { operatorId: curOp, scope: "system", key: "curriculum:strategy", value: studiedSeed as any, sourceType: "curriculum_cursor", createdBy: "system" },
       });
       const prog = await getCurriculumProgress();
       const sp = prog.find((p) => p.domain === "strategy");
-      check("curriculum progress reflects the read cursor", !!sp && sp.read === 2 && sp.total >= 5);
+      check("curriculum progress reflects the studied set (reorder-proof)", !!sp && sp.read === 2 && sp.total >= 5);
       await prisma.knowledgeEntry.deleteMany({ where: { operatorId: curOp, scope: "system", key: "curriculum:strategy" } });
     } else {
       check("curriculum progress (skipped — no global operator)", true);

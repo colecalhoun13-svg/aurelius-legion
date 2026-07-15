@@ -305,10 +305,14 @@ export const CURRICULUM: Track[] = [
   ),
 ];
 
-type State = { index: number; cycles: number; queue: Unit[]; discoveries: number };
+// Progress is tracked by the SET of studied unit titles (normalized), NOT a
+// positional index. A positional cursor silently skips units whenever the canon
+// is edited/reordered (interleave shifts every later position) — this is
+// reorder-proof: it always studies the next unit not yet studied.
+type State = { studied: string[]; cycles: number; queue: Unit[]; discoveries: number };
 
 function defaultState(): State {
-  return { index: 0, cycles: 0, queue: [], discoveries: 0 };
+  return { studied: [], cycles: 0, queue: [], discoveries: 0 };
 }
 
 // State lives under scope="system" so it is NEVER embedded into the vector index.
@@ -318,7 +322,7 @@ async function getState(operatorId: string, domain: string): Promise<State> {
   });
   const v = (row?.value as any) ?? {};
   return {
-    index: typeof v.index === "number" ? v.index : 0,
+    studied: Array.isArray(v.studied) ? (v.studied as string[]) : [],
     cycles: typeof v.cycles === "number" ? v.cycles : 0,
     queue: Array.isArray(v.queue) ? (v.queue as Unit[]) : [],
     discoveries: typeof v.discoveries === "number" ? v.discoveries : 0,
@@ -340,7 +344,20 @@ async function setState(operatorId: string, domain: string, state: State): Promi
   });
 }
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+// Unicode-aware: keep letters/numbers of ANY script so Cyrillic/CJK titles (the
+// Soviet-school and international works the curriculum targets) don't normalize
+// to empty and get dropped.
+const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+// Two normalized titles are "the same work" if equal, or if one contains the
+// other AND the contained string is long enough to be specific (short generic
+// tokens like "flow" or "moats" must NOT swallow "flow states…").
+const CONTAIN_MIN = 12;
+function sameWork(a: string, b: string): boolean {
+  if (a === b) return true;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  return short.length >= CONTAIN_MIN && long.includes(short);
+}
 
 /**
  * Parse an LLM discovery response into new study units (works OR topics), deduped
@@ -358,7 +375,7 @@ export function parseDiscoveries(text: string, field: string, existing: Unit[]):
     if (!title || title.length < 3 || title.length > 140) continue;
     const n = norm(title);
     if (!n || seen.has(n)) continue;
-    if (knownNorms.some((k) => k === n || k.includes(n) || n.includes(k))) continue;
+    if (knownNorms.some((k) => sameWork(k, n))) continue;
     seen.add(n);
     out.push(unit(title, field));
   }
@@ -419,8 +436,11 @@ async function fillKnowledgeGaps(track: Track, planned: Unit[]): Promise<Unit[]>
   return parseDiscoveries(text, track.label, against).slice(0, MAX_DISCOVERIES_PER_EXPAND);
 }
 
-const UNITS_PER_DOMAIN_PER_WEEK = 1;
 const MAX_UNITS_PER_RUN = 8;
+
+// Per-domain in-process guard against concurrent runs (Sunday ritual vs. a manual
+// study_now). Curriculum runs only in the backend process, so this covers it.
+const inFlight = new Set<string>();
 
 export type CurriculumResult = {
   ok: boolean;
@@ -452,11 +472,20 @@ export async function runCurriculumIngest(opts?: {
 
   for (const trk of tracks) {
     if (count >= cap) break;
-    for (let u = 0; u < UNITS_PER_DOMAIN_PER_WEEK && count < cap; u++) {
+    // In-process guard: don't let a manual study_now and the Sunday ritual (or two
+    // manual calls) study the same domain concurrently and churn duplicate research.
+    if (inFlight.has(trk.domain)) {
+      skipped.push({ domain: trk.domain, title: "(domain)", reason: "already studying this domain" });
+      continue;
+    }
+    inFlight.add(trk.domain);
+    try {
       let state = await getState(globalId, trk.domain);
       let list = [...trk.canon, ...state.queue];
+      const studiedSet = new Set(state.studied);
 
-      if (list.length - state.index <= EXPAND_WHEN_REMAINING && state.queue.length < MAX_QUEUE) {
+      // Grow the plan before it runs out (gap-driven), then re-check coverage.
+      if (list.filter((u) => !studiedSet.has(norm(u.title))).length <= EXPAND_WHEN_REMAINING && state.queue.length < MAX_QUEUE) {
         const added = await fillKnowledgeGaps(trk, list);
         if (added.length > 0) {
           state = { ...state, queue: [...state.queue, ...added].slice(0, MAX_QUEUE), discoveries: state.discoveries + 1 };
@@ -466,43 +495,49 @@ export async function runCurriculumIngest(opts?: {
         }
       }
 
-      const done = state.index >= list.length;
-      const studyUnit: Unit = done
-        ? {
-            title: `Staying current — ${trk.label} (cycle ${state.cycles + 1})`,
-            query:
-              `What are the most important recent developments, refinements, or debates in ${trk.label} ` +
-              `that a serious practitioner should absorb now? Focus on what has genuinely changed or sharpened, ` +
-              `and connect it to how it should change real decisions. Be specific and actionable.`,
-          }
-        : list[state.index]!;
+      // Next unit = the first in the (seed+queue) list NOT yet studied. Reorder-proof.
+      const nextUnit = list.find((u) => !studiedSet.has(norm(u.title)));
+      const done = !nextUnit;
+      const studyUnit: Unit = nextUnit ?? {
+        title: `Staying current — ${trk.label} (cycle ${state.cycles + 1})`,
+        query:
+          `What are the most important recent developments, refinements, or debates in ${trk.label} ` +
+          `that a serious practitioner should absorb now? Focus on what has genuinely changed or sharpened, ` +
+          `and connect it to how it should change real decisions. Be specific and actionable.`,
+      };
 
-      try {
-        const res = await runResearch({ query: studyUnit.query, operator: trk.operator, depth: "deep" });
-        const body = [res.synthesis, ...(res.insights ?? [])].filter(Boolean).join("\n\n");
+      const res = await runResearch({ query: studyUnit.query, operator: trk.operator, depth: "deep" });
+      const body = [res.synthesis, ...(res.insights ?? [])].filter(Boolean).join("\n\n");
 
-        if (!body || body.trim().length < 80 || engineUnavailableText(body) || engineUnavailableText(res.synthesis ?? "")) {
-          skipped.push({ domain: trk.domain, title: studyUnit.title, reason: "no research engine / empty synthesis" });
-          continue;
-        }
-
-        await ingestDocument({
-          title: `Curriculum · ${trk.label}: ${studyUnit.title}`,
-          content: `# ${studyUnit.title}\n\n${body}`,
-          sourceType: "research",
-          domain: trk.domain,
-          operatorName: trk.operator,
-          triggeredBy: "self_directed",
-          dedupKey: `curriculum:${trk.domain}:${done ? `maint:${state.cycles}` : `idx:${state.index}`}`,
-        });
-
-        studied.push({ domain: trk.domain, title: studyUnit.title });
-        touched.add(trk.domain);
-        count++;
-        await setState(globalId, trk.domain, done ? { ...state, cycles: state.cycles + 1 } : { ...state, index: state.index + 1 });
-      } catch (err: any) {
-        skipped.push({ domain: trk.domain, title: studyUnit.title, reason: err?.message ?? String(err) });
+      // Honest failure: no engine / empty → SKIP, don't ingest, don't record studied.
+      if (!body || body.trim().length < 80 || engineUnavailableText(body) || engineUnavailableText(res.synthesis ?? "")) {
+        skipped.push({ domain: trk.domain, title: studyUnit.title, reason: "no research engine / empty synthesis" });
+        continue;
       }
+
+      await ingestDocument({
+        title: `Curriculum · ${trk.label}: ${studyUnit.title}`,
+        content: `# ${studyUnit.title}\n\n${body}`,
+        sourceType: "research",
+        domain: trk.domain,
+        operatorName: trk.operator,
+        triggeredBy: "self_directed",
+        // Content-derived idempotency — stable across any canon reorder/insert.
+        dedupKey: `curriculum:${trk.domain}:${done ? `maint:${state.cycles}` : norm(studyUnit.title)}`,
+      });
+
+      studied.push({ domain: trk.domain, title: studyUnit.title });
+      touched.add(trk.domain);
+      count++;
+      await setState(globalId, trk.domain, done
+        ? { ...state, cycles: state.cycles + 1 }
+        : { ...state, studied: [...state.studied, norm(studyUnit.title)] });
+    } catch (err: any) {
+      // One bad domain (a DB blip on state I/O, a research throw) must not kill the
+      // rest of the run.
+      skipped.push({ domain: trk.domain, title: "(domain)", reason: err?.message ?? String(err) });
+    } finally {
+      inFlight.delete(trk.domain);
     }
   }
 
@@ -559,7 +594,7 @@ export async function getCurriculumProgress(): Promise<
     out.push({
       domain: trk.domain,
       label: trk.label,
-      read: Math.min(state.index, total),
+      read: Math.min(state.studied.length, total),
       total,
       discovered: state.queue.length,
       cycles: state.cycles,
