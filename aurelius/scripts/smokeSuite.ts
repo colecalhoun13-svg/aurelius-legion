@@ -261,6 +261,22 @@ async function main() {
     }
   }
 
+  console.log("── retrieval rerank: dedup near-identical chunks ──");
+  {
+    const { embedSource } = await import("../retrieval/embedPipeline.ts");
+    const { semanticRecall } = await import("../retrieval/retrieve.ts");
+    const { deleteEmbeddingsForSource } = await import("../retrieval/vectorStore.ts");
+    const text = `${TAG} the athlete deload week protocol reduces working volume by forty percent to manage fatigue`;
+    // Same content indexed from two different sources → recall must return it once.
+    await embedSource({ sourceType: "note", sourceId: `${TAG}_r1`, text, operatorId: null, domain: "personal" });
+    await embedSource({ sourceType: "corpus_doc", sourceId: `${TAG}_r2`, text, operatorId: null, domain: "personal" });
+    const hits = await semanticRecall({ query: text, limit: 8 });
+    const dupes = hits.filter((h) => h.chunkText.includes(`${TAG} the athlete deload`));
+    check("semanticRecall dedups identical chunk text across sources", dupes.length === 1);
+    await deleteEmbeddingsForSource("note", `${TAG}_r1`);
+    await deleteEmbeddingsForSource("corpus_doc", `${TAG}_r2`);
+  }
+
   console.log("── salience: anticipation over cron ──");
   {
     const { scoreSalience, shouldPushNow } = await import("../core/salience.ts");

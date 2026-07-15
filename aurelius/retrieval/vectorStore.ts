@@ -38,6 +38,7 @@ export type SimilarChunk = {
   operatorId: string | null;
   domain: string | null;
   similarity: number; // 1 - cosine distance, higher = closer
+  createdAt?: Date;   // for recency-weighted reranking
 };
 
 function toVectorLiteral(embedding: number[]): string {
@@ -114,7 +115,7 @@ export async function searchSimilar(args: {
 
   const rows: any[] = await prisma.$queryRawUnsafe(
     `SELECT "id", "sourceType", "sourceId", "chunkIndex", "chunkText",
-            "operatorId", "domain",
+            "operatorId", "domain", "createdAt",
             1 - ("embedding" <=> $1::vector) AS similarity
      FROM "VectorEmbedding"
      WHERE ${conditions.join(" AND ")}
@@ -132,6 +133,7 @@ export async function searchSimilar(args: {
     operatorId: r.operatorId,
     domain: r.domain,
     similarity: Number(r.similarity),
+    createdAt: r.createdAt ? new Date(r.createdAt) : undefined,
   }));
 }
 
