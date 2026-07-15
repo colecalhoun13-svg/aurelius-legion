@@ -961,6 +961,56 @@ async function main() {
     const delEmpty = await deliberate("  ");
     check("council rejects an empty decision", delEmpty.ok === false);
 
+    // ── Semantic when-retrieval of the compiled lens (council fix #1) ──
+    // The lens Aurelius has of COLE (his corrections) must be findable by the
+    // SITUATION of a decision, not shared words. (Mock embeddings are hash-based —
+    // this proves the plumbing + Cole-bonus + honest fallback; true semantic
+    // discrimination proves out only on a real embedding model.)
+    const { extractWhenClause, isColeDerived, indexConfirmedPatterns, retrieveFitPatterns } = await import("../compiled/patternIndex.ts");
+    check(
+      "extractWhenClause pulls the situation, not the action or the reason",
+      extractWhenClause("When the downside is irreversible, size to survive being wrong — because ruin is unrecoverable") === "the downside is irreversible"
+    );
+    check(
+      "isColeDerived flags corrections-sourced heuristics, not canon",
+      isColeDerived({ recurringReasoningTheme: "x", source: "cole's corrections" }) === true &&
+        isColeDerived({ recurringReasoningTheme: "x", source: "curriculum: The Art of War" }) === false
+    );
+    const semOp = await resolveOperatorId("global");
+    if (semOp) {
+      const pA = await prisma.compiledPattern.create({
+        data: { operatorId: semOp, domain: "strategy", entityKey: null, patternType: "heuristic",
+          patternSignature: { recurringReasoningTheme: `${TAG} When capital is irreversible, size to survive being wrong`, source: "cole's corrections" } as any,
+          status: "confirmed_heuristic", evidence: ["cole's corrections"], supportCount: 1, confidenceScore: 0.98 },
+      });
+      const pB = await prisma.compiledPattern.create({
+        data: { operatorId: semOp, domain: "training", entityKey: null, patternType: "heuristic",
+          patternSignature: { recurringReasoningTheme: `${TAG} When deloading, cut volume before intensity`, source: "curriculum: Starting Strength" } as any,
+          status: "confirmed_heuristic", evidence: ["curriculum"], supportCount: 1, confidenceScore: 0.99 },
+      });
+      const nIdx = await indexConfirmedPatterns(semOp);
+      check("compiled patterns index into the vector store (when-clause embeddings)", nIdx >= 2);
+      const fit = await retrieveFitPatterns({ operatorId: semOp, query: "should I risk irreversible capital on this", limit: 10 });
+      check("retrieveFitPatterns returns semantic hits (not null) with an engine", Array.isArray(fit) && (fit as any[]).length >= 2);
+      const { loadOperatorPatternsForPrompt } = await import("../compiled/reasoningHelper.ts");
+      const blk = await loadOperatorPatternsForPrompt({ operatorId: semOp, query: "should I risk irreversible capital on this", role: "primary" });
+      check("compiled-lens block renders the retrieved rules", blk.includes(`${TAG} When capital is irreversible`));
+      // Honest fallback: no embedding engine → retrieval returns null, prompt falls
+      // back to confidence order without throwing.
+      const prevEnv = process.env.RETRIEVAL_EMBEDDINGS_ENABLED;
+      process.env.RETRIEVAL_EMBEDDINGS_ENABLED = "false";
+      const nullFit = await retrieveFitPatterns({ operatorId: semOp, query: "anything", limit: 10 });
+      const blkFallback = await loadOperatorPatternsForPrompt({ operatorId: semOp, query: "anything", role: "primary" });
+      if (prevEnv === undefined) delete process.env.RETRIEVAL_EMBEDDINGS_ENABLED; else process.env.RETRIEVAL_EMBEDDINGS_ENABLED = prevEnv;
+      check("retrieval falls back honestly with no embedding engine", nullFit === null && blkFallback.includes(TAG));
+      const { deleteEmbeddingsForSource } = await import("../retrieval/vectorStore.ts");
+      await deleteEmbeddingsForSource("compiled_pattern", pA.id);
+      await deleteEmbeddingsForSource("compiled_pattern", pB.id);
+      await prisma.compiledPattern.deleteMany({ where: { id: { in: [pA.id, pB.id] } } });
+    } else {
+      check("semantic when-retrieval (skipped — no global operator)", true);
+    }
+
     // Cursor → progress round-trip (deterministic; no research/network). The
     // cursor lives under scope="system" so it never enters the vector index.
     const curOp = await resolveOperatorId("global");

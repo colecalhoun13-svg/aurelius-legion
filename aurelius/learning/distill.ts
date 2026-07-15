@@ -104,6 +104,11 @@ export async function fileProposedHeuristic(args: {
       confidenceScore: 0.5,
     },
   });
+  // Index the when-clause so the decision path can retrieve this rule by SITUATION,
+  // not shared words (the row is inert until Cole confirms — retrieval filters by
+  // status — so embedding at propose-time is safe and saves a confirm-time hook).
+  const { indexPatternSafe } = await import("../compiled/patternIndex.ts");
+  indexPatternSafe(pattern as any);
   const sourceId = `pattern:${pattern.id}`;
   const already = await prisma.bridgeSignal.count({ where: { sourceType: "heuristic_confirm", sourceId } });
   if (already === 0) {

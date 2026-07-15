@@ -208,28 +208,55 @@ export async function loadOperatorPatternsForPrompt(args: {
   operatorId: string;
   limit?: number;
   role?: "primary" | "secondary";
-  query?: string; // when set, FIT-RANK to this decision, not raw confidence
+  query?: string; // when set, FIT-RANK to this decision by situation, not raw confidence
 }): Promise<string> {
   const usableStatuses: PatternStatus[] = ["auto_factual", "confirmed_heuristic"];
-  // Fetch a wider set, then rank down BY FIT to the decision on the table — the
-  // frameworks that matter are the ones this decision triggers, not the operator's
-  // most-confident in general (a lens you didn't select for the cut can only be
-  // name-dropped). Falls back to confidence when there's no query.
-  let patterns = await prisma.compiledPattern.findMany({
+  const limit = args.limit ?? 10;
+
+  // Candidate pool: usable patterns by confidence. This is the fallback ordering
+  // AND the metadata source (confidence, provenance) for the fit ranking below.
+  let pool = await prisma.compiledPattern.findMany({
     where: { operatorId: args.operatorId, status: { in: usableStatuses } },
     orderBy: { confidenceScore: "desc" },
     take: 40,
   });
-  if (patterns.length === 0) return "";
+  if (pool.length === 0) return "";
 
-  const limit = args.limit ?? 10;
+  // FIT by SITUATION, not shared words: cosine the decision against each heuristic's
+  // when-clause. A rule loads because its precondition matches the decision's shape.
+  // Cole-derived heuristics (his own corrections) get a small close-call bonus — his
+  // judgment is the one lens the frozen model can't contain. Falls back to confidence
+  // order only when there's no embedding engine (honest, not the old broken lexical).
+  let patterns = pool;
   if (args.query && args.query.trim()) {
-    const q = fitTokens(args.query);
-    patterns = [...patterns]
-      .sort((a, b) => fitScore(b, q) - fitScore(a, q) || (b.confidenceScore ?? 0) - (a.confidenceScore ?? 0))
-      .slice(0, limit);
+    const { retrieveFitPatterns, isColeDerived, COLE_BONUS } = await import("./patternIndex.ts");
+    const fit = await retrieveFitPatterns({ operatorId: args.operatorId, query: args.query, limit: 40 });
+    if (fit) {
+      // Union: a strong semantic match outside the confidence-top-40 still surfaces.
+      const have = new Set(pool.map((p) => p.id));
+      const missingIds = fit.map((f) => f.id).filter((id) => !have.has(id));
+      if (missingIds.length) {
+        const extra = await prisma.compiledPattern.findMany({
+          where: { id: { in: missingIds }, operatorId: args.operatorId, status: { in: usableStatuses } },
+        });
+        pool = [...pool, ...extra];
+      }
+      const scoreById = new Map(fit.map((f) => [f.id, f.score]));
+      patterns = [...pool]
+        .map((p) => {
+          const sem = scoreById.get(p.id) ?? 0; // unindexed/no-match → 0, kept as confidence tail
+          const cole = isColeDerived(p.patternSignature, p.evidence as string[]) ? COLE_BONUS : 0;
+          const conf = (p.confidenceScore ?? 0) * 0.001; // epsilon tie-break, never dominates
+          return { p, rank: sem + cole + conf };
+        })
+        .sort((a, b) => b.rank - a.rank)
+        .slice(0, limit)
+        .map((x) => x.p);
+    } else {
+      patterns = pool.slice(0, limit); // no embedding engine → confidence order
+    }
   } else {
-    patterns = patterns.slice(0, limit);
+    patterns = pool.slice(0, limit);
   }
 
   const roleTag = args.role === "secondary" ? " · secondary lens" : "";
@@ -262,17 +289,6 @@ function renderRule(sig: any): string {
     parts.push(typeof value === "object" ? `${key}: ${JSON.stringify(value).slice(0, 80)}` : `${key}: ${value}`);
   }
   return parts.join(", ");
-}
-
-const FIT_STOP = new Set(["the", "and", "for", "that", "with", "should", "would", "when", "this", "your", "you", "have", "are", "was", "his", "her", "them", "into", "from", "what", "how", "why"]);
-function fitTokens(s: string): Set<string> {
-  return new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3 && !FIT_STOP.has(w)));
-}
-function fitScore(p: { patternSignature: any }, q: Set<string>): number {
-  const text = renderRule(p.patternSignature).toLowerCase();
-  let n = 0;
-  for (const t of q) if (text.includes(t)) n++;
-  return n;
 }
 
 /**

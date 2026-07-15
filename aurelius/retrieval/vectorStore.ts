@@ -16,7 +16,8 @@ export type EmbeddingSourceType =
   | "task"
   | "project"
   | "corpus_doc"
-  | "wiki_page";
+  | "wiki_page"
+  | "compiled_pattern"; // a heuristic's WHEN-clause, so decisions retrieve it by situation
 
 export type UpsertEmbeddingArgs = {
   sourceType: EmbeddingSourceType;

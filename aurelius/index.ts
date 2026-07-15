@@ -1155,6 +1155,13 @@ import { startTelegramBridge, sendToCole } from "./telegram/bot.ts";
   await warmupDb();
   const { reapStaleActing } = await import("./autonomy/executor.ts");
   await reapStaleActing();
+  // Backfill the compiled-lens index so heuristics compiled before semantic
+  // retrieval existed become findable by situation. Idempotent (upsert); honest
+  // no-op without an embedding engine. Fire-and-forget — never blocks boot.
+  import("./compiled/patternIndex.ts")
+    .then(({ indexConfirmedPatterns }) => indexConfirmedPatterns())
+    .then((n) => n > 0 && console.log(`[patternIndex] backfilled ${n} compiled patterns`))
+    .catch((err) => console.warn("[patternIndex] boot backfill skipped:", err?.message ?? err));
 })().catch((err) => console.error("[boot] db-dependent init failed:", err));
 
 ensureRituals().catch((err) => console.error("[rituals] seed failed:", err));
