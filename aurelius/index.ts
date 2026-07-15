@@ -9,7 +9,7 @@ import express, { type Request, type Response } from "express";
 import cors from "cors";
 
 // Multi-operator routing
-import { routeOperators } from "./router/operatorRouter.ts";
+import { routeOperatorsSemantic } from "./router/operatorRouter.ts";
 // Smart LLM routing
 import { runLLM } from "./llm/runLLM.ts";
 import { routeLLM } from "./llm/router.ts";
@@ -593,8 +593,9 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
   }
 
   try {
-    // Multi-operator routing
-    const routing = routeOperators(message);
+    // Multi-operator routing — semantic (embedding-blended) when available,
+    // keyword otherwise (master-class #6).
+    const routing = await routeOperatorsSemantic(message);
     const { primary, secondaries } = routing;
 
     // ── Trigger 3: user-explicit reflection ──
@@ -1014,7 +1015,7 @@ app.post("/api/aurelius/research", async (req: Request, res: Response) => {
     let secondaries: string[] = secondaryOperators ?? [];
 
     if (!primary) {
-      const routing = routeOperators(query);
+      const routing = await routeOperatorsSemantic(query);
       primary = routing.primary;
       if (secondaries.length === 0) {
         secondaries = routing.secondaries;

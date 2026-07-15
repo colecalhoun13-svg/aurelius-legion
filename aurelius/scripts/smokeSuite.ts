@@ -19,6 +19,7 @@ import { computeWeeklySnapshot } from "../measurement/scoreboard.ts";
 import { runInitiativePulse } from "../autonomy/initiative.ts";
 import { synthesizeWikiPage } from "../wiki/engine.ts";
 import { getDeck } from "../productivity/service.ts";
+import { routeOperators, routeOperatorsSemantic } from "../router/operatorRouter.ts";
 
 let passed = 0;
 let failed = 0;
@@ -754,6 +755,19 @@ async function main() {
   check("deck names a single biggest-risk line", typeof deck.biggestRisk === "string" && deck.biggestRisk.length > 0);
   check("deck inlines the pending-Bridge queue", Array.isArray(deck.bridge));
   check("deck surfaces the overnight 'while you were away' row", Array.isArray(deck.overnight));
+
+  // ── semantic operator routing (master-class #6) ──
+  // Under mock embeddings (this suite's provider) the semantic router falls back
+  // to keyword routing — a hash isn't semantic. So we assert the async path runs,
+  // routes an unambiguous message correctly, and MATCHES the keyword router
+  // exactly in fallback (no divergence, no throw). Semantic quality itself needs
+  // real embeddings and is exercised in the live app, not the mock suite.
+  const semTrain = await routeOperatorsSemantic("plan my training block for hypertrophy this week");
+  check("semantic router routes an unambiguous training message to training", semTrain.primary === "training");
+  const kwTrain = routeOperators("plan my training block for hypertrophy this week");
+  check("semantic router matches keyword router under mock (clean fallback)", semTrain.primary === kwTrain.primary);
+  const semEmpty = await routeOperatorsSemantic("");
+  check("semantic router handles an empty message without throwing", semEmpty.primary === "strategy");
 
   // ── cleanup (smoke artifacts only) ──
   await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });
