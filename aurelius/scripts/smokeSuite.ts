@@ -853,6 +853,11 @@ async function main() {
       "the strategy canon includes Sun Tzu and Musashi (as specified)",
       strat.canon.some((u) => /sun tzu/i.test(u.title)) && strat.canon.some((u) => /musashi/i.test(u.title))
     );
+    check(
+      "decision science is present (Kahneman) — the council's biggest content gap",
+      strat.canon.some((u) => /kahneman/i.test(u.title)) &&
+        strat.canon.some((u) => /cognitive bias|dual-process|system 1/i.test(u.title))
+    );
     const train = CURRICULUM.find((t) => t.domain === "training")!;
     check(
       "the training canon reaches from the Soviet school to modern coaches",

@@ -89,8 +89,15 @@ export const CURRICULUM: Track[] = [
       "Thinking in Bets — Annie Duke",
       "Superforecasting — Philip Tetlock",
       "Seeking Wisdom / worldly mental models — Peter Bevelin",
+      "Thinking, Fast and Slow — Daniel Kahneman",
+      "The Strategy of Conflict — Thomas Schelling",
+      "Strategy: A History — Lawrence Freedman",
+      "7 Powers — Hamilton Helmer",
+      "The Great Mental Models — Farnam Street / Shane Parrish",
     ],
     [
+      "cognitive biases and dual-process thinking (Kahneman: System 1/2, anchoring, availability)",
+      "credible commitment, deterrence, and focal points",
       "positioning and competitive advantage",
       "leverage and asymmetry",
       "second- and third-order thinking (consequences of consequences)",
@@ -129,6 +136,8 @@ export const CURRICULUM: Track[] = [
       "Base Strength — Alexander Bromley",
       "Zingler Strength — programming and coaching",
       "Pavel Tsatsouline — strength as a skill",
+      "Starting Strength — Mark Rippetoe",
+      "Easy Strength — Dan John & Pavel Tsatsouline",
     ],
     [
       "mechanisms of muscular hypertrophy (mechanical tension, metabolic stress)",
@@ -161,6 +170,8 @@ export const CURRICULUM: Track[] = [
       "The Sports Gene — David Epstein",
       "Peak: Secrets from the New Science of Expertise — Anders Ericsson",
       "Endure — Alex Hutchinson",
+      "The Inner Game of Tennis — Timothy Gallwey",
+      "Lore of Running — Tim Noakes",
     ],
     [
       "energy systems (ATP-PC, glycolytic, oxidative)",
@@ -193,6 +204,8 @@ export const CURRICULUM: Track[] = [
       "The Most Important Thing — Howard Marks",
       "Just Keep Buying — Nick Maggiulli",
       "Margin of Safety — Seth Klarman",
+      "A Man for All Markets — Ed Thorp",
+      "The Almanack of Naval Ravikant — Eric Jorgenson",
     ],
     [
       "compounding and the time value of money",
@@ -225,6 +238,9 @@ export const CURRICULUM: Track[] = [
       "Crossing the Chasm — Geoffrey Moore",
       "The E-Myth Revisited — Michael Gerber",
       "Zero to One — Peter Thiel",
+      "High Output Management — Andy Grove",
+      "Positioning — Al Ries & Jack Trout",
+      "The Goal — Eliyahu Goldratt",
     ],
     [
       "unit economics and contribution margin",
@@ -256,6 +272,9 @@ export const CURRICULUM: Track[] = [
       "The Hero with a Thousand Faces — Joseph Campbell",
       "Contagious: Why Things Catch On — Jonah Berger",
       "The War of Art — Steven Pressfield",
+      "Scientific Advertising — Claude Hopkins",
+      "Rhetoric — Aristotle",
+      "Story — Robert McKee",
     ],
     [
       "attention and the hook (the first three seconds)",
@@ -286,6 +305,9 @@ export const CURRICULUM: Track[] = [
       "Thus Spoke Zarathustra — Friedrich Nietzsche",
       "Can't Hurt Me — David Goggins",
       "Tao Te Ching — Lao Tzu",
+      "The Bhagavad Gita",
+      "Mindset — Carol Dweck",
+      "Man and His Symbols — Carl Jung",
     ],
     [
       "the dichotomy of control (what is and isn't up to us)",
@@ -398,6 +420,7 @@ const MAX_QUEUE = 400;
 async function fillKnowledgeGaps(track: Track, planned: Unit[]): Promise<Unit[]> {
   // What has this field ACTUALLY ingested? (the studied units, most recent first)
   let coveredTitles: string[] = [];
+  let understanding = "";
   try {
     const docs = await prisma.corpusDocument.findMany({
       where: { domain: track.domain },
@@ -406,20 +429,29 @@ async function fillKnowledgeGaps(track: Track, planned: Unit[]): Promise<Unit[]>
       take: 250,
     });
     coveredTitles = docs.map((d) => d.title.replace(/^Curriculum · [^:]+:\s*/, "").trim());
+    // Feed the field's WIKI SYNTHESIS (the current understanding) as the coverage
+    // signal, not just titles — an LLM assessing gaps from a title list over-credits
+    // "covered" and misses conceptual holes INSIDE studied works. The synthesis is a
+    // far sharper read of what's actually understood vs. missing.
+    const page = await prisma.wikiPage.findUnique({ where: { slug: track.domain }, select: { content: true } });
+    understanding = (page?.content ?? "").trim().slice(0, 2000);
   } catch {
-    /* corpus read failed — fall back to the planned list only */
+    /* corpus/wiki read failed — fall back to the planned list only */
   }
   const covered = coveredTitles.slice(0, 160).join("; ") || "(nothing studied yet)";
   const onDeck = planned.map((u) => u.title).slice(-80).join("; ");
 
   const prompt =
     `You are directing self-education to become DEEPLY versed in ${track.label} — its literature AND its actual ` +
-    `subject matter. Here is what has already been STUDIED and ingested:\n${covered}\n\n` +
+    `subject matter.\n\n` +
+    (understanding ? `CURRENT UNDERSTANDING (my synthesis of the field so far):\n${understanding}\n\n` : "") +
+    `Works/topics already STUDIED: ${covered}\n\n` +
     (onDeck ? `Already planned (don't repeat): ${onDeck}\n\n` : "") +
-    `Assess the coverage honestly and identify the most important GAPS: essential works/authors/schools that are ` +
-    `missing (including foundational classics, the Soviet/Eastern-bloc and international traditions where relevant, ` +
-    `and the strongest current thinkers), AND core concepts, mechanisms, or live debates of the field that are ` +
-    `absent or under-covered. Rank by how much each would increase real mastery. ` +
+    `Assess this coverage honestly against what real mastery of ${track.label} requires, and identify the most ` +
+    `important GAPS: essential works/authors/schools that are missing (foundational classics, the Soviet/Eastern-bloc ` +
+    `and international traditions where relevant, and the strongest current thinkers), AND core concepts, mechanisms, ` +
+    `or live debates of the field that are absent or under-covered. Prefer PRIMARY/SEMINAL sources over derivative ` +
+    `repackaging, and return a MIX of works and concepts (not all of one). Rank by how much each raises real mastery. ` +
     `Return the top ${MAX_DISCOVERIES_PER_EXPAND} as ONE per line: "Work, author, or topic — why it's a gap". ` +
     `No preamble, no numbering, nothing else.`;
 
@@ -499,13 +531,32 @@ export async function runCurriculumIngest(opts?: {
       // Next unit = the first in the (seed+queue) list NOT yet studied. Reorder-proof.
       const nextUnit = list.find((u) => !studiedSet.has(norm(u.title)));
       const done = !nextUnit;
-      const studyUnit: Unit = nextUnit ?? {
-        title: `Staying current — ${trk.label} (cycle ${state.cycles + 1})`,
-        query:
-          `What are the most important recent developments, refinements, or debates in ${trk.label} ` +
-          `that a serious practitioner should absorb now? Focus on what has genuinely changed or sharpened, ` +
-          `and connect it to how it should change real decisions. Be specific and actionable.`,
-      };
+      let studyUnit: Unit;
+      if (nextUnit) {
+        studyUnit = nextUnit;
+      } else if (state.studied.length > 0) {
+        // SPACED REVIEW: the whole plan is studied, so round-robin the oldest
+        // studied unit (studied[] is append-order) and re-study it DEEPER. The
+        // spacing effect — re-encounter at intervals — is what makes it durable,
+        // instead of "studied once, ever."
+        const reviewNorm = state.studied[state.cycles % state.studied.length]!;
+        const u = list.find((x) => norm(x.title) === reviewNorm);
+        const reviewOf = u?.title ?? reviewNorm;
+        studyUnit = {
+          title: `Deeper: ${reviewOf}`,
+          query:
+            `Revisit "${reviewOf}" in ${trk.label} at greater depth than a first pass: the edge cases, where the idea ` +
+            `fails or is contested, where authorities disagree and why, and its second-order implications. Connect it to ` +
+            `what's already understood in the field, and sharpen the decision heuristics it yields.`,
+        };
+      } else {
+        studyUnit = {
+          title: `Staying current — ${trk.label}`,
+          query:
+            `What are the most important recent developments, refinements, or debates in ${trk.label} ` +
+            `that a serious practitioner should absorb now? Be specific and connect it to real decisions.`,
+        };
+      }
 
       const res = await runResearch({ query: studyUnit.query, operator: trk.operator, depth: "deep" });
       const body = [res.synthesis, ...(res.insights ?? [])].filter(Boolean).join("\n\n");
