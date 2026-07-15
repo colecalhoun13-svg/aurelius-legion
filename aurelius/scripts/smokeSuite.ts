@@ -888,6 +888,17 @@ async function main() {
       robust.some((u) => /孫子兵法/.test(u.title)) && robust.some((u) => /flow states/i.test(u.title))
     );
 
+    // Distillation: study → decision heuristic. Parser is pure; the full path is
+    // honest-failure safe (keyless → files nothing).
+    const { parseHeuristics, distillAndProposeHeuristic } = await import("../learning/distill.ts");
+    const hs = parseHeuristics("Heuristic: When a plan needs perfect discipline, cut it — because willpower is unreliable.\nrandom noise line\n- If leverage is available, prefer it over effort — because it compounds.");
+    check(
+      "distill parses well-formed heuristics and drops noise",
+      hs.length === 2 && hs.every((h) => /because/i.test(h)) && !hs.some((h) => /random noise/i.test(h))
+    );
+    const filed = await distillAndProposeHeuristic({ operatorName: "strategy", domain: "strategy", unitTitle: `${TAG} test`, synthesisBody: "x".repeat(120) });
+    check("distill files nothing when no LLM engine (honest failure)", filed === 0);
+
     // Cursor → progress round-trip (deterministic; no research/network). The
     // cursor lives under scope="system" so it never enters the vector index.
     const curOp = await resolveOperatorId("global");

@@ -469,6 +469,7 @@ export async function runCurriculumIngest(opts?: {
   const discovered: { domain: string; count: number }[] = [];
   const touched = new Set<string>();
   let count = 0;
+  let proposedHeuristics = 0;
 
   for (const trk of tracks) {
     if (count >= cap) break;
@@ -546,6 +547,22 @@ export async function runCurriculumIngest(opts?: {
       await setState(globalId, trk.domain, done
         ? { ...state, cycles: state.cycles + 1 }
         : { ...state, studied: [...state.studied, norm(studyUnit.title)] });
+
+      // Distill the unit into a decision heuristic and propose it for confirm, so
+      // what was studied can actually STEER this operator's reasoning (Layer 5.4),
+      // not just sit in the corpus. Non-blocking; honest-failure inside.
+      try {
+        const { distillAndProposeHeuristic } = await import("./distill.ts");
+        const n = await distillAndProposeHeuristic({
+          operatorName: trk.operator,
+          domain: trk.domain,
+          unitTitle: studyUnit.title,
+          synthesisBody: body,
+        });
+        if (n > 0) proposedHeuristics += n;
+      } catch (err) {
+        console.warn("[curriculum] distill failed (non-fatal):", (err as any)?.message ?? err);
+      }
     } catch (err: any) {
       // One bad domain (a DB blip on state I/O, a research throw) must not kill the
       // rest of the run.
@@ -579,6 +596,7 @@ export async function runCurriculumIngest(opts?: {
         body:
           studied.map((s) => `• ${labelFor(s.domain)}: ${s.title}`).join("\n") +
           (discovered.length ? `\n\n(+${discovered.reduce((n, d) => n + d.count, 0)} new works/topics added to the plan.)` : "") +
+          (proposedHeuristics > 0 ? `\n\n${proposedHeuristics} principle${proposedHeuristics === 1 ? "" : "s"} proposed for confirm — tap to let them steer my reasoning.` : "") +
           `\n\nAbsorbed into the second brain and each field's wiki — grounding future decisions.`,
       });
     } catch (err) {

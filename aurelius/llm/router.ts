@@ -375,6 +375,26 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     }
   }
 
+  // Layer 5.45: the primary operator's FIELD SYNTHESIS — its best current
+  // understanding of the domain (the wiki page the curriculum keeps rewriting),
+  // injected directly so it's ALWAYS reasoned from, not left to chance whether a
+  // random chunk of it happens to surface in recall. Bounded; never fatal.
+  try {
+    const { prisma } = await import("../core/db/prisma.ts");
+    const page = await prisma.wikiPage.findUnique({
+      where: { slug: operators.primary },
+      select: { title: true, content: true },
+    });
+    if (page?.content && page.content.trim().length > 40) {
+      const top = page.content.trim().slice(0, 1400);
+      parts.push(
+        `\n═══ FIELD SYNTHESIS · ${page.title} (your current understanding of the field) ═══\n${top}\n\nReason from this synthesis where it applies; update it if new evidence contradicts it.`
+      );
+    }
+  } catch (err) {
+    console.warn("[ROUTER] field synthesis layer failed (non-fatal):", err);
+  }
+
   // Layer 5.5 (Phase 4.6): Semantic recall — retrieval-augmented context.
   // Embeds the user's message and surfaces the closest knowledge, memories,
   // and prior reasoning. No-op when embeddings are disabled; never fatal.
