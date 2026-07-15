@@ -515,9 +515,23 @@ export async function runCurriculumIngest(opts?: {
         continue;
       }
 
+      // Provenance: attach the sources this synthesis drew on (traceable back to
+      // PubMed/Semantic Scholar/OpenAlex/arXiv), and flag when it's the model's own
+      // knowledge (the humanities canon) rather than external evidence.
+      const sources = (res.rawResults ?? [])
+        .filter((r) => r.source !== "llm" && r.url)
+        .slice(0, 8)
+        .map((r) => `- ${r.title} (${r.source}) — ${r.url}`);
+      const groundingNote =
+        res.grounding === "external"
+          ? ""
+          : `\n\n_Grounding: synthesized from Aurelius's own knowledge (no external source retrieved for this topic)._`;
+      const sourcesSection = sources.length ? `\n\n## Sources\n${sources.join("\n")}` : "";
+      const content = `# ${studyUnit.title}\n\n${body}${groundingNote}${sourcesSection}`;
+
       await ingestDocument({
         title: `Curriculum · ${trk.label}: ${studyUnit.title}`,
-        content: `# ${studyUnit.title}\n\n${body}`,
+        content,
         sourceType: "research",
         domain: trk.domain,
         operatorName: trk.operator,

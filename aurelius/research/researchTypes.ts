@@ -44,4 +44,5 @@ export type ResearchOutput = {
   rawResults: ResearchResult[];  // unfused inputs (for audit)
   savedMemoryIds: string[];      // memories created by this research run
   proposalsCreated: number;      // Phase 4.5 — knowledge proposals emitted by synthesis
+  grounding: "external" | "model-only"; // did any non-LLM source back this?
 };
