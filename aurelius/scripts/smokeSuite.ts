@@ -20,6 +20,8 @@ import { runInitiativePulse } from "../autonomy/initiative.ts";
 import { synthesizeWikiPage } from "../wiki/engine.ts";
 import { getDeck } from "../productivity/service.ts";
 import { routeOperators, routeOperatorsSemantic } from "../router/operatorRouter.ts";
+import { withTrace, currentTraceId } from "../core/traceContext.ts";
+import { getTraceThread } from "../observability/traceThreads.ts";
 
 let passed = 0;
 let failed = 0;
@@ -768,6 +770,45 @@ async function main() {
   check("semantic router matches keyword router under mock (clean fallback)", semTrain.primary === kwTrain.primary);
   const semEmpty = await routeOperatorsSemantic("");
   check("semantic router handles an empty message without throwing", semEmpty.primary === "strategy");
+
+  // ── single trace-thread view (master-class #7) ──
+  // (a) AsyncLocalStorage threads ONE id through nested traced scopes — the
+  // property that lets routeLLM/tools/executeAction all file under one turn
+  // without any signature change. Pure in-memory, no DB read race.
+  let innerId: string | null = null;
+  const outerId = await withTrace("smoke:thread", async () => {
+    const id = currentTraceId();
+    await withTrace("smoke:nested", async () => { innerId = currentTraceId(); });
+    return id;
+  });
+  check("trace context threads one id through nested traced scopes", !!outerId && innerId === outerId);
+  check("no trace id leaks outside the scope", currentTraceId() === null);
+
+  // (b) The reader reassembles rows sharing a traceId into one ordered thread.
+  // Deterministic via direct inserts (the live trace writes are fire-and-forget).
+  const traceOpId = await resolveOperatorId("global");
+  if (traceOpId) {
+    const tid = `smoketrace_${TAG}`;
+    await prisma.logEntry.createMany({
+      data: [
+        { operatorId: traceOpId, type: "trace", level: "info", message: "request:/api/aurelius", context: { traceId: tid, kind: "request", name: "/api/aurelius", method: "POST", statusCode: 200, durationMs: 1200 } as any },
+        { operatorId: traceOpId, type: "llm_call", level: "info", message: "openai/gpt", context: { traceId: tid, taskType: "chat", tokensUsed: 500, latencyMs: 800 } as any },
+        { operatorId: traceOpId, type: "trace", level: "info", message: "tool:calendar.sync", context: { traceId: tid, kind: "tool", name: "calendar.sync", status: "ok", durationMs: 40 } as any },
+      ],
+    });
+    const thread = await getTraceThread(tid);
+    check(
+      "trace-thread reader assembles rows sharing a traceId into one thread",
+      !!thread && thread.count === 3 && thread.label === "/api/aurelius" && thread.kinds.includes("llm") && thread.kinds.includes("tool") && thread.kinds.includes("request")
+    );
+    check(
+      "trace-thread carries per-step detail (llm tokens, request status)",
+      !!thread && thread.steps.some((s) => s.kind === "llm" && s.detail.tokensUsed === 500)
+    );
+    await prisma.logEntry.deleteMany({ where: { context: { path: ["traceId"], equals: tid } } });
+  } else {
+    check("trace-thread reader (skipped — no global operator)", true);
+  }
 
   // ── cleanup (smoke artifacts only) ──
   await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });

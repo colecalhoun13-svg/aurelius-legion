@@ -8,6 +8,7 @@
 // break the thing it observes.
 
 import { prisma } from "./db/prisma.ts";
+import { currentTraceId, withTrace } from "./traceContext.ts";
 
 let _opId: string | null | undefined;
 
@@ -29,13 +30,30 @@ async function traceOperatorId(): Promise<string | null> {
 async function persist(level: "info" | "error", message: string, context: Record<string, any>): Promise<void> {
   const operatorId = await traceOperatorId();
   if (!operatorId) return;
+  // Stamp the ambient trace id so this row joins the thread it belongs to
+  // (master-class #7). Capture it here, at the persist call site, so the id is
+  // whatever was active when the event fired — not when the async write lands.
+  const traceId = currentTraceId();
   await prisma.logEntry.create({
-    data: { operatorId, type: "trace", level, message, context },
+    data: { operatorId, type: "trace", level, message, context: traceId ? { ...context, traceId } : context },
   });
 }
 
 function write(level: "info" | "error", message: string, context: Record<string, any>) {
-  persist(level, message, context).catch(() => {}); // telemetry never throws into the traced path
+  // Read the trace id synchronously (before the async persist detaches) and pass
+  // it through, so a fire-and-forget write still files under the right thread.
+  const traceId = currentTraceId();
+  persist(level, message, traceId ? { ...context, traceId } : context).catch(() => {}); // telemetry never throws into the traced path
+}
+
+/**
+ * One-shot trace row for a discrete event inside a thread — a tool call, an LLM
+ * dispatch — that isn't wrapped in runTraced's fn/duration frame. Fire-and-forget;
+ * inherits the ambient trace id like every other write.
+ */
+export function traceEvent(kind: string, name: string, context: Record<string, any> = {}) {
+  const level = context.status === "error" ? "error" : "info";
+  write(level, `${kind}:${name}`, { kind, name, ...context });
 }
 
 /**
@@ -83,28 +101,34 @@ export async function runTraced<T>(
   fn: () => Promise<T>,
   meta: Record<string, any> = {}
 ): Promise<T> {
-  const started = Date.now();
-  // Scheduled/catch-up runs claim visibility up front so a boot catch-up sweep
-  // can't double-fire a job the live scheduler is mid-flight on. (Requests skip
-  // this — they don't race a catch-up and don't need the extra row.)
-  if (kind === "schedule" || kind === "catchup") {
-    await markStarted(kind, name);
-  }
-  try {
-    const result = await fn();
-    write("info", `${kind}:${name}`, { kind, name, durationMs: Date.now() - started, status: "ok", ...meta });
-    return result;
-  } catch (err: any) {
-    write("error", `${kind}:${name}`, {
-      kind,
-      name,
-      durationMs: Date.now() - started,
-      status: "error",
-      error: (err?.message ?? String(err)).slice(0, 500),
-      ...meta,
-    });
-    throw err;
-  }
+  // Open a trace thread (or join the caller's, if this runTraced is nested inside
+  // one — e.g. an executeAction fired from within a chat request). Everything the
+  // wrapped fn touches — LLM calls, tool runs, nested actions — files under the
+  // same id (master-class #7).
+  return withTrace(`${kind}:${name}`, async () => {
+    const started = Date.now();
+    // Scheduled/catch-up runs claim visibility up front so a boot catch-up sweep
+    // can't double-fire a job the live scheduler is mid-flight on. (Requests skip
+    // this — they don't race a catch-up and don't need the extra row.)
+    if (kind === "schedule" || kind === "catchup") {
+      await markStarted(kind, name);
+    }
+    try {
+      const result = await fn();
+      write("info", `${kind}:${name}`, { kind, name, durationMs: Date.now() - started, status: "ok", ...meta });
+      return result;
+    } catch (err: any) {
+      write("error", `${kind}:${name}`, {
+        kind,
+        name,
+        durationMs: Date.now() - started,
+        status: "error",
+        error: (err?.message ?? String(err)).slice(0, 500),
+        ...meta,
+      });
+      throw err;
+    }
+  });
 }
 
 /**
@@ -115,18 +139,27 @@ export async function runTraced<T>(
 export function requestTracer(scope: string) {
   return (req: any, res: any, next: any) => {
     const started = Date.now();
-    res.on("finish", () => {
-      const durationMs = Date.now() - started;
-      const boring = req.method === "GET" && res.statusCode < 400 && durationMs < 500;
-      if (boring) return;
-      write(res.statusCode >= 500 ? "error" : "info", `request:${scope}${req.path}`, {
-        kind: "request",
-        name: `${scope}${req.path}`,
-        method: req.method,
-        statusCode: res.statusCode,
-        durationMs,
+    // Open ONE trace thread for the whole request and run the downstream handler
+    // chain inside it, so operator routing, the LLM call, every tool, and any
+    // executeAction gate this request triggers all share the request's id
+    // (master-class #7). The finish handler fires outside the ALS scope, so we
+    // capture the id here and pass it explicitly on the summary row.
+    withTrace(`request:${scope}${req.path}`, () => {
+      const traceId = currentTraceId();
+      res.on("finish", () => {
+        const durationMs = Date.now() - started;
+        const boring = req.method === "GET" && res.statusCode < 400 && durationMs < 500;
+        if (boring) return;
+        persist(res.statusCode >= 500 ? "error" : "info", `request:${scope}${req.path}`, {
+          kind: "request",
+          name: `${scope}${req.path}`,
+          method: req.method,
+          statusCode: res.statusCode,
+          durationMs,
+          ...(traceId ? { traceId } : {}),
+        }).catch(() => {});
       });
+      next();
     });
-    next();
   };
 }

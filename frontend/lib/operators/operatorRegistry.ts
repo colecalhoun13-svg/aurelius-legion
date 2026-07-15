@@ -75,6 +75,11 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     path: "/engines",
     description: "Model engines, routing, and intelligence modules",
   },
+  traces: {
+    name: "Traces",
+    path: "/traces",
+    description: "One turn, end to end — every step of a decision in one thread",
+  },
   settings: {
     name: "Settings",
     path: "/settings",

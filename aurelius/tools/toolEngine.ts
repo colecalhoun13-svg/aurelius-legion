@@ -11,6 +11,7 @@
 import type { ToolCall, ToolResult } from "./types.ts";
 import { getTool } from "./toolRegistry.ts";
 import { saveMemory } from "../memory/memoryService.ts";
+import { traceEvent } from "../core/trace.ts";
 
 // ═══════════════════════════════════════════════════════════════════
 // CONFIG
@@ -90,6 +91,14 @@ export async function executeToolCall(call: ToolCall): Promise<ToolResult> {
     retries: attempt - 1,
     durationMs: Date.now() - startTime,
   };
+
+  // Thread this tool call into the request's trace (master-class #7).
+  traceEvent("tool", `${call.tool}.${call.action}`, {
+    status: result.ok ? "ok" : "error",
+    durationMs: result.durationMs,
+    retries: result.retries ?? 0,
+    ...(result.ok ? {} : { error: (result.error ?? "").slice(0, 300) }),
+  });
 
   await persistToolMemory(call, result);
   return result;

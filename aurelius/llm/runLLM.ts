@@ -5,11 +5,15 @@
  */
 import { routeLLM } from "./router.ts";
 import type { LLMTask, LLMResponse, LLMOptions, OperatorContext } from "./router.ts";
+import { currentTraceId } from "../core/traceContext.ts";
 
 export type RunLLMInput = LLMTask;
 
 export async function runLLM(params: RunLLMInput): Promise<LLMResponse> {
   const start = Date.now();
+  // Capture the ambient trace id up front (the fire-and-forget log write below
+  // runs in a detached async scope) so this LLM call joins its request's thread.
+  const traceId = currentTraceId();
 
   // Compiled understanding, read side: a near-duplicate of a recent
   // question serves from cache instead of a model. Explicit engine
@@ -60,7 +64,10 @@ export async function runLLM(params: RunLLMInput): Promise<LLMResponse> {
           taskType: params.taskType,
           tokensUsed: response.tokensUsed ?? 0,
           latencyMs: latency,
+          engine: response.engine,
+          model: response.model,
           ...(response.failedOverFrom ? { failedOverFrom: response.failedOverFrom } : {}),
+          ...(traceId ? { traceId } : {}),
         },
       });
     }
