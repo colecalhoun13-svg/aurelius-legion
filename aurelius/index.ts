@@ -1285,6 +1285,17 @@ scheduleNamed("weekly_scoreboard", "0 20 * * 0", "weekly scoreboard", () => {
     console.error("[scoreboard] failed:", err)
   );
 });
+// Curriculum ingest — Sunday 22:00: Aurelius studies the next unit of each
+// field's canon (strategy → Sun Tzu, Musashi, …; wealth → Buffett, Taleb, …;
+// identity → the Stoics), ingests the synthesis into the second brain, and
+// refreshes each touched field's wiki. Auto-learning the literature so every
+// operator reasons from the best thinking in its domain, not the model default.
+scheduleNamed("curriculum_ingest", "0 22 * * 0", "curriculum ingest", () => {
+  runTraced("schedule", "curriculum_ingest", async () => {
+    const { runCurriculumIngest } = await import("./learning/curriculum.ts");
+    return runCurriculumIngest();
+  }).catch((err) => console.error("[curriculum] failed:", err));
+});
 // Initiative — 08:00 daily, after the briefing: Aurelius scans its own
 // state and proposes missions. Proposed only; Cole launches.
 //

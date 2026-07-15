@@ -834,6 +834,44 @@ async function main() {
     check("trace-thread reader (skipped — no global operator)", true);
   }
 
+  // ── curriculum: auto-learning the canon of every field ──
+  console.log("── curriculum: the auto-learning canon ──");
+  {
+    const { CURRICULUM, getCurriculumProgress } = await import("../learning/curriculum.ts");
+    const domains = new Set(CURRICULUM.map((t) => t.domain));
+    check(
+      "curriculum covers all seven operator fields",
+      CURRICULUM.length === 7 &&
+        ["strategy", "training", "athlete", "wealth", "business", "content", "identity"].every((d) => domains.has(d))
+    );
+    check(
+      "every track has a non-empty canon of well-formed study units",
+      CURRICULUM.every((t) => t.canon.length >= 5 && t.canon.every((u) => !!u.title && u.query.length > 40))
+    );
+    const strat = CURRICULUM.find((t) => t.domain === "strategy")!;
+    check(
+      "the strategy canon includes Sun Tzu and Musashi (as specified)",
+      strat.canon.some((u) => /sun tzu/i.test(u.title)) && strat.canon.some((u) => /musashi/i.test(u.title))
+    );
+
+    // Cursor → progress round-trip (deterministic; no research/network). The
+    // cursor lives under scope="system" so it never enters the vector index.
+    const curOp = await resolveOperatorId("global");
+    if (curOp) {
+      await prisma.knowledgeEntry.upsert({
+        where: { operatorId_scope_key: { operatorId: curOp, scope: "system", key: "curriculum:strategy" } },
+        update: { value: { index: 2, cycles: 0 } as any },
+        create: { operatorId: curOp, scope: "system", key: "curriculum:strategy", value: { index: 2, cycles: 0 } as any, sourceType: "curriculum_cursor", createdBy: "system" },
+      });
+      const prog = await getCurriculumProgress();
+      const sp = prog.find((p) => p.domain === "strategy");
+      check("curriculum progress reflects the read cursor", !!sp && sp.read === 2 && sp.total >= 5);
+      await prisma.knowledgeEntry.deleteMany({ where: { operatorId: curOp, scope: "system", key: "curriculum:strategy" } });
+    } else {
+      check("curriculum progress (skipped — no global operator)", true);
+    }
+  }
+
   // ── cleanup (smoke artifacts only) ──
   await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });
   await prisma.corpusDocument.delete({ where: { id: doc.id } });
