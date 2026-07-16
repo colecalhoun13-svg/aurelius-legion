@@ -20,7 +20,7 @@ import { runLLM } from "../llm/runLLM.ts";
 import { routeOperatorsSemantic } from "../router/operatorRouter.ts";
 import { engineUnavailableText } from "../llm/nonAnswer.ts";
 
-export type Seat = { operator: string; take: string };
+export type Seat = { operator: string; take: string; rebuttal?: string };
 export type DeliberationResult = {
   ok: boolean;
   decision: string;
@@ -28,6 +28,11 @@ export type DeliberationResult = {
   synthesis: string;
   error?: string;
 };
+
+/** A seat's FINAL position — post-rebuttal when it survived, opening take otherwise. */
+function finalPosition(s: Seat): string {
+  return s.rebuttal ?? s.take;
+}
 
 const DEFAULT_MAX_SEATS = 3;
 
@@ -85,14 +90,46 @@ export async function deliberate(
     return { ok: false, decision: clean, seats: [], synthesis: "", error: "the council could not convene (no LLM engine?)" };
   }
 
+  // ── Rebuttal round ── each seat sees the others' openings and gets ONE shot:
+  // concede what's right, attack what's wrong, state a final position. This is
+  // what makes it a dialectic instead of parallel monologues — synthesis then
+  // resolves positions that already survived contact, not first impressions.
+  // A failed rebuttal is non-fatal: the seat's opening take stands as its final.
+  if (seats.length >= 2) {
+    for (const seat of seats) {
+      const others = seats
+        .filter((s) => s.operator !== seat.operator)
+        .map((s) => `${s.operator.toUpperCase()}:\n${s.take}`)
+        .join("\n\n");
+      const rebuttalPrompt =
+        `Cole's decision: "${clean}"\n\n` +
+        `You argued, through the ${seat.operator} lens:\n"${seat.take}"\n\n` +
+        `The other lenses argued:\n${others}\n\n` +
+        `One round of rebuttal, 2–4 sentences: CONCEDE the strongest point against your position if it's right, ` +
+        `ATTACK what's wrong in the others' reasoning as it applies to THIS decision, and state your FINAL ` +
+        `recommendation (hold or update — updating under a better argument is strength, not weakness). ` +
+        `No diplomacy, no restating your opening.`;
+      try {
+        const r = await runLLM({ taskType: "council_rebuttal", operators: { primary: seat.operator, secondaries: [] }, input: rebuttalPrompt });
+        const reb = (r?.text ?? "").trim();
+        if (reb && !engineUnavailableText(reb)) seat.rebuttal = reb;
+      } catch (err) {
+        console.warn(`[council] rebuttal ${seat.operator} failed (opening take stands):`, (err as any)?.message ?? err);
+      }
+    }
+  }
+
   // Resolve in one voice — name agreement, name the real tension, decide.
-  const seatsBlock = seats.map((s) => `${s.operator.toUpperCase()}:\n${s.take}`).join("\n\n");
+  const seatsBlock = seats
+    .map((s) => `${s.operator.toUpperCase()} (opening):\n${s.take}` + (s.rebuttal ? `\n${s.operator.toUpperCase()} (final, after rebuttal):\n${s.rebuttal}` : ""))
+    .join("\n\n");
   const synthPrompt =
-    `${seats.length} lenses independently weighed Cole's decision:\n"${clean}"\n\n${seatsBlock}\n\n` +
+    `${seats.length} lenses weighed Cole's decision, then cross-examined each other:\n"${clean}"\n\n${seatsBlock}\n\n` +
     `Now speak in ONE voice (yours, Aurelius). Do NOT restate each lens in turn. Instead:\n` +
-    `1. Where do the lenses AGREE? (the settled ground)\n` +
-    `2. Where is the real TENSION between them for THIS decision? Name it sharply — don't smooth it into mush.\n` +
+    `1. Where do the lenses AGREE — including ground ceded in rebuttal? (the settled ground)\n` +
+    `2. Where is the real TENSION that SURVIVED the rebuttal for THIS decision? Name it sharply — don't smooth it into mush.\n` +
     `3. Given the tradeoffs, what's the call? Decide, concretely, and say what would change your mind.\n` +
+    `Weight FINAL positions over openings — a lens that updated under a better argument earned that update.\n` +
     `Be direct and useful to Cole. The disagreement is the point — surface it, then resolve it.`;
 
   let synthesis = "";
@@ -112,6 +149,11 @@ export async function deliberate(
 /** Format a deliberation into a chat reply that shows the minds arguing, then the call. */
 export function formatDeliberation(result: DeliberationResult): string {
   if (!result.ok) return result.error ? `The council couldn't sit: ${result.error}` : "The council couldn't sit.";
-  const seatLines = result.seats.map((s) => `**${s.operator[0].toUpperCase()}${s.operator.slice(1)}**\n${s.take}`).join("\n\n");
+  const seatLines = result.seats
+    .map((s) => {
+      const name = `${s.operator[0].toUpperCase()}${s.operator.slice(1)}`;
+      return `**${name}**\n${s.take}` + (s.rebuttal ? `\n\n↩ *${name}, after hearing the others:*\n${s.rebuttal}` : "");
+    })
+    .join("\n\n");
   return `🏛️ **The council on:** ${result.decision}\n\n${seatLines}\n\n— — —\n\n${result.synthesis}`;
 }
