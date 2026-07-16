@@ -1030,6 +1030,29 @@ async function main() {
         "correcting a decision decays the patterns that informed it",
         nDecayed >= 1 && Math.abs((afterDecay?.confidenceScore ?? 0) - (0.5 - DECAY_STEP)) < 1e-6
       );
+      // Consumed: a second correction can't double-decay the same fired event.
+      const nDouble = await decayRecentlyFired({ reason: `smoke ${TAG} again` });
+      const afterDouble = await prisma.compiledPattern.findUnique({ where: { id: pWrong.id } });
+      check(
+        "a fired event is consumed — double-correction never double-decays",
+        nDouble === 0 && Math.abs((afterDouble?.confidenceScore ?? 0) - (0.5 - DECAY_STEP)) < 1e-6
+      );
+      // Facts are exempt: judgment corrections never erase auto-compiled facts.
+      const { decayPatterns } = await import("../compiled/outcomeLoop.ts");
+      const pFact = await prisma.compiledPattern.create({
+        data: { operatorId: semOp, domain: "strategy", entityKey: null, patternType: "factual",
+          patternSignature: { recurringReasoningTheme: `${TAG} fact: squat PR is 405` } as any,
+          status: "auto_factual", evidence: ["smoke"], supportCount: 2, confidenceScore: 0.8 },
+      });
+      const nFact = await decayPatterns({ patternIds: [pFact.id], reason: `smoke ${TAG}` });
+      const factAfter = await prisma.compiledPattern.findUnique({ where: { id: pFact.id } });
+      check("auto_factual patterns are exempt from judgment decay", nFact === 0 && factAfter?.confidenceScore === 0.8);
+      // Reward never lowers: at/above the cap, reinforcement is a no-op.
+      const { adjustPatternConfidence } = await import("../compiled/outcomeLoop.ts");
+      await prisma.compiledPattern.update({ where: { id: pFact.id }, data: { confidenceScore: 0.97 } });
+      const clamped = await adjustPatternConfidence(pFact.id, REINFORCE_STEP, "smoke clamp");
+      check("reinforcement above the cap is a no-op, never a writedown", clamped === 0.97);
+      await prisma.compiledPattern.delete({ where: { id: pFact.id } });
 
       // A later decision fires pRight; no correction → weekly grading reinforces it, not pWrong.
       await recordPatternsFired([pRight.id], `${TAG} decision two`);

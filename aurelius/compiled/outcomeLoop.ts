@@ -68,8 +68,16 @@ export async function recordPatternsFired(patternIds: string[], decision: string
 export async function adjustPatternConfidence(patternId: string, delta: number, note: string): Promise<number | null> {
   const p = await prisma.compiledPattern.findUnique({ where: { id: patternId } });
   if (!p) return null;
-  const next = Math.min(delta > 0 ? REINFORCE_CAP : 1, Math.max(CONFIDENCE_MIN, (p.confidenceScore ?? 0) + delta));
-  if (next === p.confidenceScore) return next;
+  const cur = p.confidenceScore ?? 0;
+  // A reward must never lower trust: above the cap, reinforcement is a no-op
+  // (the old min() clamp wrote a 1.0 pattern DOWN to 0.9 — reward as punishment).
+  const next =
+    delta > 0
+      ? cur >= REINFORCE_CAP
+        ? cur
+        : Math.min(REINFORCE_CAP, cur + delta)
+      : Math.max(CONFIDENCE_MIN, cur + delta);
+  if (next === cur) return next;
   await prisma.compiledPattern.update({
     where: { id: patternId },
     data: { confidenceScore: next, evidence: { push: `outcome: ${note}` } },
@@ -78,22 +86,22 @@ export async function adjustPatternConfidence(patternId: string, delta: number, 
 }
 
 /**
- * Cole corrected a recent decision → decay the patterns that informed it.
- * Grades the MOST RECENT fired-set within the window (the decision he means),
- * not everything that fired lately. Emits a decayed marker so reinforcement
- * never rewards a rule in the same breath it was punished.
+ * Decay EXACTLY the named patterns (the correction front door passes the rules
+ * Cole was looking at — no address inference). Facts are exempt: a correction
+ * about judgment must never erase an auto-compiled FACT that merely sat in the
+ * prompt; discarded patterns are already dead. Emits a decayed marker so
+ * grading never rewards a rule in the same breath it was punished.
  */
-export async function decayRecentlyFired(args: { reason: string; withinHours?: number }): Promise<number> {
-  const withinHours = args.withinHours ?? 48;
-  const fired = await prisma.logEntry.findFirst({
-    where: { type: "trace", message: FIRED_MSG, createdAt: { gte: new Date(Date.now() - withinHours * 3600_000) } },
-    orderBy: { createdAt: "desc" },
-  });
-  const ids: string[] = ((fired?.context as any)?.patternIds ?? []).filter((v: any) => typeof v === "string");
+export async function decayPatterns(args: { patternIds: string[]; reason: string }): Promise<number> {
+  const ids = [...new Set(args.patternIds)].filter((v) => typeof v === "string" && v.length > 0);
   if (ids.length === 0) return 0;
+  const eligible = await prisma.compiledPattern.findMany({
+    where: { id: { in: ids }, status: { notIn: ["auto_factual", "discarded"] } },
+    select: { id: true },
+  });
 
   let decayed = 0;
-  for (const id of ids) {
+  for (const { id } of eligible) {
     const next = await adjustPatternConfidence(id, -DECAY_STEP, `decayed — Cole corrected a decision this informed (${args.reason.slice(0, 120)})`);
     if (next !== null) decayed++;
   }
@@ -102,11 +110,43 @@ export async function decayRecentlyFired(args: { reason: string; withinHours?: n
     await prisma.logEntry.create({
       data: {
         operatorId, type: "trace", level: "info", message: DECAYED_MSG,
-        context: { kind: "decision", name: "patterns_decayed", patternIds: ids, reason: args.reason.slice(0, 200) } as any,
+        context: { kind: "decision", name: "patterns_decayed", patternIds: eligible.map((e) => e.id), reason: args.reason.slice(0, 200) } as any,
       },
     });
   }
   return decayed;
+}
+
+/**
+ * Fallback when a correction arrives WITHOUT naming rules (no front-door
+ * context): grade the most recent UNCONSUMED fired-set within the window, then
+ * consume it — a second correction can never double-decay the same event.
+ */
+export async function decayRecentlyFired(args: { reason: string; withinHours?: number }): Promise<number> {
+  const withinHours = args.withinHours ?? 48;
+  // Consumed-filter in code: a JSON-path NOT-equals in SQL silently drops rows
+  // where the key is absent (NULL three-valued logic), which is every fresh row.
+  const recent = await prisma.logEntry.findMany({
+    where: {
+      type: "trace",
+      message: FIRED_MSG,
+      createdAt: { gte: new Date(Date.now() - withinHours * 3600_000) },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+  });
+  const fired = recent.find((r) => (r.context as any)?.consumed !== true);
+  if (!fired) return 0;
+  const ids: string[] = ((fired.context as any)?.patternIds ?? []).filter((v: any) => typeof v === "string");
+  if (ids.length === 0) return 0;
+
+  // Consume BEFORE decaying — even if a decay write fails midway, the event
+  // can't be re-graded (idempotency beats completeness for punishment).
+  await prisma.logEntry.update({
+    where: { id: fired.id },
+    data: { context: { ...(fired.context as any), consumed: true } as any },
+  });
+  return decayPatterns({ patternIds: ids, reason: args.reason });
 }
 
 /**
