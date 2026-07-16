@@ -189,6 +189,26 @@ async function main() {
     check("voice transcription configured", true);
   }
 
+  console.log("── vision (provider failover; keyless: fails honestly) ──");
+  {
+    const { analyzeImage, analyzeVideo, visionConfigured } = await import("../media/vision.ts");
+    const saved = {
+      g: process.env.GEMINI_API_KEY, o: process.env.OPENAI_API_KEY, a: process.env.ANTHROPIC_API_KEY,
+    };
+    try {
+      delete process.env.GEMINI_API_KEY; delete process.env.OPENAI_API_KEY; delete process.env.ANTHROPIC_API_KEY;
+      check("visionConfigured is false with no provider keys", visionConfigured() === false);
+      const imgErr = await analyzeImage(Buffer.from("x"), "image/png").catch((e) => e.message);
+      check("image analysis keyless names ALL the keys that would fix it", /GEMINI_API_KEY.*OPENAI_API_KEY.*ANTHROPIC_API_KEY/.test(imgErr));
+      const vidErr = await analyzeVideo(Buffer.from("x"), "video/mp4").catch((e) => e.message);
+      check("video analysis is honest that only Gemini takes inline video", /GEMINI_API_KEY/.test(vidErr) && /video/i.test(vidErr));
+    } finally {
+      if (saved.g !== undefined) process.env.GEMINI_API_KEY = saved.g;
+      if (saved.o !== undefined) process.env.OPENAI_API_KEY = saved.o;
+      if (saved.a !== undefined) process.env.ANTHROPIC_API_KEY = saved.a;
+    }
+  }
+
   console.log("── the learning loops: semantic reuse + persona observation ──");
   const { recordAnswer, tryReuseAnswer } = await import("../compiled/semanticReuse.ts");
   const strategyId = (await resolveOperatorId("strategy"))!;
