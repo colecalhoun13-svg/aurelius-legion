@@ -105,10 +105,18 @@ async function main() {
   if (!(await isCalendarConnected())) {
     const calRead = await googleCalendarAdapter.run("read_events", {});
     check("calendar tool fails honestly when unauthed", !calRead.ok && /calendar\/auth/.test(calRead.error ?? ""));
+    const calDel = await googleCalendarAdapter.run("delete_event", { eventId: "x" });
+    check("calendar delete_event is registered and fails honestly unauthed", !calDel.ok && /calendar\/auth/.test(calDel.error ?? ""));
   } else {
     const calRead = await googleCalendarAdapter.run("read_events", {});
     check("calendar tool reads when connected", calRead.ok);
+    const calDel = await googleCalendarAdapter.run("delete_event", {});
+    check("calendar delete_event requires an eventId (never guesses)", !calDel.ok && /read_events/.test(calDel.error ?? ""));
   }
+  check(
+    "delete_event tool declares the read-then-delete contract",
+    googleCalendarAdapter.actions.some((a) => a.name === "delete_event" && /read_events/.test(a.description))
+  );
   const calDay = new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
   await prisma.calendarEvent.createMany({
     data: [
@@ -187,6 +195,26 @@ async function main() {
     check("voice transcription fails honestly without Groq key", /GROQ_API_KEY/.test(voiceErr));
   } else {
     check("voice transcription configured", true);
+  }
+
+  console.log("── vision (provider failover; keyless: fails honestly) ──");
+  {
+    const { analyzeImage, analyzeVideo, visionConfigured } = await import("../media/vision.ts");
+    const saved = {
+      g: process.env.GEMINI_API_KEY, o: process.env.OPENAI_API_KEY, a: process.env.ANTHROPIC_API_KEY,
+    };
+    try {
+      delete process.env.GEMINI_API_KEY; delete process.env.OPENAI_API_KEY; delete process.env.ANTHROPIC_API_KEY;
+      check("visionConfigured is false with no provider keys", visionConfigured() === false);
+      const imgErr = await analyzeImage(Buffer.from("x"), "image/png").catch((e) => e.message);
+      check("image analysis keyless names ALL the keys that would fix it", /GEMINI_API_KEY.*OPENAI_API_KEY.*ANTHROPIC_API_KEY/.test(imgErr));
+      const vidErr = await analyzeVideo(Buffer.from("x"), "video/mp4").catch((e) => e.message);
+      check("video analysis is honest that only Gemini takes inline video", /GEMINI_API_KEY/.test(vidErr) && /video/i.test(vidErr));
+    } finally {
+      if (saved.g !== undefined) process.env.GEMINI_API_KEY = saved.g;
+      if (saved.o !== undefined) process.env.OPENAI_API_KEY = saved.o;
+      if (saved.a !== undefined) process.env.ANTHROPIC_API_KEY = saved.a;
+    }
   }
 
   console.log("── the learning loops: semantic reuse + persona observation ──");

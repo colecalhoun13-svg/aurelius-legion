@@ -25,7 +25,9 @@ export async function analyzeMedia(
 ): Promise<{ kind: MediaKind; analysis: string }> {
   const kind = mediaKind(mimeType);
   if (!kind) throw new Error(`unsupported media type: ${mimeType}`);
-  if (!visionConfigured()) throw new Error("Missing GEMINI_API_KEY — set it to send Aurelius photos/video");
+  if (!visionConfigured()) {
+    throw new Error("No vision provider configured — set GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY to send Aurelius photos/video");
+  }
   const analysis =
     kind === "image"
       ? await analyzeImage(buffer, mimeType, caption)
