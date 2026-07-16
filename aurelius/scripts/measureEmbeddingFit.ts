@@ -13,6 +13,9 @@
 // Honest-failure: mock/absent provider → refuses with the exact fix. Read-only:
 // embeds in memory, writes nothing to the DB or the vector index.
 
+import dotenv from "dotenv";
+dotenv.config({ path: "./.env" }); // standalone script — load env like the app does
+
 import { prisma } from "../core/db/prisma.ts";
 import { getEmbeddingAdapter } from "../retrieval/embeddingAdapter.ts";
 import { extractWhenClause, isColeDerived, COLE_BONUS } from "../compiled/patternIndex.ts";
