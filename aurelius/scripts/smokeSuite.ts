@@ -105,10 +105,18 @@ async function main() {
   if (!(await isCalendarConnected())) {
     const calRead = await googleCalendarAdapter.run("read_events", {});
     check("calendar tool fails honestly when unauthed", !calRead.ok && /calendar\/auth/.test(calRead.error ?? ""));
+    const calDel = await googleCalendarAdapter.run("delete_event", { eventId: "x" });
+    check("calendar delete_event is registered and fails honestly unauthed", !calDel.ok && /calendar\/auth/.test(calDel.error ?? ""));
   } else {
     const calRead = await googleCalendarAdapter.run("read_events", {});
     check("calendar tool reads when connected", calRead.ok);
+    const calDel = await googleCalendarAdapter.run("delete_event", {});
+    check("calendar delete_event requires an eventId (never guesses)", !calDel.ok && /read_events/.test(calDel.error ?? ""));
   }
+  check(
+    "delete_event tool declares the read-then-delete contract",
+    googleCalendarAdapter.actions.some((a) => a.name === "delete_event" && /read_events/.test(a.description))
+  );
   const calDay = new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
   await prisma.calendarEvent.createMany({
     data: [

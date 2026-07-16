@@ -8,10 +8,12 @@
 // connect instruction until the one-time OAuth is done.
 
 import type { ToolAdapter, ToolAdapterResult } from "../types.ts";
+import { prisma } from "../../core/db/prisma.ts";
 import { isCalendarConnected } from "../../calendar/googleAuth.ts";
 import {
   syncCalendar,
   createCalendarEvent,
+  deleteCalendarEvent,
   listEventsRange,
   findAvailability,
 } from "../../calendar/engine.ts";
@@ -21,7 +23,7 @@ const NOT_CONNECTED = "Google Calendar not connected — open /api/calendar/auth
 export const googleCalendarAdapter: ToolAdapter = {
   name: "google_calendar",
   description:
-    "Google Calendar: read upcoming events, find free time blocks, create events, force a sync. The calendar is ground truth for Cole's time.",
+    "Google Calendar: read upcoming events, find free time blocks, create events, delete events, force a sync. The calendar is ground truth for Cole's time.",
   actions: [
     {
       name: "read_events",
@@ -44,6 +46,15 @@ export const googleCalendarAdapter: ToolAdapter = {
         '[TOOL: google_calendar.create_event {"title": "Deep work — program design", "start": "2026-07-12T09:00:00-05:00", "durationMinutes": 120}]',
     },
     {
+      name: "delete_event",
+      description:
+        "Delete an event from Cole's primary calendar (only when Cole asked for it in this conversation). " +
+        "Requires the eventId from read_events — read first, then delete; never guess an id. " +
+        "Pass expectTitle to double-check you're deleting the right event.",
+      dataSchema: '{ eventId: string, expectTitle?: string }',
+      example: '[TOOL: google_calendar.delete_event {"eventId": "abc123", "expectTitle": "Strength — group session"}]',
+    },
+    {
       name: "sync",
       description: "Pull the latest events from Google now (otherwise every 15 min).",
       dataSchema: "{} (no fields)",
@@ -63,6 +74,7 @@ export const googleCalendarAdapter: ToolAdapter = {
           output: {
             summary: `${events.length} events in the next ${days} days`,
             events: events.map((e) => ({
+              eventId: e.externalId, // the handle delete_event needs — read, then delete
               title: e.title,
               start: e.startAt.toISOString(),
               end: e.endAt.toISOString(),
@@ -117,6 +129,39 @@ export const googleCalendarAdapter: ToolAdapter = {
             summary: `"${event.title}" booked ${event.startAt.toISOString()} → ${event.endAt.toISOString()}`,
             eventId: event.externalId,
           },
+        };
+      }
+      case "delete_event": {
+        const eventId = data?.eventId ? String(data.eventId) : "";
+        if (!eventId) {
+          return { ok: false, output: null, error: "eventId required — call read_events first and use its eventId; never guess" };
+        }
+        // Deleting is destructive — verify against the mirror before touching
+        // Google, and cross-check the title when the model supplied one, so a
+        // hallucinated or stale id can never take out the wrong session.
+        const mirror = await prisma.calendarEvent.findFirst({ where: { externalId: eventId } });
+        if (!mirror) {
+          return {
+            ok: false,
+            output: null,
+            error: `no event with id ${eventId} in the synced mirror — run read_events for a fresh id (it may already be gone)`,
+          };
+        }
+        if (data?.expectTitle) {
+          const want = String(data.expectTitle).trim().toLowerCase();
+          const have = (mirror.title ?? "").trim().toLowerCase();
+          if (want && !have.includes(want) && !want.includes(have)) {
+            return {
+              ok: false,
+              output: null,
+              error: `title mismatch — that id belongs to "${mirror.title}" (${mirror.startAt.toISOString()}), not "${data.expectTitle}". Not deleting; re-check with read_events.`,
+            };
+          }
+        }
+        await deleteCalendarEvent(eventId); // honest: throws on real upstream failure
+        return {
+          ok: true,
+          output: { summary: `deleted "${mirror.title}" (${mirror.startAt.toISOString()})`, eventId },
         };
       }
       case "sync": {
