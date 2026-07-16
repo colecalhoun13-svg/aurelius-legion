@@ -596,6 +596,23 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
   try {
     // Multi-operator routing — semantic (embedding-blended) when available,
     // keyword otherwise (master-class #6).
+    // ── Mirror & mailbox (the trust loop's front door) ──
+    // "why?" shows the rules behind the last decision; replying "rule 2 is
+    // wrong" / "that was wrong" IS the correction, recorded against exactly the
+    // rules Cole is looking at. Cheap regex gates — non-matches fall through.
+    if (taskType !== "reflect") {
+      const { isWhyQuery, handleWhyQuery, handleCorrectionReply } = await import("./compiled/mirror.ts");
+      const mirrorReply = isWhyQuery(message) ? await handleWhyQuery() : await handleCorrectionReply(message);
+      if (mirrorReply) {
+        return res.json({
+          reply: mirrorReply,
+          operators: { primary: "global", secondaries: [] },
+          meta: { mode: "mirror" },
+          reviewed: null,
+        });
+      }
+    }
+
     // ── Trigger 0: convene the Operator Council (opt-in tribunal) ──
     // "council this" / "pressure-test this" — Cole wants to SEE the lenses argue,
     // then resolve in one voice. Strip the trigger BEFORE routing so the trigger

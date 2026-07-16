@@ -1066,6 +1066,34 @@ async function main() {
           Math.abs((wrongAfter?.confidenceScore ?? 0) - (0.5 - DECAY_STEP)) < 1e-6
       );
 
+      // ── Mirror & mailbox (the trust loop's front door) ──
+      const { isWhyQuery, parseRuleCorrection, handleWhyQuery, handleCorrectionReply } = await import("../compiled/mirror.ts");
+      check(
+        "why-detector fires on provenance asks, not on chat",
+        isWhyQuery("why?") === true && isWhyQuery("what informed that?") === true &&
+          isWhyQuery("why is the sky blue") === false && isWhyQuery("tell me why you like squats") === false
+      );
+      check(
+        "correction parser: named rule, whole decision, and safe negatives",
+        JSON.stringify(parseRuleCorrection("rule 2 is wrong")) === JSON.stringify({ kind: "rule", index: 1 }) &&
+          JSON.stringify(parseRuleCorrection("that was wrong")) === JSON.stringify({ kind: "decision" }) &&
+          parseRuleCorrection("that was a wrong turn in the essay about ethics") === null &&
+          parseRuleCorrection("I think rule of thirds applies here") === null
+      );
+      // Live round-trip: fire → "why?" mirrors the rule → "rule 1 is wrong" retires it.
+      await recordPatternsFired([pRight.id], `${TAG} mirror decision`);
+      const mirror = await handleWhyQuery();
+      check("mirror shows the rules behind the last decision, numbered", mirror.includes("smoke-right") && mirror.includes("1."));
+      const retireReply = await handleCorrectionReply("rule 1 is wrong");
+      const retired = await prisma.compiledPattern.findUnique({ where: { id: pRight.id } });
+      check(
+        "mailbox retires the named rule through Cole's-hand correction",
+        !!retireReply && retired?.status === "discarded"
+      );
+      await prisma.compiledPattern.update({ where: { id: pRight.id }, data: { status: "confirmed_heuristic" } });
+      await prisma.knowledgeEntry.deleteMany({ where: { operatorId: semOp, scope: "system", key: "mirror:last_shown" } });
+      await prisma.correction.deleteMany({ where: { targetId: pRight.id } });
+
       // Repeatedly-wrong rules fall below the trust floor and stop loading.
       await prisma.compiledPattern.update({ where: { id: pWrong.id }, data: { confidenceScore: TRUST_FLOOR - 0.05 } });
       const blkFloor = await loadOperatorPatternsForPrompt({ operatorId: semOp, role: "primary" });

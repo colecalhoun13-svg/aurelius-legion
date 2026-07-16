@@ -20,6 +20,10 @@ export type CorrectionInput = {
   reason: string;
   after?: unknown; // replacement value, when Cole supplies one
   operatorName?: string;
+  /** reasoning_output only: the exact rules to decay (mirror & mailbox passes
+   * the rules Cole was shown — no address inference). Omitted → fallback grades
+   * the latest unconsumed fired-set. */
+  patternIds?: string[];
 };
 
 export async function recordCorrection(input: CorrectionInput) {
@@ -63,9 +67,13 @@ export async function recordCorrection(input: CorrectionInput) {
     // the patterns that informed it. Graded, not fatal: a rule that keeps landing
     // in corrected decisions falls below the trust floor and stops loading;
     // Cole's direct hand on a pattern (above) remains the outright kill.
+    // When the mirror named the rules, decay EXACTLY those; else fall back to the
+    // latest unconsumed fired-set.
     try {
-      const { decayRecentlyFired } = await import("../compiled/outcomeLoop.ts");
-      const n = await decayRecentlyFired({ reason: input.reason });
+      const { decayPatterns, decayRecentlyFired } = await import("../compiled/outcomeLoop.ts");
+      const n = input.patternIds?.length
+        ? await decayPatterns({ patternIds: input.patternIds, reason: input.reason })
+        : await decayRecentlyFired({ reason: input.reason });
       if (n > 0) {
         applied = true;
         console.log(`[corrections] decayed ${n} pattern(s) that informed the corrected decision`);
