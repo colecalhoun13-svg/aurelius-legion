@@ -25,6 +25,7 @@ export type DeliberationResult = {
   ok: boolean;
   decision: string;
   seats: Seat[];
+  redTeam?: string; // the attack on the emerging consensus, when one landed
   synthesis: string;
   error?: string;
 };
@@ -119,16 +120,40 @@ export async function deliberate(
     }
   }
 
+  // ── Red team ── one pass whose ONLY job is to attack the emerging consensus
+  // before synthesis commits — the guard against a summarizer smoothing the
+  // disagreement into mush. Non-fatal enhancement: if it fails or the engine
+  // can't produce it, synthesis proceeds without an attack to answer.
+  let redTeam = "";
+  const positionsBlock = seats.map((s) => `${s.operator.toUpperCase()}:\n${finalPosition(s)}`).join("\n\n");
+  try {
+    const redPrompt =
+      `${seats.length} lenses deliberated Cole's decision:\n"${clean}"\n\nTheir final positions:\n${positionsBlock}\n\n` +
+      `You are the red team. Your ONLY job is the attack — no balance, no "on the other hand". ` +
+      `Make the strongest case that the emerging consensus is WRONG: the failure mode it walks into, ` +
+      `the assumption most likely to break, and the earliest observable signal that it's breaking. ` +
+      `3–5 sentences, specific to THIS decision. If the consensus is genuinely airtight, say what it would take to falsify it anyway.`;
+    const r = await runLLM({ taskType: "council_redteam", operators: { primary: routing.primary, secondaries: [] }, input: redPrompt });
+    const text = (r?.text ?? "").trim();
+    if (text && !engineUnavailableText(text)) redTeam = text;
+  } catch (err) {
+    console.warn("[council] red team failed (synthesis proceeds without it):", (err as any)?.message ?? err);
+  }
+
   // Resolve in one voice — name agreement, name the real tension, decide.
   const seatsBlock = seats
     .map((s) => `${s.operator.toUpperCase()} (opening):\n${s.take}` + (s.rebuttal ? `\n${s.operator.toUpperCase()} (final, after rebuttal):\n${s.rebuttal}` : ""))
     .join("\n\n");
   const synthPrompt =
     `${seats.length} lenses weighed Cole's decision, then cross-examined each other:\n"${clean}"\n\n${seatsBlock}\n\n` +
+    (redTeam ? `A red team then attacked the emerging consensus:\n${redTeam}\n\n` : "") +
     `Now speak in ONE voice (yours, Aurelius). Do NOT restate each lens in turn. Instead:\n` +
     `1. Where do the lenses AGREE — including ground ceded in rebuttal? (the settled ground)\n` +
     `2. Where is the real TENSION that SURVIVED the rebuttal for THIS decision? Name it sharply — don't smooth it into mush.\n` +
-    `3. Given the tradeoffs, what's the call? Decide, concretely, and say what would change your mind.\n` +
+    (redTeam
+      ? `3. Answer the red team HEAD-ON: does its attack survive? If yes, adjust the call; if no, say exactly why not.\n4. `
+      : `3. `) +
+    `Given the tradeoffs, what's the call? Decide, concretely, and say what would change your mind.\n` +
     `Weight FINAL positions over openings — a lens that updated under a better argument earned that update.\n` +
     `Be direct and useful to Cole. The disagreement is the point — surface it, then resolve it.`;
 
@@ -143,7 +168,7 @@ export async function deliberate(
     return { ok: false, decision: clean, seats, synthesis: "", error: "the council heard the seats but couldn't synthesize (no engine?)" };
   }
 
-  return { ok: true, decision: clean, seats, synthesis };
+  return { ok: true, decision: clean, seats, redTeam: redTeam || undefined, synthesis };
 }
 
 /** Format a deliberation into a chat reply that shows the minds arguing, then the call. */
@@ -155,5 +180,6 @@ export function formatDeliberation(result: DeliberationResult): string {
       return `**${name}**\n${s.take}` + (s.rebuttal ? `\n\n↩ *${name}, after hearing the others:*\n${s.rebuttal}` : "");
     })
     .join("\n\n");
-  return `🏛️ **The council on:** ${result.decision}\n\n${seatLines}\n\n— — —\n\n${result.synthesis}`;
+  const redBlock = result.redTeam ? `\n\n⚔️ **Red team**\n${result.redTeam}` : "";
+  return `🏛️ **The council on:** ${result.decision}\n\n${seatLines}${redBlock}\n\n— — —\n\n${result.synthesis}`;
 }

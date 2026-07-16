@@ -970,11 +970,13 @@ async function main() {
         { operator: "business", take: "take it", rebuttal: "concede the training risk — take it with a boundary" },
         { operator: "training", take: "protect the block" },
       ],
+      redTeam: "the consensus assumes the client scope holds — it never does",
       synthesis: "the call",
     });
     check(
-      "deliberation render shows openings, rebuttals, and the one-voice call",
-      rendered.includes("after hearing the others") && rendered.includes("protect the block") && rendered.includes("the call")
+      "deliberation render shows openings, rebuttals, red team, and the one-voice call",
+      rendered.includes("after hearing the others") && rendered.includes("protect the block") &&
+        rendered.includes("Red team") && rendered.includes("scope holds") && rendered.includes("the call")
     );
 
     // ── Semantic when-retrieval of the compiled lens (council fix #1) ──
