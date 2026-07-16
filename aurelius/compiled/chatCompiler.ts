@@ -178,3 +178,17 @@ export async function confirmHeuristic(patternId: string): Promise<any> {
   indexPatternSafe(pattern as any);
   return pattern;
 }
+
+/** Bridge-confirm finalizer for pattern.retire: Cole's tap retires a rule his
+ * hand once confirmed (proposed when it decays to the trust floor — it never
+ * dies silently). Discard + vector GC, kept as observation only. */
+export async function retireHeuristic(patternId: string): Promise<any> {
+  if (!patternId) throw new Error("retireHeuristic needs a patternId");
+  const pattern = await prisma.compiledPattern.update({
+    where: { id: patternId },
+    data: { status: "discarded" },
+  });
+  const { deleteEmbeddingsForSource } = await import("../retrieval/vectorStore.ts");
+  await deleteEmbeddingsForSource("compiled_pattern", patternId);
+  return pattern;
+}

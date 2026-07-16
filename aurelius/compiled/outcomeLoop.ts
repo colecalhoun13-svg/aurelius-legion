@@ -110,6 +110,7 @@ export async function decayPatterns(args: { patternIds: string[]; reason: string
         where: { id },
         data: { correctionsSinceConfirm: { increment: 1 } },
       });
+      await protectConfirmedRule(id);
       decayed++;
     }
   }
@@ -155,6 +156,48 @@ export async function decayRecentlyFired(args: { reason: string; withinHours?: n
     data: { context: { ...(fired.context as any), consumed: true } as any },
   });
   return decayPatterns({ patternIds: ids, reason: args.reason });
+}
+
+/**
+ * CONFIRMED-RULE PROTECTION (Outsider's finding #3): a rule COLE RATIFIED must
+ * never die silently. When decay would push a confirmed_heuristic below the
+ * trust floor, it clamps AT the floor — it keeps loading — and a Bridge signal
+ * asks Cole to retire it (pattern.retire is an unknown class → always gated,
+ * fires only on his tap). Ignore the signal and the rule survives at minimum
+ * trust; only his hand kills what his hand confirmed.
+ */
+async function protectConfirmedRule(patternId: string): Promise<void> {
+  const p = await prisma.compiledPattern.findUnique({ where: { id: patternId } });
+  if (!p || p.status !== "confirmed_heuristic") return;
+  if ((p.confidenceScore ?? 0) >= TRUST_FLOOR) return;
+
+  await prisma.compiledPattern.update({
+    where: { id: patternId },
+    data: { confidenceScore: TRUST_FLOOR, evidence: { push: "outcome: clamped at trust floor — retirement proposed to Cole" } },
+  });
+
+  const sourceId = `pattern-retire:${patternId}`;
+  const already = await prisma.bridgeSignal.count({ where: { sourceType: "heuristic_retire", sourceId } });
+  if (already > 0) return;
+  const rule = ((p.patternSignature as any)?.recurringReasoningTheme ?? "a compiled rule").toString().slice(0, 200);
+  try {
+    const { executeAction } = await import("../autonomy/executor.ts");
+    await executeAction({
+      actionClass: "pattern.retire",
+      sourceType: "heuristic_retire",
+      sourceId,
+      prepare: async () => ({
+        title: "A rule you confirmed keeps missing",
+        body:
+          `“${rule}” has drawn ${(p.correctionsSinceConfirm ?? 0) + 1} correction(s) since you confirmed it.\n\n` +
+          `Confirm to retire it. Ignore and it keeps loading at minimum trust — your hand confirmed it, so only your hand kills it.`,
+        domain: "personal",
+        payload: { patternId },
+      }),
+    });
+  } catch (err) {
+    console.warn("[outcomeLoop] retire proposal failed (rule stays clamped at floor):", (err as any)?.message ?? err);
+  }
 }
 
 /**

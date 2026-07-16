@@ -10,7 +10,7 @@ import { finalizeScheduleProtection } from "./workflows/scheduleProtection.ts";
 import { finalizeInboxDraft } from "./workflows/inboxTriage.ts";
 import { finalizeContentPublish } from "./workflows/contentPublish.ts";
 import { finalizeResearchIngest } from "./workflows/researchIngest.ts";
-import { confirmHeuristic } from "../compiled/chatCompiler.ts";
+import { confirmHeuristic, retireHeuristic } from "../compiled/chatCompiler.ts";
 import { grantAutonomy } from "./grants.ts";
 
 let registered = false;
@@ -34,6 +34,9 @@ export function registerAllActions(): void {
   // Confirm a chat-mined heuristic → it starts grounding future reasoning. Always
   // gated (unknown class), so it only fires on Cole's Bridge tap.
   registerActionFinalizer("pattern.confirm", async (payload: any) => confirmHeuristic(payload?.patternId));
+  // Retire a rule Cole once confirmed (proposed when it decays to the trust
+  // floor — confirmed rules never die silently). Gated: only his tap fires it.
+  registerActionFinalizer("pattern.retire", async (payload: any) => retireHeuristic(payload?.patternId));
   // Applying a grant is Cole's hand on the switch (hard rule 1). When the web
   // chat asks to grant a keyhole, the autonomy tool files a GATED proposal;
   // this finalizer runs only when Cole taps Confirm on the Bridge.

@@ -1125,12 +1125,27 @@ async function main() {
       await prisma.correction.deleteMany({ where: { targetId: pRight.id } });
 
       // Repeatedly-wrong rules fall below the trust floor and stop loading.
-      await prisma.compiledPattern.update({ where: { id: pWrong.id }, data: { confidenceScore: TRUST_FLOOR - 0.05 } });
+      await prisma.compiledPattern.update({ where: { id: pWrong.id }, data: { confidenceScore: TRUST_FLOOR - 0.05, status: "proposed_heuristic" } });
       const blkFloor = await loadOperatorPatternsForPrompt({ operatorId: semOp, role: "primary" });
       check(
         "patterns below the trust floor stop loading into prompts",
         !blkFloor.includes("smoke-wrong") // pRight may or may not render depending on other patterns; the floor test is pWrong's absence
       );
+
+      // But a rule COLE CONFIRMED never dies silently: decay clamps it AT the
+      // floor (it keeps loading) and a retire proposal lands on the Bridge.
+      const pSacred = await mk("When smoke-sacred, protect what Cole ratified");
+      await prisma.compiledPattern.update({ where: { id: pSacred.id }, data: { confidenceScore: 0.2 } });
+      await decayPatterns({ patternIds: [pSacred.id], reason: `smoke ${TAG} sacred` });
+      const sacredAfter = await prisma.compiledPattern.findUnique({ where: { id: pSacred.id } });
+      const retireSignals = await prisma.bridgeSignal.count({ where: { sourceType: "heuristic_retire", sourceId: `pattern-retire:${pSacred.id}` } });
+      const blkSacred = await loadOperatorPatternsForPrompt({ operatorId: semOp, role: "primary" });
+      check(
+        "confirmed rules clamp at the floor + retire proposal (never a silent death)",
+        Math.abs((sacredAfter?.confidenceScore ?? 0) - TRUST_FLOOR) < 1e-6 && retireSignals === 1 && blkSacred.includes("smoke-sacred")
+      );
+      await prisma.bridgeSignal.deleteMany({ where: { sourceId: `pattern-retire:${pSacred.id}` } });
+      await prisma.compiledPattern.delete({ where: { id: pSacred.id } });
 
       // Cleanup (smoke artifacts only — filter trace rows by the TAG in their context).
       await prisma.compiledPattern.deleteMany({ where: { id: { in: [pWrong.id, pRight.id] } } });
