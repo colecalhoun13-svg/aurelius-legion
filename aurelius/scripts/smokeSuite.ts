@@ -945,6 +945,12 @@ async function main() {
       dc.ok === true && dc.proposed === 0 && (dc.judged ?? 0) === 0
     );
 
+    // The measurement script refuses mock embeddings (it proves semantics, not
+    // plumbing) — and says exactly what to run instead.
+    const { measureFit } = await import("./measureEmbeddingFit.ts");
+    const mf = await measureFit();
+    check("embedding-fit measurement refuses mock provider with the fix", mf.ok === false && /real provider/i.test(mf.reason ?? ""));
+
     // ── Operator Council tribunal (deliberate) ──
     const { deliberate, stripCouncilTrigger, isCouncilTrigger } = await import("../council/deliberate.ts");
     check(
