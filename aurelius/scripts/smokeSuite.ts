@@ -940,7 +940,10 @@ async function main() {
     // Decision Curriculum: honest-failure safe (keyless → proposes nothing, no throw).
     const { runDecisionCurriculum } = await import("../learning/decisionCurriculum.ts");
     const dc = await runDecisionCurriculum();
-    check("decision curriculum runs honestly with no LLM engine", dc.ok === true && dc.proposed === 0);
+    check(
+      "decision curriculum + judge run honestly with no LLM engine",
+      dc.ok === true && dc.proposed === 0 && (dc.judged ?? 0) === 0
+    );
 
     // ── Operator Council tribunal (deliberate) ──
     const { deliberate, stripCouncilTrigger, isCouncilTrigger } = await import("../council/deliberate.ts");
