@@ -12,7 +12,13 @@
 // real tension, and resolves it in ONE voice (hard rule 2 — the seats are reasoning
 // frames, never personalities).
 //
-// Opt-in only (N+1 LLM calls), so cost lands when Cole asks for a tribunal.
+// Rounds: OPENING (independent takes) → REBUTTAL (each seat answers the others'
+// strongest points, states a final position) → RED TEAM (one pass attacking the
+// emerging consensus) → SYNTHESIS (one voice; must answer the attack head-on;
+// runs in decisionMode so the outcome loop records which compiled rules informed
+// the verdict — correcting a council call decays them like any decision).
+//
+// Opt-in only (2N+2 LLM calls), so cost lands when Cole asks for a tribunal.
 // Honest-failure: no engine → each seat/synthesis fails loudly; deliberate returns
 // ok:false rather than inventing a verdict.
 
@@ -159,7 +165,17 @@ export async function deliberate(
 
   let synthesis = "";
   try {
-    const r = await runLLM({ taskType: "council_synthesis", operators: { primary: routing.primary, secondaries: routing.secondaries }, input: synthPrompt });
+    // decisionMode: the tribunal's verdict is a DECISION — the synthesis turn
+    // records which compiled rules informed it (one consolidated fired-set across
+    // primary + secondary lenses), so correcting a council call later decays the
+    // rules that steered it exactly like an everyday decision. Same outcome loop,
+    // no special machinery.
+    const r = await runLLM({
+      taskType: "council_synthesis",
+      operators: { primary: routing.primary, secondaries: routing.secondaries },
+      input: synthPrompt,
+      decisionMode: true,
+    });
     synthesis = (r?.text ?? "").trim();
   } catch (err) {
     console.warn("[council] synthesis failed:", (err as any)?.message ?? err);
