@@ -17,7 +17,8 @@ export type EmbeddingSourceType =
   | "project"
   | "corpus_doc"
   | "wiki_page"
-  | "compiled_pattern"; // a heuristic's WHEN-clause, so decisions retrieve it by situation
+  | "compiled_pattern" // a heuristic's WHEN-clause, so decisions retrieve it by situation
+  | "decision_case"; // a past decision's text, so new decisions find their precedents
 
 export type UpsertEmbeddingArgs = {
   sourceType: EmbeddingSourceType;

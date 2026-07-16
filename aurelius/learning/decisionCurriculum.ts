@@ -242,6 +242,17 @@ export async function runDecisionCurriculum(): Promise<DecisionCurriculumResult>
     console.warn("[decisionCurriculum] judge failed (non-fatal):", (err as any)?.message ?? err);
   }
 
+  // Shadow agreement grading (short-circuit evidence): did stored judgment
+  // agree with the frontier on this week's near-identical decisions? One batch
+  // call; verdicts are what canShortCircuit() reads. Keyless → 0.
+  try {
+    const { gradeShadowAgreements } = await import("../compiled/shortCircuit.ts");
+    const gradedShadows = await gradeShadowAgreements();
+    if (gradedShadows > 0) console.log(`[decisionCurriculum] graded ${gradedShadows} shadow pair(s)`);
+  } catch (err) {
+    console.warn("[decisionCurriculum] shadow grading failed (non-fatal):", (err as any)?.message ?? err);
+  }
+
   console.log(`[decisionCurriculum] scanned ${corrections.length} corrections across ${byOp.size} operators · proposed ${proposed} · judge retire-proposals ${judged}`);
   return { ok: true, proposed, judged };
 }

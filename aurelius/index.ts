@@ -726,6 +726,7 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       console.warn("[aurelius] could not resolve operatorId for", primary, err);
     }
 
+    const wasDecision = isDecisionQuery(message) || councilFellThrough;
     const response = await runLLM({
       taskType: taskType || "chat",
       operators: { primary, secondaries },
@@ -737,11 +738,21 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       hasMultimodal,
       // Real decision → run the frameworks through the application harness.
       // A council ask that couldn't seat two lenses is by definition a decision.
-      decisionMode: isDecisionQuery(message) || councilFellThrough,
+      decisionMode: wasDecision,
       knowledgeContext: primaryOperatorId
         ? { operatorId: primaryOperatorId, operatorName: primary }
         : undefined,
     });
+
+    // ── Shadow short-circuit (work order #8) ── every decision turn stores its
+    // case + precedent vector; a near-identical past case logs "compiled
+    // judgment would have answered this" WITHOUT skipping anything. The Sunday
+    // judge grades agreement; real skips stay off until the gate earns it.
+    if (wasDecision && response.text) {
+      import("./compiled/shortCircuit.ts")
+        .then(({ recordDecisionCase }) => recordDecisionCase({ decision: message, answer: response.text }))
+        .catch(() => {});
+    }
 
     // ── Pattern 2: extract directives (SAVE + TOOL), persist saves, execute tools ──
     const parsed = extractDirectives(response.text);

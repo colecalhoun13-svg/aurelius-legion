@@ -951,6 +951,32 @@ async function main() {
     const mf = await measureFit();
     check("embedding-fit measurement refuses mock provider with the fix", mf.ok === false && /real provider/i.test(mf.reason ?? ""));
 
+    // ── Shadow short-circuit (work order #8): case → precedent → shadow, no skips ──
+    const { recordDecisionCase, canShortCircuit, gradeShadowAgreements } = await import("../compiled/shortCircuit.ts");
+    const shadowDecision = `${TAG} should I take the retainer client or protect the training block?`;
+    const first = await recordDecisionCase({ decision: shadowDecision, answer: "Protect the block; counter with a scope-bound retainer." });
+    check("first decision case stores without a precedent (nothing to shadow)", first.shadowed === false);
+    const second = await recordDecisionCase({ decision: shadowDecision, answer: "Protect the block; counter with a scope-bound retainer." });
+    check("a near-identical decision logs a shadow hit (frontier still answered)", second.shadowed === true);
+    const gate = await canShortCircuit();
+    check(
+      "the gate reports not-yet until agreements are EARNED (no silent skips)",
+      gate.eligible === false && /not yet/.test(gate.reason)
+    );
+    const gradedKeyless = await gradeShadowAgreements();
+    check("shadow grading is honest keyless (grades nothing)", gradedKeyless === 0);
+    // Cleanup: shadow exhaust (cases, shadows, their vectors).
+    const smokeCases = await prisma.logEntry.findMany({
+      where: { message: "decision:case", context: { path: ["decision"], string_contains: TAG } },
+      select: { id: true },
+    });
+    const caseIds = smokeCases.map((c) => c.id);
+    if (caseIds.length) {
+      await prisma.vectorEmbedding.deleteMany({ where: { sourceType: "decision_case", sourceId: { in: caseIds } } });
+      await prisma.logEntry.deleteMany({ where: { id: { in: caseIds } } });
+    }
+    await prisma.logEntry.deleteMany({ where: { message: "decision:shadow", context: { path: ["decision"], string_contains: TAG } } });
+
     // ── Operator Council tribunal (deliberate) ──
     const { deliberate, stripCouncilTrigger, isCouncilTrigger } = await import("../council/deliberate.ts");
     check(
