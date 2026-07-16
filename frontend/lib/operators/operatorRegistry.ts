@@ -50,6 +50,11 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     path: "/bridge",
     description: "Signals from Aurelius's background work",
   },
+  autonomy: {
+    name: "Autonomy",
+    path: "/autonomy",
+    description: "The keyholes — grant, revoke, undo; the trust you've earned it",
+  },
   aurelius: {
     name: "Aurelius",
     path: "/aurelius",
@@ -70,10 +75,20 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     path: "/wiki",
     description: "Aurelius's own synthesis — one living page per domain",
   },
+  library: {
+    name: "Library",
+    path: "/library",
+    description: "What each operator has studied — shelves filling week over week",
+  },
   engines: {
     name: "Engines",
     path: "/engines",
     description: "Model engines, routing, and intelligence modules",
+  },
+  traces: {
+    name: "Traces",
+    path: "/traces",
+    description: "One turn, end to end — every step of a decision in one thread",
   },
   settings: {
     name: "Settings",

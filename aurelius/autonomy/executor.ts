@@ -24,7 +24,7 @@
 import { prisma } from "../core/db/prisma.ts";
 import { runTraced } from "../core/trace.ts";
 import { decideAction } from "./grants.ts";
-import { getActionFinalizer } from "./actionRegistry.ts";
+import { getActionFinalizer, getActionInverse, hasActionInverse } from "./actionRegistry.ts";
 
 export type PreparedAction = {
   title: string;
@@ -58,6 +58,18 @@ export async function executeAction(args: {
       () => finalizer(prepared.payload),
       { finalized: true }
     );
+    // If this action has a registered inverse, attach a one-tap Undo carrying
+    // what undo needs (the payload + the finalizer's result). The actionClass is
+    // recorded on every executed signal so the trust ledger can attribute it.
+    const undoable = hasActionInverse(args.actionClass);
+    const actions: any[] = [{ action: "executed", actionClass: args.actionClass }];
+    if (undoable) {
+      actions.push({
+        label: "Undo",
+        action: "undo_action",
+        payload: { actionClass: args.actionClass, actionPayload: prepared.payload ?? null, result: result ?? null },
+      });
+    }
     const sig = await prisma.bridgeSignal.create({
       data: {
         kind: "background_result",
@@ -70,7 +82,8 @@ export async function executeAction(args: {
         title: prepared.title,
         body:
           prepared.body +
-          `\n\n_Done on its own under grant \`${args.actionClass}\`. Reversible — tell me if this was wrong and I'll undo it._`,
+          `\n\n_Done on its own under grant \`${args.actionClass}\`.${undoable ? " Tap Undo (or say “undo that”) and I'll reverse it." : " Reversible — tell me if this was wrong."}_`,
+        actions,
       },
     });
     return { finalized: true, reason: decision.reason, bridgeSignalId: sig.id, result };
@@ -104,10 +117,68 @@ export async function executeAction(args: {
 }
 
 /**
+ * Boot reaper. confirmAction claims a row (pending → acting) before finalizing.
+ * If the process dies mid-finalize, that row is stranded in "acting". At BOOT no
+ * confirm is in flight, so we recover stranded rows — BUT the recovery differs by
+ * tier, because a crash can land AFTER the outward API call succeeded but BEFORE
+ * the "acted" write:
+ *   • INWARD → safe to release to "pending" (reversible/idempotent; re-running a
+ *     schedule hold or a mission re-check does no harm).
+ *   • OUTWARD (publish/send/spend) → NEVER silently re-arm — it may have already
+ *     shipped, and a re-confirm would double-publish. Surface it to Cole as a
+ *     "surfaced" signal with a warning so he decides, rather than auto-re-arming.
+ */
+export async function reapStaleActing(): Promise<number> {
+  try {
+    const stranded = await prisma.bridgeSignal.findMany({ where: { status: "acting" } });
+    if (stranded.length === 0) return 0;
+
+    const { getActionClass } = await import("./actionClasses.ts");
+    let inward = 0;
+    let outward = 0;
+    for (const sig of stranded) {
+      const actions = (sig.actions as any[]) ?? [];
+      const actionClass = actions.find((a) => a?.action === "confirm_action")?.payload?.actionClass ?? "";
+      // The apply_grant confirm wraps a to-be-granted class in its payload, but the
+      // action itself (autonomy.apply_grant) is inward-safe to re-arm. Judge the
+      // confirm's OWN class tier; unknown → inward (safe).
+      const tier = getActionClass(actionClass)?.tier;
+      if (tier === "outward") {
+        await prisma.bridgeSignal.update({
+          where: { id: sig.id },
+          data: {
+            status: "surfaced",
+            severity: "critical",
+            body:
+              sig.body +
+              `\n\n⚠️ A restart interrupted this WHILE it was executing. It may have already gone out. Verify before re-confirming — I won't re-run it on my own.`,
+          },
+        });
+        outward++;
+      } else {
+        await prisma.bridgeSignal.update({ where: { id: sig.id }, data: { status: "pending" } });
+        inward++;
+      }
+    }
+    console.log(`[executor] reaped stranded 'acting': ${inward} inward → pending, ${outward} outward → surfaced for review`);
+    return inward + outward;
+  } catch (err) {
+    console.warn("[executor] reapStaleActing failed:", (err as any)?.message ?? err);
+    return 0;
+  }
+}
+
+/**
  * Cole confirmed a gated proposal on the Bridge → commit it now. This is Cole's
  * explicit authority, so it runs the finalizer regardless of grant state (it's
  * how OUTWARD actions ship too: prepared → gated → Cole confirms → executes).
- * Idempotent: an already-acted signal is a no-op success.
+ *
+ * Idempotent AND concurrency-safe: confirm is the gate protecting IRREVERSIBLE
+ * outward actions, so a double-click (or a Bridge tap racing a retry) must never
+ * run the finalizer twice. We atomically CLAIM the row (pending → acting) with a
+ * conditional updateMany before finalizing — only the caller whose update
+ * changed a row proceeds; the loser is a no-op success. On finalizer failure we
+ * release the claim back to pending so Cole can retry.
  */
 export async function confirmAction(
   bridgeSignalId: string
@@ -124,6 +195,23 @@ export async function confirmAction(
   const finalizer = getActionFinalizer(actionClass);
   if (!finalizer) return { ok: false, error: `no finalizer registered for ${actionClass}` };
 
+  // Atomic claim: flip → acting only from a genuinely confirmable state. This is
+  // a WHITELIST, not a blacklist: only "pending" (the normal gate) and "surfaced"
+  // (the reaper's outward-review state) may be confirmed. A blacklist of
+  // ["acting","acted"] would let a DISMISSED or UNDONE proposal be confirmed by a
+  // later /confirm (a stale tab, a retry) — re-shipping an outward publish Cole
+  // rejected, or resurrecting a hold he undid. "Dismiss" and "Undo" must mean no.
+  // The DB serializes concurrent updateManys; exactly one gets count === 1.
+  const claim = await prisma.bridgeSignal.updateMany({
+    where: { id: sig.id, status: { in: ["pending", "surfaced"] } },
+    data: { status: "acting" },
+  });
+  if (claim.count === 0) {
+    // Not in a confirmable state (already claimed/acted, or dismissed/undone) —
+    // don't run the finalizer.
+    return { ok: true, result: "not confirmable (already handled or withdrawn)" };
+  }
+
   try {
     const result = await runTraced(
       "action",
@@ -131,9 +219,70 @@ export async function confirmAction(
       () => finalizer(confirm.payload.actionPayload),
       { confirmedBy: "cole" }
     );
-    await prisma.bridgeSignal.update({ where: { id: sig.id }, data: { status: "acted" } });
+    // Attach a one-tap Undo if this class has a registered inverse (keep the
+    // original confirm action for the record).
+    const nextActions: any[] = [...actions];
+    if (hasActionInverse(actionClass)) {
+      nextActions.push({
+        label: "Undo",
+        action: "undo_action",
+        payload: { actionClass, actionPayload: confirm.payload.actionPayload ?? null, result: result ?? null },
+      });
+    }
+    await prisma.bridgeSignal.update({ where: { id: sig.id }, data: { status: "acted", actions: nextActions } });
     return { ok: true, result };
   } catch (err: any) {
+    // Release the claim so Cole can retry — the outward action did NOT ship.
+    await prisma.bridgeSignal
+      .updateMany({ where: { id: sig.id, status: "acting" }, data: { status: "pending" } })
+      .catch(() => {});
     return { ok: false, error: err?.message ?? "finalize failed" };
+  }
+}
+
+/**
+ * Reverse an executed action — the real "I'll undo it" (master-class #4). Runs
+ * the registered inverse with the original payload + the finalizer's result, then
+ * marks the signal "undone". Atomic claim (acted → undoing → undone) so a
+ * double-tap can't run the inverse twice.
+ */
+export async function undoAction(bridgeSignalId: string): Promise<{ ok: boolean; result?: any; error?: string }> {
+  const sig = await prisma.bridgeSignal.findUnique({ where: { id: bridgeSignalId } });
+  if (!sig) return { ok: false, error: "signal not found" };
+  if (sig.status === "undone") return { ok: true, result: "already undone" };
+  if (sig.status !== "acted") return { ok: false, error: `can only undo an executed action (this one is ${sig.status})` };
+
+  const actions = (sig.actions as any[]) ?? [];
+  const undo = actions.find((a) => a?.action === "undo_action");
+  const actionClass = undo?.payload?.actionClass;
+  if (!undo || !actionClass) return { ok: false, error: "this action has no undo" };
+
+  const inverse = getActionInverse(actionClass);
+  if (!inverse) return { ok: false, error: `no inverse registered for ${actionClass}` };
+
+  // Atomic claim: acted → undoing (only one caller wins).
+  const claim = await prisma.bridgeSignal.updateMany({
+    where: { id: sig.id, status: "acted" },
+    data: { status: "undoing" },
+  });
+  if (claim.count === 0) return { ok: true, result: "already undoing/undone" };
+
+  try {
+    const result = await runTraced(
+      "action",
+      `undo:${actionClass}`,
+      () => inverse(undo.payload.actionPayload, undo.payload.result),
+      { undoneBy: "cole" }
+    );
+    await prisma.bridgeSignal.update({
+      where: { id: sig.id },
+      data: { status: "undone", body: sig.body + `\n\n_Undone._` },
+    });
+    return { ok: true, result };
+  } catch (err: any) {
+    await prisma.bridgeSignal
+      .updateMany({ where: { id: sig.id, status: "undoing" }, data: { status: "acted" } })
+      .catch(() => {});
+    return { ok: false, error: err?.message ?? "undo failed" };
   }
 }

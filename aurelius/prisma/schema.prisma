@@ -186,6 +186,15 @@ model CompiledPattern {
   supportCount       Int      @default(0)
   confidenceScore    Float    @default(0)
 
+  // Trust counters (outcome loop) — monotone, machine-readable, non-saturating.
+  // These gate the short-circuit; the confidence float is only a floor veto.
+  // validatedCount — decisions this rule informed that Cole explicitly ratified
+  // ratifiedCount  — times Cole's hand explicitly endorsed (ratify/confirm)
+  // correctionsSinceConfirm — corrections absorbed since Cole last confirmed
+  validatedCount          Int @default(0)
+  ratifiedCount           Int @default(0)
+  correctionsSinceConfirm Int @default(0)
+
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -367,7 +376,7 @@ model BridgeSignal {
   title      String
   body       String // markdown
   actions    Json? // [{ label, action, payload }]
-  status     String    @default("pending") // "pending" | "surfaced" | "acknowledged" | "acted" | "dismissed" | "expired"
+  status     String    @default("pending") // "pending" | "surfaced" | "acknowledged" | "acting" (transient confirm claim) | "acted" | "dismissed" | "expired"
   surfacedAt DateTime?
   expiresAt  DateTime?
   createdAt  DateTime  @default(now())

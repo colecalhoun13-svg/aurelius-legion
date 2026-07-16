@@ -15,10 +15,13 @@ const NAV_GLYPHS: Record<string, string> = {
   Projects: "❖",
   Goals: "◎",
   Bridge: "⇄",
+  Autonomy: "🜍",
   Aurelius: "♛",
   "Second Brain": "❈",
   Wiki: "✍",
+  Library: "📖",
   Engines: "⚙",
+  Traces: "🜸",
   Settings: "✦",
 };
 

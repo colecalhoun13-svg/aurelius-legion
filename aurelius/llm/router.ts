@@ -57,6 +57,7 @@ export type LLMTask = {
   options?: LLMOptions;
   needsRealtime?: boolean;
   hasMultimodal?: boolean;
+  decisionMode?: boolean;          // Cole is asking a real call → run the frameworks, don't quote
   // Phase 4.5 — Knowledge update propose/confirm context
   knowledgeContext?: {
     operatorId: string;
@@ -365,14 +366,70 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
   if (recallOperatorId) {
     try {
       const { loadOperatorPatternsForPrompt } = await import("../compiled/reasoningHelper.ts");
+      const fired: string[] = []; // outcome loop: which rules informed this turn
+      // Primary lens — its frameworks, fit-ranked to THIS decision (not top-N by
+      // confidence), so the ones that actually bear on the question are what load.
       const patternBlock = await loadOperatorPatternsForPrompt({
         operatorId: recallOperatorId,
         limit: 10,
+        role: "primary",
+        query: task.input,
+        fired,
       });
       if (patternBlock) parts.push("\n" + patternBlock);
+
+      // Secondary lenses bring THEIR frameworks too — so the lenses that should
+      // collide on a real decision actually do, instead of the primary reasoning
+      // alone. Thinner (they contribute, they don't dominate).
+      for (const sec of operators.secondaries ?? []) {
+        const secId = await resolveOperatorId(sec).catch(() => null);
+        if (!secId || secId === recallOperatorId) continue;
+        const secBlock = await loadOperatorPatternsForPrompt({
+          operatorId: secId,
+          limit: 4,
+          role: "secondary",
+          query: task.input,
+          fired,
+        });
+        if (secBlock) parts.push("\n" + secBlock);
+      }
+
+      // Real decision → record which rules informed it (fire-and-forget; joins the
+      // request's trace thread). This is the audit trail AND the outcome loop's
+      // input: corrections decay exactly these, quiet weeks reinforce them.
+      if (task.decisionMode && fired.length > 0) {
+        import("../compiled/outcomeLoop.ts")
+          .then(({ recordPatternsFired }) => recordPatternsFired(fired, task.input))
+          .catch(() => {});
+      }
     } catch (err) {
       console.warn("[ROUTER] compiled-pattern layer failed (non-fatal):", err);
     }
+  }
+
+  // Layer 5.45: the primary operator's FIELD SYNTHESIS — its best current
+  // understanding of the domain (the wiki page the curriculum keeps rewriting),
+  // injected directly so it's ALWAYS reasoned from, not left to chance whether a
+  // random chunk of it happens to surface in recall. Bounded; never fatal.
+  try {
+    const { prisma } = await import("../core/db/prisma.ts");
+    const slugs = [operators.primary, ...(operators.secondaries ?? [])];
+    const pages = await prisma.wikiPage.findMany({
+      where: { slug: { in: slugs } },
+      select: { slug: true, title: true, content: true },
+    });
+    const bySlug = new Map(pages.map((p) => [p.slug, p]));
+    for (const slug of slugs) {
+      const page = bySlug.get(slug);
+      if (!page?.content || page.content.trim().length <= 40) continue;
+      const isPrimary = slug === operators.primary;
+      const top = page.content.trim().slice(0, isPrimary ? 1400 : 500);
+      parts.push(
+        `\n═══ FIELD SYNTHESIS · ${page.title}${isPrimary ? "" : " (secondary lens)"} ═══\n${top}\n\nReason from this synthesis where it applies; update it if new evidence contradicts it.`
+      );
+    }
+  } catch (err) {
+    console.warn("[ROUTER] field synthesis layer failed (non-fatal):", err);
   }
 
   // Layer 5.5 (Phase 4.6): Semantic recall — retrieval-augmented context.
@@ -440,6 +497,22 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     }
 
     parts.push(knowledgeLines.join("\n"));
+  }
+
+  // DECISION MODE — the application harness. When Cole is making a real call, this
+  // forces the model to RUN the frameworks above on his specifics rather than
+  // recall or quote them. The `Lens:` line is the honesty check: a framework is
+  // only applied if deleting its name would weaken the answer (if the same
+  // conclusion survives without it, it was decoration). Placed last so it's the
+  // final instruction the model reads before answering.
+  if (task.decisionMode) {
+    parts.push(
+      `\n═══ DECISION MODE ═══\n` +
+      `Cole is making a real decision. Reason THROUGH the frameworks above — apply their logic to give him the single best answer, not a generic one.\n` +
+      `Do this in your own thinking, silently: identify which frameworks genuinely bear on THIS decision; run each on his actual specifics; notice what they RULE OUT or force that intuition wouldn't; and where two point opposite ways, resolve the tension deliberately (don't average).\n` +
+      `Then give him the answer that reasoning produces — clean, direct, and concrete.\n` +
+      `The lens must be LOAD-BEARING but INVISIBLE: do NOT name-drop authors, quote the frameworks, or append a "Lens:" line. The test of real application is that deleting any framework's name from your answer would leave it just as strong — the wisdom shows up in the sharpness of the call, not in citations. Let the study make the answer better, not louder.`
+    );
   }
 
   return parts.join("\n");
@@ -512,8 +585,22 @@ function providerConfigured(p: string): boolean {
   return !!process.env[PROVIDER_KEYS[p] ?? ""]?.trim();
 }
 
-function engineUnavailableText(text: string): boolean {
-  return /engine is not configured|Missing .*_API_KEY/i.test(text);
+// The honest-failure guard now lives in one leaf module (llm/nonAnswer.ts) so
+// every call site shares one regex. Imported for local use (isNonAnswer) and
+// re-exported to preserve the public API.
+import { engineUnavailableText } from "./nonAnswer.ts";
+export { engineUnavailableText };
+
+// Anything that isn't a usable answer → the router should fail over to the next
+// engine. Covers: empty/blank text, a missing key, and adapter-level API/fetch
+// errors (which the adapters return as a short "<Provider> error: ..." string —
+// e.g. a small-context model rejecting a long prompt).
+export function isNonAnswer(text: string): boolean {
+  if (!text || !text.trim()) return true;
+  if (engineUnavailableText(text)) return true;
+  return /^(Anthropic|OpenAI|Gemini|Groq|DeepSeek|xAI) (API )?(error|engine encountered an error|fetch error)/i.test(
+    text.trim()
+  );
 }
 
 export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
@@ -547,9 +634,15 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
     const isLast = attempt === chain[chain.length - 1];
     try {
       const result = await runAdapter(attempt.provider, attempt.model, systemPrompt, task.input);
-      if (engineUnavailableText(result.text) && !isLast) {
-        lastFailure = result.text;
-        console.warn(`[ROUTER] ${attempt.provider} unavailable (no key/config) — falling over`);
+      // Fail over on anything that isn't a real answer: a missing key, an
+      // adapter-level API error (e.g. a small-context model choking on a long
+      // prompt), or an EMPTY response. Only accept a non-answer on the last
+      // attempt, so the user still gets an honest message rather than a hang.
+      if (isNonAnswer(result.text) && !isLast) {
+        lastFailure = result.text?.trim() || "empty response";
+        console.warn(
+          `[ROUTER] ${attempt.provider}/${attempt.model} gave no usable answer (${lastFailure.slice(0, 80)}) — falling over`
+        );
         failedOver = true;
         continue;
       }
@@ -609,15 +702,26 @@ ${primary.text}
 Produce your refined response now.
 `.trim();
 
-    const reviewed = await runAdapter("anthropic", reviewerModel, reviewerSystemPrompt, reviewerUserPrompt);
-
-    response.reviewed = {
-      reviewer: "anthropic",
-      model: reviewerModel,
-      text: reviewed.text,
-      tokensUsed: reviewed.tokensUsed,
-      latencyMs: reviewed.latencyMs,
-    };
+    // The reviewer is a single direct adapter call — no failover chain. If it
+    // throws (network) or comes back a non-answer (Opus unfunded/keyless/empty),
+    // do NOT attach it: a raw "Anthropic ... is not configured." string as
+    // `reviewed` would surface as the refined answer. Fall back to primary.
+    try {
+      const reviewed = await runAdapter("anthropic", reviewerModel, reviewerSystemPrompt, reviewerUserPrompt);
+      if (!isNonAnswer(reviewed.text)) {
+        response.reviewed = {
+          reviewer: "anthropic",
+          model: reviewerModel,
+          text: reviewed.text,
+          tokensUsed: reviewed.tokensUsed,
+          latencyMs: reviewed.latencyMs,
+        };
+      } else {
+        console.warn(`[ROUTER] reviewer (${reviewerModel}) gave no usable answer — keeping primary`);
+      }
+    } catch (err) {
+      console.warn(`[ROUTER] reviewer (${reviewerModel}) threw (${(err as any)?.message ?? err}) — keeping primary`);
+    }
   }
 
   return response;

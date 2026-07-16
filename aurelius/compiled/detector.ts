@@ -69,7 +69,7 @@ export async function detectPatterns(
         patternType: "heuristic",
         patternSignature: {
           tags: extractCommonTags(similar),
-          recurringReasoningTheme: extractCommonReasoningTheme(similar),
+          recurringReasoningTheme: await extractCommonReasoningTheme(similar),
         },
         evidenceIds: similar.map((s) => s.id),
         supportCount: similar.length,
@@ -80,17 +80,73 @@ export async function detectPatterns(
   }
 
   if (proposals.length === 0) return [];
+  return persistProposals(args.operatorId, args.domain, args.entityKey, proposals);
+}
 
-  // Persist with idempotency
+/**
+ * HEURISTIC-ONLY detection — for the main chat brain. detectPatterns() gates
+ * everything on factualThreshold (its early returns use it as a floor) and would
+ * auto-create an unconfirmed `auto_factual` pattern from just 2 similar turns —
+ * too eager, and it would steer reasoning without Cole's confirm. Chat needs the
+ * opposite: NO auto-facts, only heuristics (≥N similar) that PROPOSE and wait for
+ * a Bridge confirm. Same helpers, same persist path, no factual branch.
+ */
+export async function detectHeuristics(args: {
+  operatorId: string;
+  domain: string;
+  entityKey: string;
+  signature: TaggedSignature;
+  heuristicThreshold?: number;
+}): Promise<CompiledPatternShape[]> {
+  const heuristicThreshold = args.heuristicThreshold ?? 3;
+  const similarityThreshold = 0.85;
+
+  const candidates = await listCacheForEntity({
+    operatorId: args.operatorId,
+    domain: args.domain,
+    entityKey: args.entityKey,
+    limit: 50,
+  });
+  if (candidates.length < heuristicThreshold) return [];
+
+  const similar = candidates.filter(
+    (c) => similarityScore(args.signature, c.situationSignature as TaggedSignature) >= similarityThreshold
+  );
+  if (similar.length < heuristicThreshold) return [];
+
+  const reasoningConsistency = computeReasoningConsistency(similar);
+  if (reasoningConsistency < 0.6) return []; // answers must actually overlap
+
+  const proposal: PatternProposal = {
+    patternType: "heuristic",
+    patternSignature: {
+      tags: extractCommonTags(similar),
+      recurringReasoningTheme: await extractCommonReasoningTheme(similar),
+    },
+    evidenceIds: similar.map((s) => s.id),
+    supportCount: similar.length,
+    confidenceScore: reasoningConsistency,
+    rationale: `Chat heuristic: ${similar.length} similar exchanges, consistent conclusion`,
+  };
+  return persistProposals(args.operatorId, args.domain, args.entityKey, [proposal]);
+}
+
+/** Idempotent upsert of pattern proposals — shared by both detectors. */
+async function persistProposals(
+  operatorId: string,
+  domain: string,
+  entityKey: string,
+  proposals: PatternProposal[]
+): Promise<CompiledPatternShape[]> {
   const persisted: CompiledPatternShape[] = [];
   for (const p of proposals) {
     const status = p.patternType === "factual" ? "auto_factual" : "proposed_heuristic";
 
     const existing = await prisma.compiledPattern.findFirst({
       where: {
-        operatorId: args.operatorId,
-        domain: args.domain,
-        entityKey: args.entityKey,
+        operatorId,
+        domain,
+        entityKey,
         patternType: p.patternType,
         status: { in: ["auto_factual", "proposed_heuristic", "confirmed_heuristic"] },
       },
@@ -109,11 +165,21 @@ export async function detectPatterns(
       continue;
     }
 
+    // Respect a correction: if Cole DISCARDED this exact pattern before, don't
+    // resurrect it as a brand-new proposal (which would re-nag him on the Bridge
+    // and, if re-confirmed, re-enter reasoning — defeating "a corrected pattern
+    // stops steering"). A discarded twin means: leave it dead.
+    const discardedTwin = await prisma.compiledPattern.findFirst({
+      where: { operatorId, domain, entityKey, patternType: p.patternType, status: "discarded" },
+      select: { id: true },
+    });
+    if (discardedTwin) continue;
+
     const created = await prisma.compiledPattern.create({
       data: {
-        operatorId: args.operatorId,
-        domain: args.domain,
-        entityKey: args.entityKey,
+        operatorId,
+        domain,
+        entityKey,
         patternType: p.patternType,
         patternSignature: p.patternSignature as any,
         status,
@@ -124,7 +190,6 @@ export async function detectPatterns(
     });
     persisted.push(patternToShape(created));
   }
-
   return persisted;
 }
 
@@ -177,12 +242,33 @@ function extractCommonTags(entries: any[]): Record<string, any> {
   return common;
 }
 
-function extractCommonReasoningTheme(entries: any[]): string {
-  // v1: crude concat of first 80 chars. Future: LLM theme extraction.
+// Distill the recurring theme into ONE legible line. This runs only when a
+// heuristic actually crosses its threshold (rare), so an LLM call here is cheap —
+// and it turns opaque signature JSON into a heuristic Cole can read and confirm.
+// Deterministic fallback (the old concat) keeps it working keyless/offline.
+async function extractCommonReasoningTheme(entries: any[]): Promise<string> {
   if (entries.length === 0) return "";
-  return entries
-    .map((e) => (e.reasoningSummary as string).slice(0, 80))
-    .join(" | ");
+  const fallback = entries.map((e) => (e.reasoningSummary as string).slice(0, 80)).join(" | ");
+  try {
+    const { runLLM } = await import("../llm/runLLM.ts");
+    const samples = entries.slice(0, 6).map((e, i) => `${i + 1}. ${(e.reasoningSummary as string).slice(0, 400)}`).join("\n");
+    const res = await runLLM({
+      taskType: "summary",
+      operators: { primary: "strategy", secondaries: [] },
+      input:
+        `These are ${entries.length} of Aurelius's own conclusions from recurring, similar situations with Cole. ` +
+        `Distill the ONE durable heuristic they share — a single sentence Aurelius could reason FROM next time ` +
+        `("When Cole ___, he wants ___"). Under 25 words, no preamble, plain statement.\n\n${samples}`,
+    });
+    const line = (res.text ?? "").trim().replace(/^["'\s]+|["'\s]+$/g, "");
+    // Guard: never file an engine-error/empty string as the theme.
+    if (line && line.length >= 8 && !/is not configured|All configured LLM providers failed|error/i.test(line)) {
+      return line.slice(0, 240);
+    }
+  } catch (err) {
+    console.warn("[detector] theme distillation failed, using concat fallback:", (err as any)?.message ?? err);
+  }
+  return fallback.slice(0, 240);
 }
 
 function patternToShape(raw: any): CompiledPatternShape {

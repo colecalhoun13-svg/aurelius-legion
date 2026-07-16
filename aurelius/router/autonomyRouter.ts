@@ -86,6 +86,24 @@ autonomyRouter.post("/confirm", async (req: Request, res: Response) => {
   }
 });
 
+// Reverse an executed action — the real "undo" (master-class #4). Given a
+// bridgeSignalId that carries an undo_action, runs the registered inverse.
+autonomyRouter.post("/undo", async (req: Request, res: Response) => {
+  const { signalId } = req.body ?? {};
+  if (!signalId || typeof signalId !== "string") {
+    return res.status(400).json({ error: "signalId is required" });
+  }
+  try {
+    const { undoAction } = await import("../autonomy/executor.ts");
+    const { registerAllActions } = await import("../autonomy/registerActions.ts");
+    registerAllActions(); // inverses live in the registry; ensure it's populated
+    const result = await undoAction(signalId);
+    res.status(result.ok ? 200 : 400).json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "undo failed" });
+  }
+});
+
 // Run the first acting workflow on demand — schedule-protection.
 // Acts if granted, proposes on the Bridge if not.
 autonomyRouter.post("/schedule-protection/run", async (req: Request, res: Response) => {

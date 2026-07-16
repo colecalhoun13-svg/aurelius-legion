@@ -36,6 +36,7 @@ export const xaiAdapter: EngineAdapter = {
 
       const json: any = await res.json();
       const text = json.choices?.[0]?.message?.content ?? "";
+      if (!text) console.warn("[XAI] empty text — finish_reason:", json.choices?.[0]?.finish_reason);
       return {
         text,
         tokensUsed: json.usage?.total_tokens ?? 0,

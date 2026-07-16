@@ -82,22 +82,26 @@ export async function runScheduleProtection(opts: {
     const slot = [...day.slots].sort((a, b) => b.minutes - a.minutes)[0];
     if (!slot || slot.minutes < blockMinutes) continue;
 
-    // Dedup on a stable per-day key: if this day already has a pending
-    // protection proposal on the Bridge, don't re-file it. Without this a daily
-    // sweep would spam the same holds every morning — the confirm-firehose we
-    // refuse to build.
+    // Dedup on a stable per-day key: if this day ALREADY produced a protection
+    // signal — pending, acted, OR dismissed — don't re-file it. Counting only
+    // "pending" was the bug: once Cole DISMISSED a hold, its status left pending
+    // and the next morning's sweep re-proposed the exact same day forever — the
+    // confirm-firehose we refuse to build. One day = one decision.
     const dedupKey = `schprot:${day.date}`;
     const alreadyProposed = await prisma.bridgeSignal.count({
-      where: { status: "pending", sourceType: "schedule_protection", sourceId: dedupKey },
+      where: { sourceType: "schedule_protection", sourceId: dedupKey },
     });
     if (alreadyProposed > 0) continue;
 
     result.opportunities++;
     const startAt = new Date(slot.start);
     const endAt = new Date(startAt.getTime() + blockMinutes * 60000);
-    const when = `${WEEKDAY[startAt.getDay()]} ${startAt.toISOString().slice(5, 10)} ${startAt
-      .toISOString()
-      .slice(11, 16)}`;
+    // Render in LOCAL time throughout — the old label mixed startAt.getDay()
+    // (local) with toISOString() time (UTC), so it showed the wrong weekday/time
+    // under a non-UTC TZ. One zone, consistently.
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const localHM = `${pad(startAt.getHours())}:${pad(startAt.getMinutes())}`;
+    const when = `${WEEKDAY[startAt.getDay()]} ${pad(startAt.getMonth() + 1)}-${pad(startAt.getDate())} ${localHM}`;
 
     try {
       const exec = await executeAction({
@@ -106,9 +110,7 @@ export async function runScheduleProtection(opts: {
         sourceId: dedupKey,
         prepare: async () => ({
           title: `Protect ${blockMinutes} min of deep work — ${when}`,
-          body: `Your best free window that day is ${slot.minutes} min starting ${startAt
-            .toISOString()
-            .slice(11, 16)}. I'd hold ${blockMinutes} min of it as a focus block.`,
+          body: `Your best free window that day is ${slot.minutes} min starting ${localHM}. I'd hold ${blockMinutes} min of it as a focus block.`,
           domain: "personal",
           payload: { startAt: startAt.toISOString(), endAt: endAt.toISOString(), blockMinutes },
         }),

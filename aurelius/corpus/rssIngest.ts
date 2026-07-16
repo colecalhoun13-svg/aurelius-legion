@@ -59,8 +59,12 @@ export async function pollRssOnce() {
       const xml = await (await fetch(feed.url, { headers: { "User-Agent": "AureliusOS/1.0" } })).text();
       const list = items(xml);
       if (list.length === 0) continue;
+      // Key the per-day digest on the full feed URL, not just the hostname —
+      // two feeds on the same host (e.g. two Substacks, or /rss and /feed) would
+      // otherwise collide on an identical title and the second would be silently
+      // skipped as a dup, losing that feed's reading entirely.
       const title = `Feed digest ${dstr}: ${new URL(feed.url).hostname}`;
-      const dup = await prisma.corpusDocument.findFirst({ where: { title } });
+      const dup = await prisma.corpusDocument.findFirst({ where: { title, sourceUrl: feed.url } });
       if (dup) continue; // one digest per feed per day
       await ingestDocument({
         title,

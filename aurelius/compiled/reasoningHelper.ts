@@ -207,29 +207,97 @@ async function fetchRelevantPatterns(args: {
 export async function loadOperatorPatternsForPrompt(args: {
   operatorId: string;
   limit?: number;
+  role?: "primary" | "secondary";
+  query?: string; // when set, FIT-RANK to this decision by situation, not raw confidence
+  fired?: string[]; // out-param: ids of the patterns that made the cut (outcome loop)
 }): Promise<string> {
   const usableStatuses: PatternStatus[] = ["auto_factual", "confirmed_heuristic"];
-  const patterns = await prisma.compiledPattern.findMany({
-    where: { operatorId: args.operatorId, status: { in: usableStatuses } },
-    orderBy: { confidenceScore: "desc" },
-    take: args.limit ?? 10,
-  });
-  if (patterns.length === 0) return "";
+  const limit = args.limit ?? 10;
 
-  const lines: string[] = ["═══ COMPILED PATTERNS (what you've learned holds true) ═══"];
+  // Trust floor (outcome loop): a rule that kept informing decisions Cole then
+  // corrected decays below this and stops loading — wrong lenses age out instead
+  // of steering forever. Provenance/evidence stay in the DB for audit.
+  const { TRUST_FLOOR } = await import("./outcomeLoop.ts");
+
+  // Candidate pool: usable patterns by confidence. This is the fallback ordering
+  // AND the metadata source (confidence, provenance) for the fit ranking below.
+  let pool = await prisma.compiledPattern.findMany({
+    where: { operatorId: args.operatorId, status: { in: usableStatuses }, confidenceScore: { gte: TRUST_FLOOR } },
+    orderBy: { confidenceScore: "desc" },
+    take: 40,
+  });
+  if (pool.length === 0) return "";
+
+  // FIT by SITUATION, not shared words: cosine the decision against each heuristic's
+  // when-clause. A rule loads because its precondition matches the decision's shape.
+  // Cole-derived heuristics (his own corrections) get a small close-call bonus — his
+  // judgment is the one lens the frozen model can't contain. Falls back to confidence
+  // order only when there's no embedding engine (honest, not the old broken lexical).
+  let patterns = pool;
+  if (args.query && args.query.trim()) {
+    const { retrieveFitPatterns, isColeDerived, COLE_BONUS } = await import("./patternIndex.ts");
+    const fit = await retrieveFitPatterns({ operatorId: args.operatorId, query: args.query, limit: 40 });
+    if (fit) {
+      // Union: a strong semantic match outside the confidence-top-40 still surfaces.
+      const have = new Set(pool.map((p) => p.id));
+      const missingIds = fit.map((f) => f.id).filter((id) => !have.has(id));
+      if (missingIds.length) {
+        const extra = await prisma.compiledPattern.findMany({
+          where: { id: { in: missingIds }, operatorId: args.operatorId, status: { in: usableStatuses }, confidenceScore: { gte: TRUST_FLOOR } },
+        });
+        pool = [...pool, ...extra];
+      }
+      const scoreById = new Map(fit.map((f) => [f.id, f.score]));
+      patterns = [...pool]
+        .map((p) => {
+          const sem = scoreById.get(p.id) ?? 0; // unindexed/no-match → 0, kept as confidence tail
+          const cole = isColeDerived(p.patternSignature, p.evidence as string[]) ? COLE_BONUS : 0;
+          const conf = (p.confidenceScore ?? 0) * 0.001; // epsilon tie-break, never dominates
+          return { p, rank: sem + cole + conf };
+        })
+        .sort((a, b) => b.rank - a.rank)
+        .slice(0, limit)
+        .map((x) => x.p);
+    } else {
+      patterns = pool.slice(0, limit); // no embedding engine → confidence order
+    }
+  } else {
+    patterns = pool.slice(0, limit);
+  }
+
+  const roleTag = args.role === "secondary" ? " · secondary lens" : "";
+  const lines: string[] = [`═══ COMPILED FRAMEWORKS${roleTag} (learned — reason THROUGH these) ═══`];
   for (const p of patterns) {
-    const conf = ((p.confidenceScore ?? 0) * 100).toFixed(0);
-    lines.push(
-      `- [${p.patternType} · ${p.status} · ${conf}% confidence · ${p.supportCount ?? 0} instances]`
-    );
-    const summary = summarizePatternSignature(p.patternSignature);
-    if (summary) lines.push(`  ${summary}`);
+    // Render the RULE, stripped of its citation — the point of activation over
+    // retrieval is that the lens acts without announcing which book it came from
+    // (rendering "source: The Art of War" invites the name-drop). Provenance stays
+    // in the DB for audit, out of the reasoning surface.
+    const rule = renderRule(p.patternSignature);
+    if (rule) {
+      lines.push(`- ${rule}`);
+      args.fired?.push(p.id); // outcome loop: these are the rules that informed the turn
+    }
   }
   lines.push("");
   lines.push(
-    "These are patterns you compiled from repeated experience with Cole — learned, not assumed. Reason FROM them where they apply instead of re-deriving from scratch, and update your view if new evidence contradicts one."
+    "These are frameworks you compiled from Cole's canon and his own decisions. Apply their LOGIC to his specific situation — RUN the reasoning, don't restate the rule. Where two point opposite ways, name the tension and say which one governs here and why — don't average them."
   );
   return lines.join("\n");
+}
+
+// The rule text, citation stripped. Prefers the distilled theme; else summarizes
+// the signature excluding the `source` field.
+function renderRule(sig: any): string {
+  if (sig && typeof sig === "object" && typeof sig.recurringReasoningTheme === "string") {
+    return sig.recurringReasoningTheme.trim();
+  }
+  if (typeof sig !== "object" || sig === null) return "";
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(sig)) {
+    if (key === "source" || value === null || value === undefined) continue;
+    parts.push(typeof value === "object" ? `${key}: ${JSON.stringify(value).slice(0, 80)}` : `${key}: ${value}`);
+  }
+  return parts.join(", ");
 }
 
 /**

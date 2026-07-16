@@ -55,8 +55,12 @@ async function main() {
   let failed = 0;
 
   // ── Knowledge entries ──
+  // NEVER embed scope="system" rows: that's where OAuth refresh/access tokens
+  // live (written with raw prisma, deliberately un-indexed — hard rule 6). A
+  // reindex must not stringify a token blob into VectorEmbedding.chunkText, which
+  // freshness.ts already excludes for the same reason.
   const knowledgeDone = force ? new Set<string>() : await existingSourceIds("knowledge_entry");
-  const knowledge = await prisma.knowledgeEntry.findMany({ where: { active: true } });
+  const knowledge = await prisma.knowledgeEntry.findMany({ where: { active: true, scope: { not: "system" } } });
   for (const k of knowledge) {
     if (knowledgeDone.has(k.id)) { skipped++; continue; }
     const valueStr = typeof k.value === "string" ? k.value : JSON.stringify(k.value);

@@ -12,6 +12,7 @@
 // never re-ingest.
 
 import { prisma } from "../core/db/prisma.ts";
+import { runTraced } from "../core/trace.ts";
 import { ingestDocument } from "./ingest.ts";
 
 function config(): { url: string; token: string } | null {
@@ -43,6 +44,13 @@ async function setCursor(id: number) {
   });
 }
 
+// A doc that fails to ingest holds the cursor so the batch retries it next poll.
+// But a genuinely poison doc (bad encoding, an embedding key that 401s on it
+// forever) would then block the ENTIRE queue permanently. Count attempts per
+// doc id; after MAX_DOC_ATTEMPTS, log loudly, advance past it, and keep going.
+const docAttempts = new Map<number, number>();
+const MAX_DOC_ATTEMPTS = 3;
+
 export async function pollPaperlessOnce() {
   const cfg = config();
   if (!cfg) return { dormant: true as const };
@@ -72,11 +80,28 @@ export async function pollPaperlessOnce() {
         sourceUrl: `${cfg.url}/documents/${d.id}/`,
         domain: "documents",
         triggeredBy: "schedule",
+        // Idempotent on the Paperless doc id: if setCursor fails after a
+        // successful ingest (cold Neon, version conflict), the next poll re-fetches
+        // this same doc — without a dedupKey that re-creates a duplicate corpus
+        // doc + embeddings + memory + signal every 10 min.
+        dedupKey: `paperless:${d.id}`,
       });
       ingested++;
+      docAttempts.delete(d.id);
       await setCursor(d.id);
     } catch (err) {
-      console.warn(`[paperless] ingest failed for doc ${d.id} (cursor holds):`, err);
+      const attempts = (docAttempts.get(d.id) ?? 0) + 1;
+      docAttempts.set(d.id, attempts);
+      if (attempts >= MAX_DOC_ATTEMPTS) {
+        console.error(
+          `[paperless] doc ${d.id} failed ${attempts}× — skipping past it so it can't block the queue:`,
+          (err as any)?.message ?? err
+        );
+        docAttempts.delete(d.id);
+        await setCursor(d.id); // advance past the poison doc
+        continue;
+      }
+      console.warn(`[paperless] ingest failed for doc ${d.id} (attempt ${attempts}/${MAX_DOC_ATTEMPTS}, cursor holds):`, err);
       break; // stop the batch; retry from cursor next poll
     }
   }
@@ -93,8 +118,11 @@ export function startPaperlessPoller() {
   }
   if (timer) return;
   console.log("[paperless] poller live (every 10 min)");
+  // Traced like the rest of the spine so a failing 10-min poll is visible.
   timer = setInterval(() => {
-    pollPaperlessOnce().catch((err) => console.warn("[paperless] poll failed:", err));
+    runTraced("poll", "paperless", () => pollPaperlessOnce()).catch((err) =>
+      console.warn("[paperless] poll failed:", err)
+    );
   }, 10 * 60 * 1000);
-  pollPaperlessOnce().catch(() => {});
+  runTraced("poll", "paperless", () => pollPaperlessOnce()).catch(() => {});
 }

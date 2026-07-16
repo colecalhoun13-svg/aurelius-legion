@@ -15,6 +15,7 @@
 // cashflow / accounts arrive with the CSV import block (needs Cole).
 
 import { prisma } from "../core/db/prisma.ts";
+import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { runResearch } from "../research/researchEngine.ts";
 import { resolveTopicsFor } from "../autonomy/pulse.ts";
 
@@ -55,7 +56,7 @@ export async function runMarketPulse(dateStr?: string) {
     try {
       const r = await runResearch({ query: topic, operator: "wealth", depth: "shallow" });
       // No engine = no digest. Never file an error message as market analysis.
-      if (/engine is not configured|Missing .*_API_KEY/i.test(r.synthesis ?? "")) {
+      if (engineUnavailableText(r.synthesis ?? "")) {
         errors.push(`${topic}: no research engine available`);
       } else if (r.synthesis || r.insights.length > 0) {
         totalInsights += r.insights.length;

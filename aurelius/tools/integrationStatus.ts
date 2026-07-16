@@ -52,6 +52,8 @@ export async function getIntegrations(): Promise<Integration[]> {
 
   const fredLive = registered.has("fred") && has("FRED_API_KEY");
   const visionLive = has("GEMINI_API_KEY");
+  const instagramLive = registered.has("content") && has("INSTAGRAM_ACCESS_TOKEN") && has("INSTAGRAM_BUSINESS_ID");
+  const webLive = registered.has("web") && (has("TAVILY_API_KEY") || has("GEMINI_API_KEY"));
 
   // Memory/recall: what's actually powering semantic recall right now.
   const embProvider = (process.env.EMBEDDINGS_PROVIDER ?? "openai").trim().toLowerCase();
@@ -90,6 +92,13 @@ export async function getIntegrations(): Promise<Integration[]> {
       glyph: "❉",
     },
     {
+      name: "Live web search",
+      status: webLive ? "live" : "config",
+      desc: "Real-time search (grounded, with sources) + page fetch — no more fabricated trends",
+      glyph: "⌕",
+      need: webLive ? undefined : "GEMINI_API_KEY (you have it) or a free TAVILY_API_KEY",
+    },
+    {
       name: "Google Sheets",
       status: sheetsLive ? "live" : "config",
       desc: "Reads athlete sessions, writes feedback + PRs back (training engine)",
@@ -99,8 +108,20 @@ export async function getIntegrations(): Promise<Integration[]> {
     {
       name: "Planning",
       status: registered.has("planning") ? "live" : "config",
-      desc: "Weekly session, overload detection, goal decomposition, candidates",
+      desc: "Plan the day/week, overload detection, goal decomposition — plus change or pause ritual times from chat",
       glyph: "◱",
+    },
+    {
+      name: "Productivity",
+      status: registered.has("productivity") ? "live" : "config",
+      desc: "Tasks, goals, and today's focus from chat — add/complete tasks, add goals, set focus, 'what's on today'",
+      glyph: "☑",
+    },
+    {
+      name: "Autonomy grants",
+      status: registered.has("autonomy") ? "live" : "config",
+      desc: "Manage keyholes conversationally — list, revoke (instant), or grant (files a Bridge confirm; the switch stays your hand)",
+      glyph: "⚿",
     },
     {
       name: "Gmail",
@@ -154,11 +175,13 @@ export async function getIntegrations(): Promise<Integration[]> {
       need: "name your feeds in one conversation (research.rss_feeds)",
     },
     {
-      name: "Instagram Graph",
-      status: "parked",
-      desc: "Content operator's eyes — analytics, trends, drafts",
+      name: "Content / Instagram publish",
+      status: instagramLive ? "live" : "config",
+      desc: "Draft posts in your voice (inward) + publish to Instagram — outward, so every post stops for your one-tap confirm on the Bridge",
       glyph: "▣",
-      need: "business engine — parked for your working session",
+      need: instagramLive
+        ? undefined
+        : "Meta app + IG business account → INSTAGRAM_ACCESS_TOKEN + INSTAGRAM_BUSINESS_ID (docs/SETUP.md). Drafting works keyless now.",
     },
     {
       name: "Cal.com (self-hosted)",

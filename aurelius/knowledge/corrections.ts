@@ -20,6 +20,10 @@ export type CorrectionInput = {
   reason: string;
   after?: unknown; // replacement value, when Cole supplies one
   operatorName?: string;
+  /** reasoning_output only: the exact rules to decay (mirror & mailbox passes
+   * the rules Cole was shown — no address inference). Omitted → fallback grades
+   * the latest unconsumed fired-set. */
+  patternIds?: string[];
 };
 
 export async function recordCorrection(input: CorrectionInput) {
@@ -51,12 +55,38 @@ export async function recordCorrection(input: CorrectionInput) {
     const pattern = await prisma.compiledPattern.findUnique({ where: { id: input.targetId } });
     before = pattern?.patternSignature ?? null;
     if (pattern) {
-      // A corrected pattern stops steering — kept as observation only.
+      // A corrected pattern stops steering — kept as observation only. Its
+      // vector leaves the index too (dead rules crowd the retrieval window).
       await prisma.compiledPattern.update({
         where: { id: input.targetId },
         data: { status: "discarded" },
       });
+      try {
+        const { deleteEmbeddingsForSource } = await import("../retrieval/vectorStore.ts");
+        await deleteEmbeddingsForSource("compiled_pattern", input.targetId);
+      } catch (err) {
+        console.warn("[corrections] vector GC failed (pattern still discarded):", err);
+      }
       applied = true;
+    }
+  } else if (input.targetType === "reasoning_output") {
+    // Cole corrected a DECISION (not a specific rule) → the outcome loop decays
+    // the patterns that informed it. Graded, not fatal: a rule that keeps landing
+    // in corrected decisions falls below the trust floor and stops loading;
+    // Cole's direct hand on a pattern (above) remains the outright kill.
+    // When the mirror named the rules, decay EXACTLY those; else fall back to the
+    // latest unconsumed fired-set.
+    try {
+      const { decayPatterns, decayRecentlyFired } = await import("../compiled/outcomeLoop.ts");
+      const n = input.patternIds?.length
+        ? await decayPatterns({ patternIds: input.patternIds, reason: input.reason })
+        : await decayRecentlyFired({ reason: input.reason });
+      if (n > 0) {
+        applied = true;
+        console.log(`[corrections] decayed ${n} pattern(s) that informed the corrected decision`);
+      }
+    } catch (err) {
+      console.warn("[corrections] outcome decay failed (correction still recorded):", err);
     }
   }
 

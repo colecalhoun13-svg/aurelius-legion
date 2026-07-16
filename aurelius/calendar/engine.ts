@@ -12,6 +12,7 @@
 // every entry point fails honestly with the connect instruction.
 
 import { prisma } from "../core/db/prisma.ts";
+import { runTraced } from "../core/trace.ts";
 import {
   calendarFetch,
   isCalendarConnected,
@@ -105,15 +106,33 @@ export async function syncCalendar(opts: { daysBack?: number; daysAhead?: number
     if (!pageToken) break;
   }
 
-  // Mirror Google-side deletions: anything local in the window that the
-  // sweep didn't see no longer exists upstream.
-  removed += (
-    await prisma.calendarEvent.deleteMany({
-      where: { startAt: { gte: timeMin, lte: timeMax }, externalId: { notIn: seen } },
-    })
-  ).count;
+  // Mirror Google-side deletions: anything local in the window that the sweep
+  // didn't see no longer exists upstream. BUT only when we actually fetched the
+  // whole window — if we hit MAX_PAGES with a live pageToken, pages we never
+  // fetched aren't in `seen`, and pruning would delete real upstream events
+  // (they'd vanish from Today/briefings/availability). Skip the prune then.
+  if (pageToken) {
+    console.warn(`[calendar] sync hit MAX_PAGES with more events remaining — skipping prune to avoid deleting unfetched events`);
+  } else {
+    removed += (
+      await prisma.calendarEvent.deleteMany({
+        where: { startAt: { gte: timeMin, lte: timeMax }, externalId: { notIn: seen } },
+      })
+    ).count;
+  }
 
   console.log(`[calendar] sync: ${upserted} events upserted, ${removed} removed`);
+
+  // Event-driven anticipation (master-class #2): the 15-min sync is where new
+  // conflicts first appear. If something got booked over a protected focus block,
+  // surface it NOW (salience decides whether it also pings the phone) instead of
+  // waiting for tomorrow's briefing. Non-fatal.
+  try {
+    await detectAndSurfaceConflicts(timeMax);
+  } catch (err) {
+    console.warn("[calendar] conflict scan failed (non-fatal):", (err as any)?.message ?? err);
+  }
+
   return { ok: true as const, upserted, removed, window: { from: timeMin, to: timeMax } };
 }
 
@@ -156,6 +175,32 @@ export async function createCalendarEvent(input: {
     update: { title: input.title, startAt: input.startAt, endAt: input.endAt },
   });
   return event;
+}
+
+/**
+ * Delete an event upstream + locally. The INVERSE of createCalendarEvent — this
+ * is what makes a placed schedule-protection hold genuinely one-tap reversible
+ * (master-class #4). Idempotent: a 404/410 upstream (already gone) still clears
+ * the local mirror.
+ */
+export async function deleteCalendarEvent(externalId: string): Promise<{ ok: boolean }> {
+  if (!externalId) throw new Error("deleteCalendarEvent needs an externalId");
+  // A 404/410 means the event is already gone upstream → idempotent success, and
+  // we clear the local mirror. ANY OTHER failure (network, 5xx, or auth lapsed —
+  // calendarFetch throws "not connected" when the token is null, which is a REAL
+  // risk given the ~7-day OAuth refresh expiry) must propagate: if we swallowed it,
+  // returned ok, cleared the mirror, and reported "undone" to Cole, the event would
+  // still exist on Google and the next 15-min sync would silently re-upsert it —
+  // an undo that lies (hard rule 3). So we do NOT clear the mirror on a genuine
+  // failure, and we throw so undoAction keeps the signal "acted" and tells Cole
+  // the undo didn't go through.
+  const res = await calendarFetch(`/calendars/primary/events/${encodeURIComponent(externalId)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 404 && res.status !== 410) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`event delete failed: ${res.status} ${body.slice(0, 150)}`);
+  }
+  await prisma.calendarEvent.deleteMany({ where: { externalId } });
+  return { ok: true };
 }
 
 // ── Reads: always the local mirror ───────────────────────────────────
@@ -233,14 +278,69 @@ export async function findAvailability(opts: {
     }
 
     const windowMinutes = Math.max(0, (windowEnd.getTime() - (i === 0 && now > windowStart ? Math.min(now.getTime(), windowEnd.getTime()) : windowStart.getTime())) / 60000);
+    // LOCAL date, not UTC: the slots above are built with setHours() (local),
+    // so the day label must be the local calendar day too. toISOString() is UTC
+    // and, under a non-UTC TZ (the prod Mac Mini), names a different day near
+    // midnight — the downstream focus-block existence check then queries the
+    // wrong 24h window and a hold can land on the wrong day.
+    const localDate = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
     out.push({
-      date: day.toISOString().slice(0, 10),
+      date: localDate,
       slots,
       busyMinutes: Math.round(busyMinutes),
       freeMinutes: Math.max(0, Math.round(windowMinutes - busyMinutes)),
     });
   }
   return out;
+}
+
+// A protected focus/deep-work block — the thing worth defending from double-booking.
+const FOCUS_RE = /deep\s*work|deep-work|focus block|focus time/i;
+
+/**
+ * Scan the upcoming window for a NON-focus event overlapping a protected focus
+ * block and surface it (once per conflict pair). This is the "anticipates vs
+ * cron" moment: Cole hears about the double-booking when it lands, not the next
+ * morning. Deduped by the two events' ids so a persistent conflict pings once.
+ */
+export async function detectAndSurfaceConflicts(timeMax: Date): Promise<number> {
+  const now = new Date();
+  const events = await prisma.calendarEvent.findMany({
+    where: { endAt: { gt: now }, startAt: { lte: timeMax } },
+    orderBy: { startAt: "asc" },
+  });
+  const isAllDay = (e: any) => !!(e.raw as any)?.allDay;
+  const focus = events.filter((e) => FOCUS_RE.test(e.title) && !isAllDay(e));
+  if (focus.length === 0) return 0;
+
+  const { surfaceSignal } = await import("../core/bridge.ts");
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const fmt = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+  let surfaced = 0;
+  for (const f of focus) {
+    const overlaps = events.filter(
+      (e) => e.id !== f.id && !FOCUS_RE.test(e.title) && !isAllDay(e) && e.startAt < f.endAt && e.endAt > f.startAt
+    );
+    for (const c of overlaps) {
+      const sourceId = `conflict:${f.externalId}:${c.externalId}`;
+      const exists = await prisma.bridgeSignal.count({ where: { sourceType: "calendar_conflict", sourceId } });
+      if (exists > 0) continue;
+      await surfaceSignal({
+        kind: "risk",
+        domain: "personal",
+        sourceType: "calendar_conflict",
+        sourceId,
+        severity: "attention",
+        title: "Conflict on your protected focus time",
+        body: `"${c.title}" (${fmt(c.startAt)}–${fmt(c.endAt)}) overlaps your held "${f.title}". Move one, or tell me to reschedule it.`,
+        dueAt: f.startAt,
+      });
+      surfaced++;
+    }
+  }
+  if (surfaced > 0) console.log(`[calendar] surfaced ${surfaced} focus-time conflict(s)`);
+  return surfaced;
 }
 
 // ── Boot + background sync ───────────────────────────────────────────
@@ -261,8 +361,15 @@ export async function startCalendarSync() {
   if (syncTimer) return;
   // The interval checks connection itself, so completing OAuth mid-run
   // wakes the sync with no restart.
+  // Traced like the rest of the spine (CLAUDE.md: "all traced via core/trace.ts")
+  // so a 15-min sync that starts failing is visible on /traces, not silent.
   syncTimer = setInterval(() => {
-    syncCalendar().catch((err) => console.warn("[calendar] sync failed:", err?.message ?? err));
+    runTraced("poll", "calendar_sync", () => syncCalendar()).catch((err) =>
+      console.warn("[calendar] sync failed:", err?.message ?? err)
+    );
   }, 15 * 60 * 1000);
-  if (connected) syncCalendar().catch((err) => console.warn("[calendar] initial sync failed:", err?.message ?? err));
+  if (connected)
+    runTraced("poll", "calendar_sync", () => syncCalendar()).catch((err) =>
+      console.warn("[calendar] initial sync failed:", err?.message ?? err)
+    );
 }

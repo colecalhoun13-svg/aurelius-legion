@@ -6,6 +6,26 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+type SignalAction = { label: string; action: string; payload?: any };
+type Signal = {
+  id: string;
+  kind: string;
+  severity: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  status?: string;
+  actions?: SignalAction[] | null;
+};
+
+function confirmableAction(s: Signal): SignalAction | undefined {
+  return (s.actions ?? undefined)?.find?.((a) => a?.action === "confirm_action");
+}
+
+function undoableAction(s: Signal): SignalAction | undefined {
+  return (s.actions ?? undefined)?.find?.((a) => a?.action === "undo_action");
+}
+
 type Deck = {
   date: string;
   hero: {
@@ -15,7 +35,10 @@ type Deck = {
     followThrough: number | null;
     attentionSignals: number;
   };
+  biggestRisk: string;
   plan: { focus: string | null } | null;
+  bridge: Signal[];
+  overnight: Signal[];
 };
 
 function localDate(): string {
@@ -71,6 +94,13 @@ const QUOTES: [string, string][] = [
 
 
 
+const SEV: Record<string, string> = {
+  critical: "border-red-400/50",
+  attention: "border-amber-400/50",
+  notice: "border-aurelius-gold/50",
+  info: "border-aurelius-gold/25",
+};
+
 const QUICK_LINKS = [
   { name: "Today", path: "/today", glyph: "☀", desc: "plan · tasks · capture" },
   { name: "Projects", path: "/projects", glyph: "❖", desc: "progress · runway" },
@@ -84,6 +114,7 @@ export default function DeckPage() {
   const [quote] = useState(() => QUOTES[Math.floor(Math.random() * QUOTES.length)]!);
   const [cmd, setCmd] = useState("");
   const [flash, setFlash] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -93,6 +124,57 @@ export default function DeckPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Inline Bridge handling — the deck can clear a signal without a page hop.
+  const act = useCallback(async (id: string, status: string) => {
+    await fetch("/api/today/actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "ackSignal", id, status, date: localDate() }),
+    });
+    await load();
+  }, [load]);
+
+  // Reverse an action Aurelius took on its own (runs its registered inverse).
+  const undo = useCallback(async (id: string) => {
+    if (busy) return;
+    setBusy(id);
+    try {
+      const res = await fetch("/api/autonomy/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ signalId: id }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        window.alert(`Couldn't undo: ${j.error ?? res.status}`);
+      }
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  }, [busy, load]);
+
+  // Cole confirms a gated action → backend runs its finalizer (places the
+  // hold, drafts the reply, …). Same endpoint the Bridge page uses.
+  const confirmAndDo = useCallback(async (id: string) => {
+    if (busy) return;
+    setBusy(id);
+    try {
+      const res = await fetch("/api/autonomy/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ signalId: id }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        window.alert(`Couldn't do that: ${j.error ?? res.status}`);
+      }
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  }, [busy, load]);
 
   const submit = useCallback(async (asCapture: boolean) => {
     const text = cmd.trim();
@@ -121,6 +203,22 @@ export default function DeckPage() {
         {greeting()}, Operator
       </h1>
       <p className="text-neutral-500 text-sm mt-3">{deck?.date ?? ""}</p>
+
+      {/* THE CONFRONTATION — the single biggest risk right now, computed.
+          The deck's job is to name the one thing most likely to cost Cole,
+          not reassure him. Amber when there's something to move; calm gold
+          when nothing's on fire. */}
+      {deck?.biggestRisk && (
+        <p
+          className={`mt-6 max-w-2xl px-8 text-center text-lg leading-snug ${
+            deck.biggestRisk.startsWith("Nothing's on fire")
+              ? "text-neutral-400"
+              : "text-amber-300"
+          }`}
+        >
+          {deck.biggestRisk}
+        </p>
+      )}
 
       {/* The day's quote */}
       <blockquote className="mt-6 max-w-2xl px-8 text-center">
@@ -172,6 +270,70 @@ export default function DeckPage() {
               <div className="text-[10px] uppercase tracking-widest text-neutral-600 mt-0.5">{t.label}</div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* THE BRIDGE, INLINE — pending signals right here, no page hop. Cole
+          rules on them from the landing: confirm a gated action, or clear it. */}
+      {deck?.bridge && deck.bridge.length > 0 && (
+        <div className="mt-10 w-full max-w-xl px-6 space-y-3">
+          <div className="flex items-baseline justify-between px-1">
+            <span className="aurelius-heading text-sm text-aurelius-gold/70">The Bridge</span>
+            <a href="/bridge" className="text-[11px] text-neutral-600 no-underline hover:text-neutral-400">
+              {deck.bridge.length} pending →
+            </a>
+          </div>
+          {deck.bridge.slice(0, 3).map((s) => (
+            <div key={s.id} className={`aurelius-panel-frame p-4 border ${SEV[s.severity] ?? SEV.info} text-left`}>
+              <div className="flex items-start justify-between gap-3">
+                <span className="font-medium text-sm">{s.title}</span>
+                <span className="text-[10px] uppercase tracking-wider text-neutral-600 shrink-0">
+                  {s.kind.replace(/_/g, " ")}
+                </span>
+              </div>
+              {s.body && (
+                <p className="text-xs text-neutral-500 mt-1.5 line-clamp-2 whitespace-pre-line">{s.body}</p>
+              )}
+              <div className="flex gap-2 mt-3 flex-wrap">
+                {confirmableAction(s) && s.status !== "acted" && (
+                  <button onClick={() => confirmAndDo(s.id)} disabled={busy === s.id}
+                    className="text-xs border border-emerald-500/60 rounded-lg px-3 py-1 hover:bg-emerald-500/25 text-emerald-300 font-medium disabled:opacity-50">
+                    {busy === s.id ? "Doing it…" : "Confirm & do it"}
+                  </button>
+                )}
+                <button onClick={() => act(s.id, "acknowledged")}
+                  className="text-xs border border-aurelius-gold/40 rounded-lg px-3 py-1 hover:bg-aurelius-gold/20 text-aurelius-gold">Got it</button>
+                <button onClick={() => act(s.id, "dismissed")}
+                  className="text-xs border border-neutral-600 rounded-lg px-3 py-1 hover:bg-neutral-800 text-neutral-400">Dismiss</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* OVERNIGHT — what Aurelius finalized on its own while Cole was away.
+          Quiet, reviewable; "Acted on it" already, shown for his eye + undo. */}
+      {deck?.overnight && deck.overnight.length > 0 && (
+        <div className="mt-8 w-full max-w-xl px-6">
+          <div className="px-1 mb-2">
+            <span className="aurelius-heading text-sm text-aurelius-gold/70">While you were away</span>
+          </div>
+          <ul className="space-y-1.5">
+            {deck.overnight.map((s) => (
+              <li key={s.id} className="text-xs text-neutral-500 flex items-start gap-2 px-1">
+                <span className="text-emerald-500/70 mt-px">✓</span>
+                <span className="flex-1"><span className="text-neutral-400">{s.title}</span>
+                  <span className="text-neutral-600"> · {s.kind.replace(/_/g, " ")}</span>
+                </span>
+                {undoableAction(s) && s.status !== "undone" && (
+                  <button onClick={() => undo(s.id)} disabled={busy === s.id}
+                    className="text-[11px] border border-amber-500/40 rounded px-2 py-0.5 hover:bg-amber-500/15 text-amber-300/90 disabled:opacity-50 shrink-0">
+                    {busy === s.id ? "…" : "Undo"}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

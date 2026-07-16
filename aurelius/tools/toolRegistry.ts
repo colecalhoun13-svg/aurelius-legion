@@ -66,6 +66,10 @@ export function buildToolCatalog(): string {
   lines.push("");
   lines.push('  [TOOL: tool=<tool_name> action=<action_name> data={...JSON...}]');
   lines.push("");
+  lines.push("If an action takes no fields, omit the data block entirely:");
+  lines.push("");
+  lines.push("  [TOOL: tool=<tool_name> action=<action_name>]");
+  lines.push("");
   lines.push("Tool calls execute synchronously. Use them when Cole's request");
   lines.push("requires real action (logging data, creating events, etc.) — not");
   lines.push("for casual chat.");

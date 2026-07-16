@@ -251,6 +251,23 @@ export async function resolveProposal(
   const valueToApply =
     input.decision === "corrected" ? input.correctedValue : proposal.proposedValue;
 
+  // ATOMIC CLAIM before applying. The check above (status === pending) races: a
+  // Bridge confirm and a chat [KNOWLEDGE_UPDATE_CONFIRM] can both pass it, then
+  // both apply — double-writing knowledge, or one confirming a value the other
+  // denied. Flip pending → decision in a single guarded updateMany; only the
+  // winner (count 1) proceeds to apply. If applying then fails, revert the claim
+  // so Cole can retry.
+  const resolvedAt = new Date();
+  const claim = await prisma.knowledgeProposal.updateMany({
+    where: { id: proposal.id, status: "pending" },
+    data: { status: input.decision, resolvedAt },
+  });
+  if (claim.count === 0) {
+    const fresh = await getProposalById(input.operatorId, input.proposalId);
+    console.warn(`[proposals] proposal ${input.proposalId} resolved by a concurrent turn`);
+    return fresh;
+  }
+
   if (input.decision === "confirmed" || input.decision === "corrected") {
     try {
       await setKnowledge({
@@ -265,15 +282,14 @@ export async function resolveProposal(
       });
     } catch (err) {
       console.error(`[proposals] failed to apply ${input.decision}:`, err);
+      // Release the claim so the confirm can be retried — nothing was applied.
+      await prisma.knowledgeProposal
+        .updateMany({ where: { id: proposal.id, status: input.decision }, data: { status: "pending", resolvedAt: null } })
+        .catch(() => {});
       throw err;
     }
   }
 
-  const resolvedAt = new Date();
-  await prisma.knowledgeProposal.update({
-    where: { id: proposal.id },
-    data: { status: input.decision, resolvedAt },
-  });
   proposal.status = input.decision;
   proposal.resolvedAt = resolvedAt;
 

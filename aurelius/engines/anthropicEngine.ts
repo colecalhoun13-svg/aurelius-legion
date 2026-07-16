@@ -17,7 +17,7 @@ async function runAnthropic({
   model = "claude-sonnet-5",
   systemPrompt,
   userPrompt,
-  maxTokens = 4096,
+  maxTokens = 8192,
 }: RunAnthropicInput): Promise<{ text: string; tokensUsed: number; raw: any }> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -58,7 +58,31 @@ async function runAnthropic({
       };
     }
 
-    const text = json?.content?.[0]?.text ?? "";
+    // Claude returns content as an ARRAY of blocks. Concatenate every text
+    // block — reading only content[0].text drops the reply whenever a non-text
+    // block (e.g. thinking/tool_use) comes first, which surfaces as an empty
+    // answer even though tokens were spent.
+    let text = "";
+    if (Array.isArray(json?.content)) {
+      text = json.content
+        .filter((b: any) => b?.type === "text" && typeof b?.text === "string")
+        .map((b: any) => b.text)
+        .join("")
+        .trim();
+    } else if (typeof json?.content?.[0]?.text === "string") {
+      text = json.content[0].text;
+    }
+
+    if (!text) {
+      // Diagnostic: when the model spent tokens but we got no text, show why.
+      console.warn(
+        "[ANTHROPIC] empty text extracted — block types:",
+        Array.isArray(json?.content) ? json.content.map((b: any) => b?.type) : typeof json?.content,
+        "· stop_reason:",
+        json?.stop_reason
+      );
+    }
+
     const tokensUsed =
       (json?.usage?.input_tokens || 0) + (json?.usage?.output_tokens || 0);
 

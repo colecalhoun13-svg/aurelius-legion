@@ -11,9 +11,20 @@
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const MAX_INLINE_BYTES = 18 * 1024 * 1024; // Gemini inline payload ceiling (~18MB)
 
-function visionModel(): string {
-  return process.env.GEMINI_VISION_MODEL?.trim() || "gemini-2.5-flash";
-}
+// Model IDs get deprecated/renamed by Google — hardcoding one guarantees a 404
+// the day it's retired. Try a list of vision-capable models until one answers,
+// then cache the winner for the process. GEMINI_VISION_MODEL, if set, goes first.
+const VISION_MODEL_CANDIDATES = [
+  process.env.GEMINI_VISION_MODEL?.trim(),
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-flash-latest",
+  "gemini-1.5-flash",
+  "gemini-2.5-pro",
+  "gemini-1.5-pro",
+].filter((m): m is string => !!m);
+
+let cachedVisionModel: string | null = null;
 
 export function visionConfigured(): boolean {
   return !!process.env.GEMINI_API_KEY?.trim();
@@ -38,25 +49,40 @@ const VIDEO_PROMPT = (caption?: string) =>
 async function callGemini(inlineData: { mimeType: string; data: string }, prompt: string): Promise<string> {
   const key = process.env.GEMINI_API_KEY?.trim();
   if (!key) throw new Error("Missing GEMINI_API_KEY — media analysis needs a Gemini key");
-  const res = await fetch(`${GEMINI_BASE}/${visionModel()}:generateContent?key=${key}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }, { inlineData }] }],
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Gemini vision failed (${res.status}): ${body.slice(0, 200)}`);
+
+  const candidates = cachedVisionModel ? [cachedVisionModel] : VISION_MODEL_CANDIDATES;
+  let lastErr = "no models tried";
+
+  for (const model of candidates) {
+    const res = await fetch(`${GEMINI_BASE}/${model}:generateContent?key=${key}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, { inlineData }] }] }),
+    });
+
+    // A 404 means this model is gone/renamed — try the next candidate.
+    if (res.status === 404) {
+      lastErr = `model ${model} unavailable (404)`;
+      cachedVisionModel = null;
+      continue;
+    }
+    // Any other non-OK (quota, bad request, safety) is a real error — surface it.
+    if (!res.ok) {
+      throw new Error(`Gemini vision failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
+    }
+
+    const json: any = await res.json();
+    const text = (json?.candidates?.[0]?.content?.parts ?? [])
+      .map((p: any) => p?.text)
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    cachedVisionModel = model; // remember the one that answered
+    if (!text) throw new Error(`Gemini (${model}) returned no analysis`);
+    return text;
   }
-  const json: any = await res.json();
-  const text = (json?.candidates?.[0]?.content?.parts ?? [])
-    .map((p: any) => p?.text)
-    .filter(Boolean)
-    .join("\n")
-    .trim();
-  if (!text) throw new Error("Gemini returned no analysis");
-  return text;
+
+  throw new Error(`Gemini vision: no available model (tried ${candidates.join(", ")}). Last: ${lastErr}`);
 }
 
 export async function analyzeImage(buffer: Buffer, mimeType: string, caption?: string): Promise<string> {

@@ -73,7 +73,15 @@ async function send(chatId: string | number, text: string) {
 /** Push a message to Cole's chat. No-op (false) when the bridge is dormant. */
 export async function sendToCole(text: string): Promise<boolean> {
   const chat = allowedChat();
-  if (!token() || !chat) return false;
+  if (!token()) return false; // fully dormant — no bot at all, stay quiet (rule 4)
+  if (!chat) {
+    // HALF-configured: token set but no chat id (Cole hasn't sent his first
+    // message). Silently returning false here made rituals compute a briefing,
+    // drop it, and still trace status:"ok" — an observability lie (rule 3). Fail
+    // loudly, once-ish, so the half-wired bridge is visible instead of eating pushes.
+    console.warn("[telegram] push dropped — TELEGRAM_CHAT_ID unset (send the bot a message to bind it).");
+    return false;
+  }
   try {
     await send(chat, text);
     return true;
@@ -234,9 +242,42 @@ async function handleCommand(chatId: string | number, text: string) {
     }
 
     default: {
-      // Plain text — quick capture. Frictionless inbox from anywhere.
+      // Plain text → the FULL chat pipeline (tools, planning, memory, second
+      // brain), the same one the web chat uses — so "add a task", "what's on
+      // today", "plan my day", "grant schedule protection", "draft an IG post"
+      // all work from the phone, not just slash commands. The bot runs in the
+      // backend process, so we hit the local endpoint over loopback. Fall back
+      // to quick-capture only if the pipeline is unreachable or returns nothing.
+      try {
+        const port = process.env.PORT || "3001";
+        // Bounded timeout: this fetch is awaited INSIDE the getUpdates poll loop,
+        // so a hung pipeline (wedged provider, stuck tool) with no timeout would
+        // freeze the entire bot — no further messages processed until restart.
+        // On timeout we abort and fall through to quick-capture.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 90_000);
+        let reply = "";
+        try {
+          const res = await fetch(`http://localhost:${port}/api/aurelius`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text }),
+            signal: ctrl.signal,
+          });
+          const data: any = await res.json().catch(() => ({}));
+          reply = (data?.reply ?? "").toString().trim();
+        } finally {
+          clearTimeout(timer);
+        }
+        if (reply) {
+          await send(chatId, reply);
+          return;
+        }
+      } catch (err) {
+        console.warn("[telegram] chat pipeline unreachable/timed out — capturing to inbox instead:", (err as any)?.message ?? err);
+      }
       await quickCapture({ content: text, captureContext: "telegram" });
-      await send(chatId, "Captured.");
+      await send(chatId, "Captured to your inbox.");
     }
   }
 }
@@ -296,9 +337,11 @@ export function startTelegramBridge() {
         `[telegram] getMe didn't confirm (last: ${lastErr}) — proceeding to poll anyway (token likely fine; sends work independently)`
       );
     }
+    let conflictStreak = 0;
     while (running) {
       try {
         const updates: any[] = await api("getUpdates", { timeout: 50, offset });
+        conflictStreak = 0;
         for (const u of updates) {
           offset = u.update_id + 1;
           const msg = u.message;
@@ -309,7 +352,9 @@ export function startTelegramBridge() {
           const chatId = String(msg.chat.id);
           if (!chat || chatId !== chat) {
             // Not Cole. Echo the id (so Cole can configure) and nothing more.
-            await send(msg.chat.id, `This is a private system. Chat id: ${chatId}`);
+            // Guard the send: a stranger's stale chat throws "chat not found",
+            // which must not bubble to the poll catch and disable the bridge.
+            await send(msg.chat.id, `This is a private system. Chat id: ${chatId}`).catch(() => {});
             continue;
           }
 
@@ -351,7 +396,33 @@ export function startTelegramBridge() {
             await send(msg.chat.id, `That failed: ${err?.message ?? err}`).catch(() => {});
           }
         }
-      } catch (err) {
+      } catch (err: any) {
+        const m = err?.message ?? String(err);
+        // A revoked/rotated token can't be polled away — stop, don't hot-loop
+        // forever spraying getUpdates at Telegram. (The prior code retried EVERY
+        // error every 10s indefinitely, including this permanent one.) Narrow to
+        // AUTH signals only: "not found"/"404" also appears in "chat not found"
+        // from a stranger's stale chat, which must NOT disable the whole bridge.
+        if (/unauthorized|401/i.test(m)) {
+          console.error(
+            `[telegram] TOKEN REJECTED during poll (${m}). Bridge disabled — fix TELEGRAM_BOT_TOKEN + restart.`
+          );
+          running = false;
+          break;
+        }
+        // 409 Conflict = another getUpdates poller is running (a second instance,
+        // or a webhook is set). Retrying at 10s just fights it; back off harder
+        // and cap so logs don't flood. Usually clears when the other poller dies.
+        if (/409|conflict/i.test(m)) {
+          conflictStreak++;
+          const wait = Math.min(60_000, 10_000 * conflictStreak);
+          console.warn(
+            `[telegram] getUpdates conflict (${m}) — another poller/webhook is active. ` +
+              `Backing off ${Math.round(wait / 1000)}s (streak ${conflictStreak}).`
+          );
+          await new Promise((r) => setTimeout(r, wait));
+          continue;
+        }
         console.error("[telegram] poll error (retrying in 10s):", err);
         await new Promise((r) => setTimeout(r, 10_000));
       }

@@ -9,9 +9,11 @@ import express, { type Request, type Response } from "express";
 import cors from "cors";
 
 // Multi-operator routing
-import { routeOperators } from "./router/operatorRouter.ts";
+import { routeOperatorsSemantic, isDecisionQuery } from "./router/operatorRouter.ts";
+import { deliberate, formatDeliberation, stripCouncilTrigger, isCouncilTrigger } from "./council/deliberate.ts";
 // Smart LLM routing
 import { runLLM } from "./llm/runLLM.ts";
+import { routeLLM } from "./llm/router.ts";
 // Memory service (multi-operator aware)
 import {
   saveMemory,
@@ -63,6 +65,24 @@ import { gmailRouter } from "./router/gmailRouter.ts";
 // Structured tracing — every request and scheduled run leaves a LogEntry
 // row the cockpit can read. Telemetry is fire-and-forget by design.
 import { runTraced, requestTracer, logBootMarker } from "./core/trace.ts";
+
+// ─────────────────────────────────────────────────────────────────────────
+// STAY ALIVE — Aurelius is an always-on OS with a scheduled spine (06:00 RSS →
+// 21:30 debrief → weekly sweeps). Node's default is to CRASH the whole process
+// on any unhandled promise rejection or uncaught exception — so one stray throw
+// in a fire-and-forget scheduled job (an unfunded engine, a slept Neon, a
+// Telegram blip) would take the entire OS down until manually restarted. For a
+// single-operator personal system, surviving loudly beats dying silently: log
+// the failure with its origin, keep serving. (These MUST be registered before
+// anything async can throw — hence the top of the file.)
+process.on("unhandledRejection", (reason: any) => {
+  const msg = reason?.stack ?? reason?.message ?? String(reason);
+  console.error(`[FATAL-GUARD] Unhandled promise rejection (surviving): ${msg}`);
+});
+process.on("uncaughtException", (err: any) => {
+  const msg = err?.stack ?? err?.message ?? String(err);
+  console.error(`[FATAL-GUARD] Uncaught exception (surviving): ${msg}`);
+});
 
 const app = express();
 app.use(express.json({ limit: "25mb" })); // room for base64 photos / short clips attached in chat
@@ -185,12 +205,26 @@ async function executeToolDirectives(
 
     if (!result.ok) {
       console.warn(`[tool-call] FAILED — ${result.error}`);
+    } else {
+      console.log(`[tool-call] ok — ${JSON.stringify(result.output ?? {}).slice(0, 300)}`);
     }
 
     executed.push({ directive, result, resolvedClientId });
   }
 
   return executed;
+}
+
+// True when some read action returned literal data rows (sessions, dashboard
+// cells, …). Those are ground truth: even a synthesized prose answer should keep
+// them, so a paraphrase that drifts on a number isn't the only thing Cole sees.
+function hasGroundTruthRows(executed: ExecutedTool[]): boolean {
+  const KEYS = ["rows", "tasks", "goals", "rituals", "athletes", "overdue", "sessionsToReview"];
+  return executed.some(
+    (e) =>
+      e.result.ok &&
+      KEYS.some((k) => Array.isArray((e.result.output as any)?.[k]) && (e.result.output as any)[k].length > 0)
+  );
 }
 
 function summarizeToolResults(executed: ExecutedTool[]): string {
@@ -266,6 +300,25 @@ function summarizeToolResults(executed: ExecutedTool[]): string {
             lines.push(`   • ${s.date} · ${s.client} · ${s.dayTab} · ${s.exerciseCount} exercises · ${s.workingSetCount} working sets`);
           }
         }
+      }
+
+      // Cole's own lane (productivity/planning reads) — the ground truth beneath
+      // any synthesized prose, so a paraphrase that drops or renames a task/goal
+      // isn't the only thing he sees.
+      if (Array.isArray(output.tasks)) {
+        for (const t of output.tasks as any[]) {
+          const due = t.dueDate ? ` (due ${new Date(t.dueDate).toISOString().slice(0, 10)})` : "";
+          lines.push(`   • ${t.title}${t.priority && t.priority !== "normal" ? ` [${t.priority}]` : ""}${due}`);
+        }
+      }
+      if (Array.isArray(output.overdue) && output.overdue.length) {
+        for (const t of output.overdue as any[]) lines.push(`   ⚠ overdue: ${t.title}`);
+      }
+      if (Array.isArray(output.goals) && ex.directive.tool === "productivity") {
+        for (const g of output.goals as any[]) lines.push(`   • ${g.name}${g.progressPct != null ? ` — ${g.progressPct}%` : ""}`);
+      }
+      if (Array.isArray(output.rituals)) {
+        for (const r of output.rituals as any[]) lines.push(`   • ${r.label} ${r.time}${r.enabled === false ? " [paused]" : ""}`);
       }
     }
   }
@@ -512,32 +565,100 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "Message or media is required" });
   }
 
-  // Multimodal chat: Cole attached a photo/video. Aurelius "sees" it — the
-  // analysis is folded into the message so the model reasons over it in
-  // conversation — and remembers it in the second brain (fire-and-forget).
-  if (media?.data && media?.mimeType) {
-    try {
-      const { analyzeMedia, captureMediaNote } = await import("./media/ingestMedia.ts");
-      const { kind, analysis } = await analyzeMedia(
-        Buffer.from(media.data, "base64"),
-        media.mimeType,
-        message.trim() || undefined
-      );
-      message =
-        (message.trim() ? message.trim() + "\n\n" : "") +
-        `[Cole attached a ${kind}. What I can see in it:]\n${analysis}`;
-      captureMediaNote({ kind, analysis, caption: req.body?.message, filename: media.filename }).catch(() => {});
-    } catch (err: any) {
-      message =
-        (message.trim() ? message.trim() + "\n\n" : "") +
-        `[Cole attached a file but I couldn't read it: ${err?.message ?? err}]`;
+  // Multimodal chat: Cole attached one or more photos/videos. Aurelius "sees"
+  // each — the analyses fold into the message so the model reasons over them in
+  // conversation — and remembers each in the second brain (fire-and-forget).
+  // Accepts `media` as a single object (back-compat) or an array (multi-drop).
+  const mediaItems: any[] = Array.isArray(media) ? media : media ? [media] : [];
+  if (mediaItems.length > 0) {
+    const { analyzeMedia, captureMediaNote } = await import("./media/ingestMedia.ts");
+    for (const m of mediaItems) {
+      if (!m?.data || !m?.mimeType) continue;
+      const label = m.filename ? ` (${m.filename})` : "";
+      try {
+        const { kind, analysis } = await analyzeMedia(
+          Buffer.from(m.data, "base64"),
+          m.mimeType,
+          req.body?.message?.trim() || undefined
+        );
+        message =
+          (message.trim() ? message.trim() + "\n\n" : "") +
+          `[Cole attached a ${kind}${label}. What I can see in it:]\n${analysis}`;
+        captureMediaNote({ kind, analysis, caption: req.body?.message, filename: m.filename }).catch(() => {});
+      } catch (err: any) {
+        message =
+          (message.trim() ? message.trim() + "\n\n" : "") +
+          `[Cole attached a file${label} but I couldn't read it: ${err?.message ?? err}]`;
+      }
     }
   }
 
   try {
-    // Multi-operator routing
-    const routing = routeOperators(message);
+    // Multi-operator routing — semantic (embedding-blended) when available,
+    // keyword otherwise (master-class #6).
+    // ── Mirror & mailbox (the trust loop's front door) ──
+    // "why?" shows the rules behind the last decision; replying "rule 2 is
+    // wrong" / "that was wrong" IS the correction, recorded against exactly the
+    // rules Cole is looking at. Cheap regex gates — non-matches fall through.
+    if (taskType !== "reflect") {
+      const { isWhyQuery, handleWhyQuery, handleCorrectionReply, handleRatificationReply } = await import("./compiled/mirror.ts");
+      const mirrorReply = isWhyQuery(message)
+        ? await handleWhyQuery()
+        : (await handleCorrectionReply(message)) ?? (await handleRatificationReply(message));
+      if (mirrorReply) {
+        return res.json({
+          reply: mirrorReply,
+          operators: { primary: "global", secondaries: [] },
+          meta: { mode: "mirror" },
+          reviewed: null,
+        });
+      }
+    }
+
+    // ── Trigger 0: convene the Operator Council (opt-in tribunal) ──
+    // "council this" / "pressure-test this" — Cole wants to SEE the lenses argue,
+    // then resolve in one voice. Strip the trigger BEFORE routing so the trigger
+    // words can't skew the lenses, route ONCE, and hand that routing to the
+    // council — the seats always match the operators the response reports.
+    const councilAsk = taskType !== "reflect" && isCouncilTrigger(message);
+    if (councilAsk) {
+      message = stripCouncilTrigger(message);
+      if (message.trim().length < 4) {
+        return res.json({
+          reply: "The council needs a decision to sit on — give me the call you're weighing.",
+          operators: { primary: "global", secondaries: [] },
+          meta: { mode: "council", council: { ok: false, seats: [], error: "no decision given" } },
+          reviewed: null,
+        });
+      }
+    }
+
+    const routing = await routeOperatorsSemantic(message);
     const { primary, secondaries } = routing;
+
+    let councilFellThrough = false;
+    if (councilAsk) {
+      if (secondaries.length > 0 && message.trim().length >= 4) {
+        const result = await deliberate(message, { routing });
+        return res.json({
+          reply: formatDeliberation(result),
+          operators: { primary, secondaries },
+          meta: {
+            mode: "council",
+            council: {
+              ok: result.ok,
+              seats: result.seats.map((s) => s.operator),
+              error: result.error ?? null,
+            },
+          },
+          reviewed: null,
+        });
+      }
+      // Only one lens routed — a council of one arguing with itself is spend
+      // without disagreement. Answer in Decision Mode instead (lens still
+      // load-bearing, just invisible).
+      councilFellThrough = true;
+    }
 
     // ── Trigger 3: user-explicit reflection ──
     // taskType: "reflect" routes through reflection-specific flow.
@@ -605,6 +726,7 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       console.warn("[aurelius] could not resolve operatorId for", primary, err);
     }
 
+    const wasDecision = isDecisionQuery(message) || councilFellThrough;
     const response = await runLLM({
       taskType: taskType || "chat",
       operators: { primary, secondaries },
@@ -614,10 +736,23 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       options,
       needsRealtime,
       hasMultimodal,
+      // Real decision → run the frameworks through the application harness.
+      // A council ask that couldn't seat two lenses is by definition a decision.
+      decisionMode: wasDecision,
       knowledgeContext: primaryOperatorId
         ? { operatorId: primaryOperatorId, operatorName: primary }
         : undefined,
     });
+
+    // ── Shadow short-circuit (work order #8) ── every decision turn stores its
+    // case + precedent vector; a near-identical past case logs "compiled
+    // judgment would have answered this" WITHOUT skipping anything. The Sunday
+    // judge grades agreement; real skips stay off until the gate earns it.
+    if (wasDecision && response.text) {
+      import("./compiled/shortCircuit.ts")
+        .then(({ recordDecisionCase }) => recordDecisionCase({ decision: message, answer: response.text }))
+        .catch(() => {});
+    }
 
     // ── Pattern 2: extract directives (SAVE + TOOL), persist saves, execute tools ──
     const parsed = extractDirectives(response.text);
@@ -655,9 +790,48 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       const pass2B = await firePass2ForReviewRecent(executedTools);
       pass2Outcomes = [...pass2A, ...pass2B];
 
-      const toolSummary = summarizeToolResults(executedTools);
+      // ── Tool-result feedback: the model READS the results and writes the
+      // answer from them. Without this a search/read tool's output never
+      // reaches the model — it only saw a terse "completed" summary after the
+      // fact, so web.search felt empty even when it worked. One extra LLM turn,
+      // no more tool calls (loop-safe: we strip any directives from it).
+      let synthesized = "";
+      if (executedTools.some((e) => e.result.ok)) {
+        const resultsForModel = executedTools
+          .map((e) => {
+            const head = `${e.directive.tool}.${e.directive.action}`;
+            return e.result.ok
+              ? `[${head}] →\n${JSON.stringify(e.result.output ?? {}, null, 2).slice(0, 7000)}`
+              : `[${head}] FAILED: ${e.result.error}`;
+          })
+          .join("\n\n");
+        try {
+          const synth = await routeLLM({
+            taskType: "chat",
+            operators: { primary, secondaries },
+            input:
+              `${message}\n\n[These are the results of the tool(s) you just ran. Write your answer to Cole USING them — synthesize, be specific, and cite the source links when present. Do NOT call any more tools.]\n\n${resultsForModel}`,
+          });
+          synthesized = extractDirectives(synth.text ?? "").cleanedText.trim();
+        } catch (err) {
+          console.warn("[aurelius] tool-result synthesis failed (non-fatal):", (err as any)?.message ?? err);
+        }
+      }
+
+      if (synthesized) {
+        cleanedText = synthesized; // the real answer replaces the pre-tool preamble
+        // …but never at the cost of ground truth: if a read action returned
+        // literal rows, append them beneath so Cole sees the data, not only the
+        // model's paraphrase of it (silent hallucination is what these prevent).
+        if (hasGroundTruthRows(executedTools)) {
+          const toolSummary = summarizeToolResults(executedTools);
+          if (toolSummary) cleanedText = cleanedText + "\n" + toolSummary;
+        }
+      } else {
+        const toolSummary = summarizeToolResults(executedTools);
+        if (toolSummary) cleanedText = cleanedText + "\n" + toolSummary;
+      }
       const pass2Summary = summarizePass2(pass2Outcomes);
-      if (toolSummary) cleanedText = cleanedText + "\n" + toolSummary;
       if (pass2Summary) cleanedText = cleanedText + "\n" + pass2Summary;
     }
 
@@ -704,6 +878,25 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
         if (!["confirmed", "denied", "corrected"].includes(d.decision)) {
           console.warn("[aurelius] KNOWLEDGE_UPDATE_CONFIRM invalid decision:", d.decision);
           continue;
+        }
+        // SECURITY: a KNOWLEDGE_UPDATE_CONFIRM is a directive the MODEL emits, and
+        // recalled corpus/memory/email text feeds the prompt — so a poisoned source
+        // could induce a confirm. Blast radius is bounded (inward, reversible,
+        // Bridge-surfaced Living-Knowledge writes) EXCEPT one class: enabling
+        // standing auto-apply (scope "autonomy") would widen every future write.
+        // Never let a model directive turn THAT on — it must be an explicit Cole
+        // action on the Bridge/HTTP. Deny + confirm-to-apply only for that scope.
+        if (d.decision === "confirmed") {
+          try {
+            const { getProposalById } = await import("./knowledge/proposals.ts");
+            const prop = await getProposalById(primaryOperatorId, d.proposalId);
+            if (prop && prop.scope === "autonomy") {
+              console.warn(`[aurelius] refusing model-emitted confirm for autonomy-scope proposal ${d.proposalId} — needs an explicit Cole tap`);
+              continue;
+            }
+          } catch (err) {
+            console.warn("[aurelius] autonomy-scope confirm guard check failed:", (err as any)?.message ?? err);
+          }
         }
         try {
           const resolved = await resolveProposal({
@@ -814,6 +1007,29 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       )
       .catch(() => {});
 
+    // Close the compile loop: mine this exchange for a recurring heuristic
+    // (fire-and-forget — never blocks the reply). Everyday chat now compiles, not
+    // just the training room; a repeated kind of exchange becomes a Bridge-
+    // confirmable heuristic that then grounds future prompts.
+    if (primaryOperatorId) {
+      import("./compiled/chatCompiler.ts")
+        .then((m) => m.compileFromChat({ operatorId: primaryOperatorId!, operatorName: primary, input: message, answer: cleanedText }))
+        .catch(() => {});
+    }
+
+    // Telemetry read for the response meta — must NOT sink a fully-computed
+    // answer. A DB blip on this count previously threw inside res.json()'s
+    // object literal (it's in the outer try), discarding the whole turn and
+    // handing Cole an error for a reply that was ready. Compute it defensively.
+    let pendingProposalsAfter = 0;
+    try {
+      pendingProposalsAfter = primaryOperatorId
+        ? (await getPendingProposals(primaryOperatorId)).length
+        : 0;
+    } catch (err) {
+      console.warn("[aurelius] pendingProposals count failed (non-fatal):", (err as any)?.message ?? err);
+    }
+
     return res.json({
       reply: cleanedText,
       operators: { primary, secondaries },
@@ -833,9 +1049,7 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
         pass2Succeeded: pass2Outcomes.filter((o) => o.ok).length,
         knowledgeProposalsCreated: knowledgeProposalsCreated.length,
         knowledgeProposalsResolved: knowledgeProposalsResolved.length,
-        pendingProposalsAfter: primaryOperatorId
-          ? (await getPendingProposals(primaryOperatorId)).length
-          : 0,
+        pendingProposalsAfter,
       },
       tools: executedTools.map((e) => ({
         tool: e.directive.tool,
@@ -877,7 +1091,7 @@ app.post("/api/aurelius/research", async (req: Request, res: Response) => {
     let secondaries: string[] = secondaryOperators ?? [];
 
     if (!primary) {
-      const routing = routeOperators(query);
+      const routing = await routeOperatorsSemantic(query);
       primary = routing.primary;
       if (secondaries.length === 0) {
         secondaries = routing.secondaries;
@@ -971,7 +1185,10 @@ app.post("/api/aurelius/register-sheet", async (req: Request, res: Response) => 
 // Nightly at 21:30: close the day, compute intent-vs-action gap.
 // Sunday 09:00: weekend research pass → proposals for Monday review.
 // ═══════════════════════════════════════════════════════════════════
-import nodeSchedule from "node-schedule";
+// Named schedule registry: every ritual registers by name so Cole can re-time it
+// from chat ("move my brief to 6:30") — the change reschedules the live job and
+// persists. Defaults below stay the source of truth for cadence/day-of-week.
+import { scheduleNamed, applyScheduleOverrides } from "./core/schedule.ts";
 import { runWeekendPulse } from "./autonomy/pulse.ts";
 import {
   ensureRituals,
@@ -980,6 +1197,25 @@ import {
 } from "./rituals/engine.ts";
 import { computeWeeklySnapshot } from "./measurement/scoreboard.ts";
 import { startTelegramBridge, sendToCole } from "./telegram/bot.ts";
+
+// Ordered DB-dependent boot: WAKE Neon first, then run the reads that would
+// otherwise race a cold DB — reap stranded confirms (inward only; see reaper).
+// Schedule-override apply + catch-up are chained after the initiative import
+// registers (below), also after warmup, so a paused/re-timed ritual isn't lost
+// to a cold-DB read at boot.
+(async () => {
+  const { warmupDb } = await import("./core/db/prisma.ts");
+  await warmupDb();
+  const { reapStaleActing } = await import("./autonomy/executor.ts");
+  await reapStaleActing();
+  // Backfill the compiled-lens index so heuristics compiled before semantic
+  // retrieval existed become findable by situation. Idempotent (upsert); honest
+  // no-op without an embedding engine. Fire-and-forget — never blocks boot.
+  import("./compiled/patternIndex.ts")
+    .then(({ indexConfirmedPatterns }) => indexConfirmedPatterns())
+    .then((n) => n > 0 && console.log(`[patternIndex] backfilled ${n} compiled patterns`))
+    .catch((err) => console.warn("[patternIndex] boot backfill skipped:", err?.message ?? err));
+})().catch((err) => console.error("[boot] db-dependent init failed:", err));
 
 ensureRituals().catch((err) => console.error("[rituals] seed failed:", err));
 // The five living documents exist from first boot (founding editions).
@@ -1002,15 +1238,13 @@ import("./corpus/paperlessPoller.ts")
 import("./calendar/engine.ts")
   .then((m) => m.startCalendarSync())
   .catch((err) => console.error("[calendar] init failed:", err));
-// Missed-schedule catch-up: on boot, fire anything that was due today
-// and never ran (downtime swallows node-schedule jobs silently).
-import("./core/catchUp.ts")
-  .then((m) => m.startCatchUp())
-  .catch((err) => console.error("[catchup] init failed:", err));
+// Catch-up is started AFTER applyScheduleOverrides resolves (in the initiative
+// import's .finally below) — otherwise catch-up could read pre-override registry
+// state and fire a paused/moved ritual at its default time.
 
 // Market pulse at 06:30 — crypto/equities/macro digest into the wealth
 // corpus before the day starts. Signals only; Cole makes the calls.
-nodeSchedule.scheduleJob("30 6 * * *", async () => {
+scheduleNamed("market_pulse", "30 6 * * *", "market pulse", async () => {
   try {
     await runTraced("schedule", "market_pulse", async () => {
       const { runMarketPulse } = await import("./wealth/engine.ts");
@@ -1022,7 +1256,7 @@ nodeSchedule.scheduleJob("30 6 * * *", async () => {
 });
 // RSS standing feeds at 06:00 — reading digests into the corpus. Dormant
 // until research.rss_feeds exists in Living Knowledge.
-nodeSchedule.scheduleJob("0 6 * * *", async () => {
+scheduleNamed("rss_ingest", "0 6 * * *", "RSS ingest", async () => {
   try {
     await runTraced("schedule", "rss_ingest", async () => {
       const { pollRssOnce } = await import("./corpus/rssIngest.ts");
@@ -1036,7 +1270,7 @@ nodeSchedule.scheduleJob("0 6 * * *", async () => {
 // Acts on its own if granted (calendar.schedule_protection), else proposes on
 // the Bridge; deduped so it never spams. Runs before the 07:00 briefing so the
 // briefing reflects any holds just placed.
-nodeSchedule.scheduleJob("45 6 * * *", async () => {
+scheduleNamed("schedule_protection", "45 6 * * *", "schedule protection", async () => {
   try {
     await runTraced("schedule", "schedule_protection", async () => {
       const { runScheduleProtection } = await import("./autonomy/workflows/scheduleProtection.ts");
@@ -1047,7 +1281,7 @@ nodeSchedule.scheduleJob("45 6 * * *", async () => {
   }
 });
 // Morning briefing at 07:00 — the day opens with a push, not a blank page.
-nodeSchedule.scheduleJob("0 7 * * *", async () => {
+scheduleNamed("morning_briefing", "0 7 * * *", "morning briefing", async () => {
   try {
     await runTraced("schedule", "morning_briefing", async () => {
       const { briefing } = await generateMorningBriefing();
@@ -1058,7 +1292,7 @@ nodeSchedule.scheduleJob("0 7 * * *", async () => {
   }
 });
 // Nightly debrief at 21:30 — wraps the deterministic pulse (gap math) in voice.
-nodeSchedule.scheduleJob("30 21 * * *", async () => {
+scheduleNamed("nightly_debrief", "30 21 * * *", "nightly debrief", async () => {
   try {
     await runTraced("schedule", "nightly_debrief", async () => {
       const { debrief } = await generateNightlyDebrief();
@@ -1069,7 +1303,7 @@ nodeSchedule.scheduleJob("30 21 * * *", async () => {
   }
 });
 // Midday check at 13:00 — corrective, and silent when Cole is on pace.
-nodeSchedule.scheduleJob("0 13 * * *", async () => {
+scheduleNamed("midday_check", "0 13 * * *", "midday check", async () => {
   try {
     await runTraced("schedule", "midday_check", async () => {
       const { runMiddayCheck } = await import("./planning/tools.ts");
@@ -1081,7 +1315,7 @@ nodeSchedule.scheduleJob("0 13 * * *", async () => {
 });
 // Persona observation — Sunday 17:00: how did Cole actually communicate
 // this week? Calibration proposals land on the bench (propose, never impose).
-nodeSchedule.scheduleJob("0 17 * * 0", async () => {
+scheduleNamed("persona_observer", "0 17 * * 0", "persona observer", async () => {
   try {
     await runTraced("schedule", "persona_observer", async () => {
       const { observeCommunicationStyle } = await import("./persona/observer.ts");
@@ -1092,7 +1326,7 @@ nodeSchedule.scheduleJob("0 17 * * 0", async () => {
   }
 });
 // Weekly planning session — Sunday 18:00, after the research pass digests.
-nodeSchedule.scheduleJob("0 18 * * 0", async () => {
+scheduleNamed("weekly_planning", "0 18 * * 0", "weekly planning", async () => {
   try {
     await runTraced("schedule", "weekly_planning", async () => {
       const { planWeekLite } = await import("./planning/tools.ts");
@@ -1104,7 +1338,7 @@ nodeSchedule.scheduleJob("0 18 * * 0", async () => {
     console.error("[planning] weekly session failed:", err);
   }
 });
-nodeSchedule.scheduleJob("0 9 * * 0", async () => {
+scheduleNamed("weekend_pulse", "0 9 * * 0", "weekend research pulse", async () => {
   try {
     await runTraced("schedule", "weekend_pulse", async () => {
       await runWeekendPulse();
@@ -1118,7 +1352,7 @@ nodeSchedule.scheduleJob("0 9 * * 0", async () => {
 });
 // Knowledge freshness — Sunday 19:00: stale entries get re-check
 // proposals on the bench (capped, cooldown; propose, never impose).
-nodeSchedule.scheduleJob("0 19 * * 0", async () => {
+scheduleNamed("freshness_sweep", "0 19 * * 0", "freshness sweep", async () => {
   try {
     await runTraced("schedule", "freshness_sweep", async () => {
       const { runFreshnessSweep } = await import("./knowledge/freshness.ts");
@@ -1129,19 +1363,79 @@ nodeSchedule.scheduleJob("0 19 * * 0", async () => {
   }
 });
 // Weekly scoreboard — Sunday 20:00, one honest snapshot of both lanes.
-nodeSchedule.scheduleJob("0 20 * * 0", () => {
+scheduleNamed("weekly_scoreboard", "0 20 * * 0", "weekly scoreboard", () => {
   runTraced("schedule", "weekly_scoreboard", () => computeWeeklySnapshot()).catch((err) =>
     console.error("[scoreboard] failed:", err)
   );
 });
+// Curriculum ingest — Sunday 22:00: Aurelius studies the next unit of each
+// field's canon (strategy → Sun Tzu, Musashi, …; wealth → Buffett, Taleb, …;
+// identity → the Stoics), ingests the synthesis into the second brain, and
+// refreshes each touched field's wiki. Auto-learning the literature so every
+// operator reasons from the best thinking in its domain, not the model default.
+scheduleNamed("curriculum_ingest", "0 22 * * 0", "curriculum ingest", () => {
+  runTraced("schedule", "curriculum_ingest", async () => {
+    const { runCurriculumIngest } = await import("./learning/curriculum.ts");
+    return runCurriculumIngest();
+  }).catch((err) => console.error("[curriculum] failed:", err));
+});
+// Decision Curriculum — Sunday 21:00: study COLE's own corrections and propose the
+// decision-heuristics they imply (mined from his reversals, not a book). Runs
+// before the canon curriculum so the week's mined principles are freshest.
+scheduleNamed("decision_curriculum", "0 21 * * 0", "decision curriculum", () => {
+  runTraced("schedule", "decision_curriculum", async () => {
+    const { runDecisionCurriculum } = await import("./learning/decisionCurriculum.ts");
+    return runDecisionCurriculum();
+  }).catch((err) => console.error("[decisionCurriculum] failed:", err));
+});
 // Initiative — 08:00 daily, after the briefing: Aurelius scans its own
 // state and proposes missions. Proposed only; Cole launches.
-import("./autonomy/initiative.ts").then(({ runInitiativePulse }) => {
-  nodeSchedule.scheduleJob("0 8 * * *", () => {
-    runTraced("schedule", "initiative_pulse", () => runInitiativePulse()).catch((err) =>
-      console.error("[initiative] failed:", err)
-    );
+//
+// Every other ritual registers synchronously above; this one is behind a dynamic
+// import. Apply the persisted time/pause overrides ONLY after it registers, so a
+// Cole-paused or re-timed initiative pulse isn't skipped by a boot race (the
+// disabled-set loop does registry.has(name) with no retry).
+import("./autonomy/initiative.ts")
+  .then(({ runInitiativePulse }) => {
+    scheduleNamed("initiative_pulse", "0 8 * * *", "initiative pulse", () => {
+      runTraced("schedule", "initiative_pulse", () => runInitiativePulse()).catch((err) =>
+        console.error("[initiative] failed:", err)
+      );
+    });
+  })
+  .catch((err) => console.error("[initiative] init failed:", err))
+  .finally(async () => {
+    // Every ritual (incl. initiative_pulse) is now registered. Apply Cole-set
+    // time overrides + paused rituals, THEN start catch-up so it sees the live
+    // (overridden/paused) state — never fires a moved or paused ritual.
+    try {
+      await applyScheduleOverrides();
+    } catch (err) {
+      console.error("[schedule] override apply failed:", err);
+    }
+    import("./core/catchUp.ts")
+      .then((m) => m.startCatchUp())
+      .catch((err) => console.error("[catchup] init failed:", err));
   });
+
+// JSON error handler — MUST be last (after all routes). Without it, a body that
+// exceeds the 25MB json limit (e.g. several photos attached at once) throws a
+// body-parser 413 that Express renders as an empty/HTML response; the frontend
+// proxy then sees `{}` and the chat silently does nothing. Turn parser failures
+// into an honest JSON error the UI can show. (Arity 4 = Express error handler.)
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((err: any, _req: Request, res: Response, _next: any) => {
+  if (err?.type === "entity.too.large" || err?.status === 413) {
+    return res.status(413).json({
+      error:
+        "Those attachments are too large to send at once (25MB total). Send fewer/smaller files, or a shorter clip.",
+    });
+  }
+  if (err?.type === "entity.parse.failed" || err?.status === 400) {
+    return res.status(400).json({ error: "Malformed request body." });
+  }
+  console.error("[express] unhandled error:", err?.message ?? err);
+  return res.status(500).json({ error: "Aurelius hit an unexpected server error." });
 });
 
 const PORT = Number(process.env.PORT) || 3001;

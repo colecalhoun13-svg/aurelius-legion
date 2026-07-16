@@ -24,6 +24,7 @@ import { llmResearch } from "./researchAdapters/llmResearchAdapter.ts";
 import { fuseResearchResults } from "./researchFusion.ts";
 
 import { getOperatorProfile } from "../core/operatorProfiles.ts";
+import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { runLLM } from "../llm/runLLM.ts";
 import { saveMemory } from "../memory/memoryService.ts";
 
@@ -43,6 +44,11 @@ const FEATURES = {
   embedding: !!process.env.OPENAI_API_KEY && !!process.env.RESEARCH_EMBEDDINGS_ENABLED,
 };
 
+// Fields where the academic databases (arXiv/PubMed/Semantic Scholar/OpenAlex)
+// actually help. Humanities/classics (strategy, identity, content) get noise from
+// them, so they're skipped there and lean on the LLM tier + (future) web sources.
+const ACADEMIC_DOMAINS = new Set(["training", "athlete", "wealth", "business"]);
+
 // ═══════════════════════════════════════════════════════════════════
 // LLM ERROR DETECTOR
 // Catches API errors, rate limits, and other failure strings so we don't
@@ -51,6 +57,12 @@ const FEATURES = {
 
 function looksLikeLLMError(text: string): boolean {
   if (!text) return true;
+  // The keyless/config strings the adapters actually emit ("Anthropic engine is
+  // not configured. Missing ANTHROPIC_API_KEY.", "GROQ_API_KEY is not
+  // configured.", "All configured LLM providers failed") are matched by the
+  // single-source guard — without this, a keyless synthesis got filed as research
+  // memory (hard rule 3) and then flowed into wiki synthesis.
+  if (engineUnavailableText(text)) return true;
   const lower = text.toLowerCase();
   return (
     lower.includes("api error") ||
@@ -109,18 +121,33 @@ async function synthesizeFindings(
   task: ResearchTask,
   fused: FusedInsight[]
 ): Promise<{ structured: StructuredSynthesis; rawText: string }> {
-  const fusedSummary = fused
+  // Ground the synthesis in the ACTUAL retrieved evidence, not just titles. Each
+  // fused insight carries its source snippet/abstract + provenance — feed those in
+  // so the model synthesizes FROM the literature (PubMed/Semantic Scholar/OpenAlex/
+  // arXiv abstracts), not only from its own memory. This was the titles-only
+  // bottleneck: the abstracts were fetched and then dropped before synthesis.
+  const externalSources = fused.flatMap((f) => f.supportingSources).filter((s) => s.source !== "llm");
+  const evidenceBlock = fused
     .slice(0, 12)
-    .map((f, i) => `  ${i + 1}. (conf ${f.confidence.toFixed(2)}) ${f.insight}`)
+    .map((f, i) => {
+      const s = f.supportingSources[0];
+      const snippet = s?.snippet ? ` — ${s.snippet.slice(0, 400)}` : "";
+      const prov = s && s.source !== "llm" ? ` [${s.source}${s.url ? `: ${s.url}` : ""}]` : "";
+      return `  ${i + 1}. (conf ${f.confidence.toFixed(2)}) ${f.insight}${snippet}${prov}`;
+    })
     .join("\n");
 
+  const grounded = externalSources.length > 0;
   const prompt = `
 Cole asked you to research: "${task.query}"
 
-Below are fused insights from research adapters. Synthesize them into a structured output.
+Below is retrieved evidence from research sources — each with its abstract/snippet
+and provenance. ${grounded
+    ? "Synthesize FROM this evidence; ground your claims in it and prefer what the sources actually say over your prior assumptions."
+    : "No external sources were retrieved for this topic, so synthesize from your own knowledge — be appropriately measured, and do not fabricate citations."}
 
-Fused insights:
-${fusedSummary || "  (no fused insights — base synthesis only on what you know)"}
+Retrieved evidence:
+${evidenceBlock || "  (none retrieved — rely on your own knowledge, stated as such)"}
 
 Produce the response in this exact format:
 
@@ -224,20 +251,27 @@ export async function runResearch(task: ResearchTask): Promise<ResearchOutput> {
   let results: ResearchResult[] = [];
 
   // ── Tier 1: LLM research (always available) ──
+  // Pass the operator so its domain-aware prompt + confidence weighting fire
+  // (was defaulting every field to "strategy").
   try {
-    const llm = await llmResearch(task.query);
+    const llm = await llmResearch(task.query, task.operator);
     results.push(...llm);
   } catch (err) {
     console.warn("[research] llmResearch failed:", err);
   }
 
   // ── Tier 1.5: open academic sources (free, no keys, always on) ──
-  try {
-    const { openSourcesSearch } = await import("./researchAdapters/openSourcesAdapter.ts");
-    const open = await openSourcesSearch(task.query, Math.max(2, Math.floor(limit / 3)));
-    results.push(...open);
-  } catch (err) {
-    console.warn("[research] open sources unavailable:", err);
+  // Domain-gated: arXiv/PubMed/Semantic Scholar/OpenAlex are gold for EMPIRICAL
+  // fields but return irrelevant papers for humanities/classics (Sun Tzu, the
+  // Stoics, copywriting), injecting noise. Only sweep them where they help.
+  if (ACADEMIC_DOMAINS.has(task.operator)) {
+    try {
+      const { openSourcesSearch } = await import("./researchAdapters/openSourcesAdapter.ts");
+      const open = await openSourcesSearch(task.query, Math.max(2, Math.floor(limit / 3)));
+      results.push(...open);
+    } catch (err) {
+      console.warn("[research] open sources unavailable:", err);
+    }
   }
 
   // ── Tier 2: external adapters (feature-flagged) ──
@@ -278,7 +312,8 @@ export async function runResearch(task: ResearchTask): Promise<ResearchOutput> {
   }
 
   // ── Fusion + memory policy filter ──
-  let fused = fuseResearchResults(results);
+  // Pass the operator so its source-weighting fires (was defaulting to "strategy").
+  let fused = fuseResearchResults(results, task.operator);
   fused = applyMemoryPolicy(fused, memory);
 
   // ── Synthesis (LLM produces structured output) ──
@@ -296,8 +331,11 @@ export async function runResearch(task: ResearchTask): Promise<ResearchOutput> {
       rawResults: results,
       savedMemoryIds: [],
       proposalsCreated: 0,
+      grounding: "model-only",
     };
   }
+
+  const grounding: "external" | "model-only" = results.some((r) => r.source !== "llm") ? "external" : "model-only";
 
   // ── Persist to memory ──
   // Each artifact saves as its own memory entry, all tagged with operator + relations.
@@ -393,6 +431,7 @@ export async function runResearch(task: ResearchTask): Promise<ResearchOutput> {
     rawResults: results,
     savedMemoryIds,
     proposalsCreated,
+    grounding,
   };
 }
 

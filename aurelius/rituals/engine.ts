@@ -10,8 +10,11 @@
 // briefing ships anyway — a ritual never fails to fire for lack of a key.
 
 import { prisma } from "../core/db/prisma.ts";
+import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { runLLM } from "../llm/runLLM.ts";
+import { extractDirectives } from "../llm/directiveParser.ts";
 import { getToday } from "../productivity/service.ts";
+import { operatorToday } from "../core/time.ts";
 import { runNightlyPulse } from "../autonomy/pulse.ts";
 
 const RITUAL_DEFS = [
@@ -32,7 +35,7 @@ export async function ensureRituals() {
 
 // LLM text that indicates no engine answered (keyless environment).
 function isEngineUnavailable(text: string): boolean {
-  return /engine is not configured|Missing .*_API_KEY/i.test(text);
+  return engineUnavailableText(text);
 }
 
 async function voiceOver(skeleton: string, instruction: string): Promise<string> {
@@ -42,7 +45,11 @@ async function voiceOver(skeleton: string, instruction: string): Promise<string>
       operators: { primary: "strategy", secondaries: [] },
       input: `${instruction}\n\n═══ TODAY'S GROUND TRUTH ═══\n${skeleton}`,
     });
-    if (!isEngineUnavailable(response.text)) return response.text;
+    // Strip any stray [TOOL:]/[SAVE:] directive — the catalog is in the prompt
+    // but a briefing must never print a raw directive to Cole.
+    if (!isEngineUnavailable(response.text)) {
+      return extractDirectives(response.text ?? "").cleanedText || response.text;
+    }
   } catch (err) {
     console.warn("[rituals] voice-over failed, shipping deterministic briefing:", err);
   }
@@ -88,7 +95,7 @@ async function fileInstance(ritualName: string, outputText: string, structured?:
 // ── Morning briefing ─────────────────────────────────────────────────
 
 export async function generateMorningBriefing(dateStr?: string) {
-  const today = await getToday(dateStr);
+  const today = await getToday(dateStr ?? operatorToday());
 
   const lines: string[] = [];
   lines.push(`Focus: ${today.plan?.focus?.trim() || "(no focus set yet — set one)"}`);

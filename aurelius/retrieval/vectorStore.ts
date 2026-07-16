@@ -16,7 +16,9 @@ export type EmbeddingSourceType =
   | "task"
   | "project"
   | "corpus_doc"
-  | "wiki_page";
+  | "wiki_page"
+  | "compiled_pattern" // a heuristic's WHEN-clause, so decisions retrieve it by situation
+  | "decision_case"; // a past decision's text, so new decisions find their precedents
 
 export type UpsertEmbeddingArgs = {
   sourceType: EmbeddingSourceType;
@@ -38,6 +40,7 @@ export type SimilarChunk = {
   operatorId: string | null;
   domain: string | null;
   similarity: number; // 1 - cosine distance, higher = closer
+  createdAt?: Date;   // for recency-weighted reranking
 };
 
 function toVectorLiteral(embedding: number[]): string {
@@ -114,7 +117,7 @@ export async function searchSimilar(args: {
 
   const rows: any[] = await prisma.$queryRawUnsafe(
     `SELECT "id", "sourceType", "sourceId", "chunkIndex", "chunkText",
-            "operatorId", "domain",
+            "operatorId", "domain", "createdAt",
             1 - ("embedding" <=> $1::vector) AS similarity
      FROM "VectorEmbedding"
      WHERE ${conditions.join(" AND ")}
@@ -132,6 +135,7 @@ export async function searchSimilar(args: {
     operatorId: r.operatorId,
     domain: r.domain,
     similarity: Number(r.similarity),
+    createdAt: r.createdAt ? new Date(r.createdAt) : undefined,
   }));
 }
 
@@ -143,6 +147,26 @@ export async function deleteEmbeddingsForSource(
     `DELETE FROM "VectorEmbedding" WHERE "sourceType" = $1 AND "sourceId" = $2`,
     sourceType,
     sourceId
+  );
+}
+
+/**
+ * Delete stale tail chunks left over when a source is re-embedded into FEWER
+ * chunks than before. upsertEmbedding overwrites chunk 0..N-1 but never removes
+ * old chunk N.., so an edited/shortened source would otherwise leave superseded
+ * text in the index that resurfaces as a confident (wrong) hit. Called after a
+ * re-embed with the new chunk count.
+ */
+export async function deleteEmbeddingChunksFrom(
+  sourceType: EmbeddingSourceType,
+  sourceId: string,
+  fromChunkIndex: number
+): Promise<void> {
+  await prisma.$executeRawUnsafe(
+    `DELETE FROM "VectorEmbedding" WHERE "sourceType" = $1 AND "sourceId" = $2 AND "chunkIndex" >= $3`,
+    sourceType,
+    sourceId,
+    fromChunkIndex
   );
 }
 

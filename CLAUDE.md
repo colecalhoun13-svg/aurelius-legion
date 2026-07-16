@@ -65,7 +65,11 @@ else proposes) · 07:00 morning briefing · 08:00 initiative ·
 13:00 midday check (silent when on pace) · 21:30 debrief · Sun 09:00 weekend
 sweep → wiki · Sun 17:00 persona observer · Sun 18:00 weekly planning ·
 Sun 19:00 freshness sweep ·
-Sun 20:00 scoreboard · every 15 min calendar sync · every 10 min Paperless.
+Sun 20:00 scoreboard · Sun 21:00 decision curriculum (mine Cole's corrections →
+heuristics; judge fired-and-corrected rules → gated retire proposals; trust
+rises only on Cole's explicit ratification, never on silence) ·
+Sun 22:00 curriculum ingest (auto-learn each field's canon) ·
+every 15 min calendar sync · every 10 min Paperless.
 
 ## Parked (do not build speculatively)
 

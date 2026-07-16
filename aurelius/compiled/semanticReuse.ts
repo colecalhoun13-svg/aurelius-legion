@@ -14,6 +14,7 @@
 // which is exactly what that metric is for.
 
 import { prisma } from "../core/db/prisma.ts";
+import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { semanticRecall } from "../retrieval/retrieve.ts";
 import { embedSourceSafe } from "../retrieval/embedPipeline.ts";
 
@@ -22,9 +23,7 @@ const FRESH_DAYS = 14;   // knowledge moves; stale conclusions don't serve
 const MIN_QUESTION = 12; // chars — below this, matching is noise
 const MIN_ANSWER = 40;   // don't compile one-word replies
 
-function engineUnavailableText(text: string): boolean {
-  return /engine is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(text);
-}
+// engineUnavailableText now imported from llm/nonAnswer.ts (single source of truth).
 
 /** Only these task types are semantically re-servable — never realtime. */
 const REUSABLE_TASK_TYPES = new Set(["chat", "summary", "analysis", "quick_reply"]);
@@ -53,6 +52,10 @@ export async function tryReuseAnswer(args: {
 
     const entry = await prisma.reasoningCacheEntry.findUnique({ where: { id: top.sourceId } });
     if (!entry || entry.domain !== "chat_reuse") return null; // training cache has its own reader
+    // Operator isolation: recall isn't scoped by operator, so a near-duplicate
+    // question could surface ANOTHER operator's cached answer. Only reuse this
+    // operator's own compiled understanding.
+    if (entry.operatorId !== args.operatorId) return null;
     if (Date.now() - entry.createdAt.getTime() > FRESH_DAYS * 86400_000) return null;
 
     // Summary is stored as "Q: ...\nA: ..." — serve only the answer.
@@ -84,6 +87,10 @@ export async function recordAnswer(args: {
   if (args.input.trim().length < MIN_QUESTION) return;
   if (args.answer.trim().length < MIN_ANSWER) return;
   if (engineUnavailableText(args.answer)) return; // never file error text as knowledge
+  // Never cache an answer that ran a TOOL — its content is live/state-dependent
+  // (today's tasks, a web result, an inbox). Re-serving the frozen prose 14 days
+  // later would hand back stale data. Only pure-reasoning answers are reusable.
+  if (/\[TOOL:/i.test(args.answer)) return;
 
   // Direct create (not writeCache): writeCache auto-embeds the summary,
   // but reuse must match QUESTION-to-question — embedding the Q+A blob

@@ -18,6 +18,7 @@
 // always; missions never touch Living Knowledge directly, never act outward.
 
 import { prisma } from "../core/db/prisma.ts";
+import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { runLLM } from "../llm/runLLM.ts";
 import { runResearch } from "../research/researchEngine.ts";
 import { semanticRecall } from "../retrieval/retrieve.ts";
@@ -170,7 +171,7 @@ Write the result directly — tactical, grounded in the material above, no fille
   });
   // No engine = no synthesis. Fail honestly rather than filing (and
   // ingesting into the corpus) an error message dressed as a report.
-  if (/engine is not configured|Missing .*_API_KEY/i.test(response.text)) {
+  if (engineUnavailableText(response.text)) {
     throw new Error("no LLM engine available for synthesis");
   }
   return response.text;
@@ -262,6 +263,18 @@ export async function reportMission(missionId: string, outputs: string[]) {
 // ── Orchestrator ─────────────────────────────────────────────────────
 
 export async function runMission(missionId: string) {
+  // Atomic run-claim: the initiative auto-run and a Cole tap (or a double-click)
+  // can both reach here for the same mission. Without a claim, planMission's
+  // deleteMany/createMany run twice — steps deleted mid-execute, double LLM spend,
+  // duplicate corpus ingest. Flip proposed/planned → running; bail if we lost.
+  const claim = await prisma.mission.updateMany({
+    where: { id: missionId, status: { in: ["proposed", "planned"] } },
+    data: { status: "running", startedAt: new Date() },
+  });
+  if (claim.count === 0) {
+    console.log(`[missions] ${missionId} already running/finished — skipping duplicate run`);
+    return prisma.mission.findUnique({ where: { id: missionId } });
+  }
   try {
     await planMission(missionId);
     const outputs = await executeMission(missionId);

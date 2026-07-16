@@ -1,0 +1,257 @@
+// aurelius/compiled/outcomeLoop.ts
+//
+// THE OUTCOME LOOP (decision spine #2) — the error signal the lens was missing.
+//
+// Every heuristic was born at confidenceScore 0.5 and NOTHING ever moved it: a
+// rule Cole kept overriding stayed exactly as trusted as one that earned ten good
+// calls. The lens accumulated; it never sharpened. This closes that:
+//
+//   FIRE    — decision turns record which patterns actually informed the answer
+//             (a queryable trace row; also the audit trail for "what informed that?").
+//   DECAY   — when Cole corrects a recent decision, the patterns that informed it
+//             lose confidence (bounded). Repeatedly-wrong rules fall below the
+//             TRUST_FLOOR and stop loading — decayed out, not silently forever-on.
+//   REINFORCE — patterns that keep informing decisions WITHOUT drawing a
+//             correction gain a little (weak positive evidence, capped well below
+//             what Cole's explicit confirm asserts).
+//
+// Asymmetry is deliberate: one correction outweighs several quiet weeks. Cole's
+// explicit hand stays the strongest signal in the system (a direct correction on a
+// pattern still discards it outright — see knowledge/corrections.ts).
+
+import { prisma } from "../core/db/prisma.ts";
+
+export const DECAY_STEP = 0.12;       // one corrected decision costs real trust
+export const REINFORCE_STEP = 0.02;   // surviving live fire earns a little
+export const CONFIDENCE_MIN = 0.05;
+export const REINFORCE_CAP = 0.9;     // implicit evidence never rivals explicit confirm
+export const TRUST_FLOOR = 0.15;      // below this a pattern stops loading into prompts
+
+const FIRED_MSG = "decision:patterns_fired";
+const DECAYED_MSG = "decision:patterns_decayed";
+
+async function traceOperatorId(): Promise<string | null> {
+  const { resolveOperatorId } = await import("../knowledge/store.ts");
+  return resolveOperatorId("global").catch(() => null);
+}
+
+/**
+ * Record which compiled patterns informed a decision turn. Awaitable (unlike
+ * traceEvent) so tests and callers that need read-after-write can rely on it;
+ * the router calls it fire-and-forget. The row doubles as the audit trail —
+ * provenance stays OUT of the answer (invisible lens) but IN the system.
+ */
+export async function recordPatternsFired(patternIds: string[], decision: string): Promise<void> {
+  if (patternIds.length === 0) return;
+  const operatorId = await traceOperatorId();
+  if (!operatorId) return;
+  const { currentTraceId } = await import("../core/traceContext.ts");
+  const traceId = currentTraceId();
+  await prisma.logEntry.create({
+    data: {
+      operatorId,
+      type: "trace",
+      level: "info",
+      message: FIRED_MSG,
+      context: {
+        kind: "decision",
+        name: "patterns_fired",
+        patternIds,
+        decision: decision.slice(0, 200),
+        ...(traceId ? { traceId } : {}),
+      } as any,
+    },
+  });
+}
+
+/** Bounded confidence adjustment with an evidence note (audit trail in the row). */
+export async function adjustPatternConfidence(patternId: string, delta: number, note: string): Promise<number | null> {
+  const p = await prisma.compiledPattern.findUnique({ where: { id: patternId } });
+  if (!p) return null;
+  const cur = p.confidenceScore ?? 0;
+  // A reward must never lower trust: above the cap, reinforcement is a no-op
+  // (the old min() clamp wrote a 1.0 pattern DOWN to 0.9 — reward as punishment).
+  const next =
+    delta > 0
+      ? cur >= REINFORCE_CAP
+        ? cur
+        : Math.min(REINFORCE_CAP, cur + delta)
+      : Math.max(CONFIDENCE_MIN, cur + delta);
+  if (next === cur) return next;
+  await prisma.compiledPattern.update({
+    where: { id: patternId },
+    data: { confidenceScore: next, evidence: { push: `outcome: ${note}` } },
+  });
+  return next;
+}
+
+/**
+ * Decay EXACTLY the named patterns (the correction front door passes the rules
+ * Cole was looking at — no address inference). Facts are exempt: a correction
+ * about judgment must never erase an auto-compiled FACT that merely sat in the
+ * prompt; discarded patterns are already dead. Emits a decayed marker so
+ * grading never rewards a rule in the same breath it was punished.
+ */
+export async function decayPatterns(args: { patternIds: string[]; reason: string }): Promise<number> {
+  const ids = [...new Set(args.patternIds)].filter((v) => typeof v === "string" && v.length > 0);
+  if (ids.length === 0) return 0;
+  const eligible = await prisma.compiledPattern.findMany({
+    where: { id: { in: ids }, status: { notIn: ["auto_factual", "discarded"] } },
+    select: { id: true },
+  });
+
+  let decayed = 0;
+  for (const { id } of eligible) {
+    const next = await adjustPatternConfidence(id, -DECAY_STEP, `decayed — Cole corrected a decision this informed (${args.reason.slice(0, 120)})`);
+    if (next !== null) {
+      // The counter is the durable record — monotone, never saturates, and the
+      // short-circuit gate reads it (confidence is only the floor veto).
+      await prisma.compiledPattern.update({
+        where: { id },
+        data: { correctionsSinceConfirm: { increment: 1 } },
+      });
+      await protectConfirmedRule(id);
+      decayed++;
+    }
+  }
+  const operatorId = await traceOperatorId();
+  if (operatorId && decayed > 0) {
+    await prisma.logEntry.create({
+      data: {
+        operatorId, type: "trace", level: "info", message: DECAYED_MSG,
+        context: { kind: "decision", name: "patterns_decayed", patternIds: eligible.map((e) => e.id), reason: args.reason.slice(0, 200) } as any,
+      },
+    });
+  }
+  return decayed;
+}
+
+/**
+ * Fallback when a correction arrives WITHOUT naming rules (no front-door
+ * context): grade the most recent UNCONSUMED fired-set within the window, then
+ * consume it — a second correction can never double-decay the same event.
+ */
+export async function decayRecentlyFired(args: { reason: string; withinHours?: number }): Promise<number> {
+  const withinHours = args.withinHours ?? 48;
+  // Consumed-filter in code: a JSON-path NOT-equals in SQL silently drops rows
+  // where the key is absent (NULL three-valued logic), which is every fresh row.
+  const recent = await prisma.logEntry.findMany({
+    where: {
+      type: "trace",
+      message: FIRED_MSG,
+      createdAt: { gte: new Date(Date.now() - withinHours * 3600_000) },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+  });
+  const fired = recent.find((r) => (r.context as any)?.consumed !== true);
+  if (!fired) return 0;
+  const ids: string[] = ((fired.context as any)?.patternIds ?? []).filter((v: any) => typeof v === "string");
+  if (ids.length === 0) return 0;
+
+  // Consume BEFORE decaying — even if a decay write fails midway, the event
+  // can't be re-graded (idempotency beats completeness for punishment).
+  await prisma.logEntry.update({
+    where: { id: fired.id },
+    data: { context: { ...(fired.context as any), consumed: true } as any },
+  });
+  return decayPatterns({ patternIds: ids, reason: args.reason });
+}
+
+/**
+ * CONFIRMED-RULE PROTECTION (Outsider's finding #3): a rule COLE RATIFIED must
+ * never die silently. When decay would push a confirmed_heuristic below the
+ * trust floor, it clamps AT the floor — it keeps loading — and a Bridge signal
+ * asks Cole to retire it (pattern.retire is an unknown class → always gated,
+ * fires only on his tap). Ignore the signal and the rule survives at minimum
+ * trust; only his hand kills what his hand confirmed.
+ */
+async function protectConfirmedRule(patternId: string): Promise<void> {
+  const p = await prisma.compiledPattern.findUnique({ where: { id: patternId } });
+  if (!p || p.status !== "confirmed_heuristic") return;
+  if ((p.confidenceScore ?? 0) >= TRUST_FLOOR) return;
+
+  await prisma.compiledPattern.update({
+    where: { id: patternId },
+    data: { confidenceScore: TRUST_FLOOR, evidence: { push: "outcome: clamped at trust floor — retirement proposed to Cole" } },
+  });
+
+  const sourceId = `pattern-retire:${patternId}`;
+  const already = await prisma.bridgeSignal.count({ where: { sourceType: "heuristic_retire", sourceId } });
+  if (already > 0) return;
+  const rule = ((p.patternSignature as any)?.recurringReasoningTheme ?? "a compiled rule").toString().slice(0, 200);
+  try {
+    const { executeAction } = await import("../autonomy/executor.ts");
+    await executeAction({
+      actionClass: "pattern.retire",
+      sourceType: "heuristic_retire",
+      sourceId,
+      prepare: async () => ({
+        title: "A rule you confirmed keeps missing",
+        body:
+          `“${rule}” has drawn ${(p.correctionsSinceConfirm ?? 0) + 1} correction(s) since you confirmed it.\n\n` +
+          `Confirm to retire it. Ignore and it keeps loading at minimum trust — your hand confirmed it, so only your hand kills it.`,
+        domain: "personal",
+        payload: { patternId },
+      }),
+    });
+  } catch (err) {
+    console.warn("[outcomeLoop] retire proposal failed (rule stays clamped at floor):", (err as any)?.message ?? err);
+  }
+}
+
+/**
+ * RATIFICATION — the ONLY way trust rises (red-team amendment: silence never
+ * rewards; the old reinforce-on-quiet-weeks saturated everything at the cap
+ * within ~15 Sundays and made the number meaningless). When Cole explicitly
+ * endorses a decision ("good call"), the rules that informed it earn:
+ * validatedCount++ and ratifiedCount++ (the monotone counters the short-circuit
+ * gate reads) plus a small confidence raise — which is also the recovery path
+ * for a rule that took collateral decay but keeps proving out.
+ */
+export async function ratifyPatterns(args: { patternIds: string[]; note: string }): Promise<number> {
+  const ids = [...new Set(args.patternIds)].filter((v) => typeof v === "string" && v.length > 0);
+  if (ids.length === 0) return 0;
+  const eligible = await prisma.compiledPattern.findMany({
+    where: { id: { in: ids }, status: { not: "discarded" } },
+    select: { id: true },
+  });
+
+  let ratified = 0;
+  for (const { id } of eligible) {
+    await prisma.compiledPattern.update({
+      where: { id },
+      data: { validatedCount: { increment: 1 }, ratifiedCount: { increment: 1 } },
+    });
+    await adjustPatternConfidence(id, REINFORCE_STEP, `ratified — Cole endorsed a decision this informed (${args.note.slice(0, 120)})`);
+    ratified++;
+  }
+  return ratified;
+}
+
+/**
+ * Ratify the latest unconsumed fired-set (fallback when no mirror was shown).
+ * Consumes the event — repeated "good call" can't ratchet the same decision.
+ */
+export async function ratifyRecentDecision(args: { note: string; withinHours?: number }): Promise<number> {
+  const withinHours = args.withinHours ?? 48;
+  const recent = await prisma.logEntry.findMany({
+    where: {
+      type: "trace",
+      message: FIRED_MSG,
+      createdAt: { gte: new Date(Date.now() - withinHours * 3600_000) },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+  });
+  const fired = recent.find((r) => (r.context as any)?.consumed !== true);
+  if (!fired) return 0;
+  const ids: string[] = ((fired.context as any)?.patternIds ?? []).filter((v: any) => typeof v === "string");
+  if (ids.length === 0) return 0;
+
+  await prisma.logEntry.update({
+    where: { id: fired.id },
+    data: { context: { ...(fired.context as any), consumed: true } as any },
+  });
+  return ratifyPatterns({ patternIds: ids, note: args.note });
+}

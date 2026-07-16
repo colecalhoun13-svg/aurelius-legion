@@ -11,13 +11,48 @@ import {
   detectOverload,
   breakGoalIntoSteps,
   planWeekLite,
+  planDay,
 } from "../../planning/tools.ts";
+import { setSchedule, listSchedules, setEnabled } from "../../core/schedule.ts";
 
 export const planningAdapter: ToolAdapter = {
   name: "planning",
   description:
-    "Planning & scheduling: analyze the week, detect overload (calendar-aware when synced), decompose goals into proposed tasks, run the weekly planning session.",
+    "Planning & scheduling: plan the day, analyze the week, detect overload (calendar-aware when synced), decompose goals into proposed tasks, run the weekly planning session, and change the times of Aurelius's daily/weekly rituals (morning briefing, midday check, nightly debrief, etc.).",
   actions: [
+    {
+      name: "plan_day",
+      description:
+        "Plan TODAY: the one priority, attack order for open items, risk (overload/overdue/calendar), and pace. Files today's plan. Use for 'plan my day' / 'what should I do today'.",
+      dataSchema: "{} (no fields)",
+    },
+    {
+      name: "list_schedule",
+      description:
+        "List the current times of all Aurelius rituals (morning briefing, midday check, nightly debrief, weekly sweeps). Use for 'what's my schedule' / 'when's my briefing'.",
+      dataSchema: "{} (no fields)",
+    },
+    {
+      name: "set_schedule",
+      description:
+        "Change the time of a ritual. Takes effect immediately and persists. Use for 'move my morning brief to 6:30' / 'change the debrief to 10pm'.",
+      dataSchema:
+        '{ ritual: string (e.g. "morning briefing", "midday check", "nightly debrief"), time: string (e.g. "6:30", "7am", "22:00") }',
+      example: '[TOOL: planning.set_schedule {"ritual": "morning briefing", "time": "6:30"}]',
+    },
+    {
+      name: "pause_ritual",
+      description:
+        "Pause a ritual so it stops firing (and isn't caught up) until resumed. Persists. Use for 'pause RSS' / 'stop the nightly debrief' / 'mute the midday check'.",
+      dataSchema: '{ ritual: string }',
+      example: '[TOOL: planning.pause_ritual {"ritual": "nightly debrief"}]',
+    },
+    {
+      name: "resume_ritual",
+      description: "Resume a paused ritual at its current time. Use for 'turn RSS back on' / 'resume the debrief'.",
+      dataSchema: '{ ritual: string }',
+      example: '[TOOL: planning.resume_ritual {"ritual": "nightly debrief"}]',
+    },
     {
       name: "analyze_week",
       description: "Operator Score with component breakdown, insights, done/created counts, active goals.",
@@ -46,6 +81,49 @@ export const planningAdapter: ToolAdapter = {
 
   async run(action, data): Promise<ToolAdapterResult> {
     switch (action) {
+      case "plan_day": {
+        const r = await planDay();
+        return {
+          ok: true,
+          output: {
+            summary: `today's plan: ${r.openCount} open, ${r.overdueCount} overdue${r.overloaded ? ", OVERLOADED" : ""}`,
+            plan: r.plan,
+            ...r,
+          },
+        };
+      }
+      case "list_schedule": {
+        const rows = listSchedules();
+        return {
+          ok: true,
+          output: {
+            summary: rows
+              .map((r) => `${r.label} ${r.time}${r.cadence === "Sundays" ? " (Sun)" : ""}${r.enabled ? "" : " [paused]"}`)
+              .join(" · "),
+            rituals: rows,
+          },
+        };
+      }
+      case "set_schedule": {
+        if (!data?.ritual || !data?.time) {
+          return { ok: false, output: null, error: 'ritual and time required, e.g. {"ritual":"morning briefing","time":"6:30"}' };
+        }
+        const r = await setSchedule(String(data.ritual), String(data.time));
+        if (!r.ok) return { ok: false, output: null, error: r.error };
+        return { ok: true, output: { summary: `${r.label} → ${r.time} (${r.cadence})`, ...r } };
+      }
+      case "pause_ritual": {
+        if (!data?.ritual) return { ok: false, output: null, error: "ritual required" };
+        const r = await setEnabled(String(data.ritual), false);
+        if (!r.ok) return { ok: false, output: null, error: r.error };
+        return { ok: true, output: { summary: `Paused ${r.label} — it won't fire until you resume it.`, ...r } };
+      }
+      case "resume_ritual": {
+        if (!data?.ritual) return { ok: false, output: null, error: "ritual required" };
+        const r = await setEnabled(String(data.ritual), true);
+        if (!r.ok) return { ok: false, output: null, error: r.error };
+        return { ok: true, output: { summary: `Resumed ${r.label}.`, ...r } };
+      }
       case "analyze_week": {
         const r = await analyzeWeek();
         return { ok: true, output: { summary: `score ${r.score}/100, ${r.tasksDone} done last week`, ...r } };

@@ -9,7 +9,7 @@
 // anything missed.
 
 import { getEmbeddingAdapter } from "./embeddingAdapter.ts";
-import { upsertEmbedding, type EmbeddingSourceType } from "./vectorStore.ts";
+import { upsertEmbedding, deleteEmbeddingChunksFrom, type EmbeddingSourceType } from "./vectorStore.ts";
 
 export type EmbedSourceArgs = {
   sourceType: EmbeddingSourceType;
@@ -69,6 +69,11 @@ export async function embedSource(args: EmbedSourceArgs): Promise<number> {
       domain: args.domain ?? null,
     });
   }
+  // Purge any stale tail chunks from a prior, longer version of this source.
+  // Without this, re-embedding shortened content (a wiki page trimmed from 3
+  // chunks to 1, a knowledge value that drops below the chunk boundary) leaves
+  // superseded chunks in the index that resurface as confident, wrong hits.
+  await deleteEmbeddingChunksFrom(args.sourceType, args.sourceId, chunks.length);
   return chunks.length;
 }
 

@@ -18,6 +18,10 @@ import { getKnowledge, resolveOperatorId } from "../knowledge/store.ts";
 import { computeWeeklySnapshot } from "../measurement/scoreboard.ts";
 import { runInitiativePulse } from "../autonomy/initiative.ts";
 import { synthesizeWikiPage } from "../wiki/engine.ts";
+import { getDeck } from "../productivity/service.ts";
+import { routeOperators, routeOperatorsSemantic } from "../router/operatorRouter.ts";
+import { withTrace, currentTraceId } from "../core/traceContext.ts";
+import { getTraceThread } from "../observability/traceThreads.ts";
 
 let passed = 0;
 let failed = 0;
@@ -217,6 +221,123 @@ async function main() {
   await prisma.conversationTurn.deleteMany({ where: { content: { contains: TAG } } });
   await prisma.knowledgeProposal.deleteMany({ where: { intentClassId: "persona_calibration" } });
 
+  console.log("── compile loop: everyday chat mines a confirmable heuristic ──");
+  {
+    const { compileFromChat, confirmHeuristic } = await import("../compiled/chatCompiler.ts");
+    const { resolveOperatorId } = await import("../knowledge/store.ts");
+    const opId = await resolveOperatorId("global");
+    if (!opId) {
+      check("compile loop (skipped — no global operator in sandbox)", true);
+    } else {
+      const input = `${TAG} how should I structure my athlete deadlift accessory programming`;
+      const answer =
+        `Anchor accessory work to the main deadlift pattern: hamstrings and upper back, moderate volume, progress reps before load.`;
+      // 3 similar exchanges → a proposed heuristic (2 don't cross the threshold).
+      for (let i = 0; i < 3; i++) await compileFromChat({ operatorId: opId, operatorName: "strategy", input, answer });
+
+      const proposed = await prisma.compiledPattern.findMany({
+        where: { operatorId: opId, domain: "chat_compiled", status: "proposed_heuristic" },
+      });
+      check("3 similar chat exchanges compile into one proposed heuristic", proposed.length === 1);
+
+      const pid = proposed[0]?.id;
+      const sig = pid
+        ? await prisma.bridgeSignal.findFirst({ where: { sourceType: "heuristic_confirm", sourceId: `pattern:${pid}` } })
+        : null;
+      check("the heuristic is gated onto the Bridge for a one-tap confirm", !!sig && sig!.status === "pending");
+
+      // A 4th similar turn must NOT file a second confirm (deduped).
+      await compileFromChat({ operatorId: opId, operatorName: "strategy", input, answer });
+      check("re-surfacing the same heuristic is deduped", (await prisma.bridgeSignal.count({ where: { sourceType: "heuristic_confirm" } })) === 1);
+
+      // The full Bridge path: confirm → the pattern.confirm finalizer grounds it.
+      const { registerActionFinalizer } = await import("../autonomy/actionRegistry.ts");
+      registerActionFinalizer("pattern.confirm", async (payload: any) => confirmHeuristic(payload?.patternId));
+      const { confirmAction } = await import("../autonomy/executor.ts");
+      const confirmed = sig ? await confirmAction(sig.id) : { ok: false };
+      const after = pid ? await prisma.compiledPattern.findUnique({ where: { id: pid } }) : null;
+      check("Bridge confirm makes the heuristic ground future chat (confirmed_heuristic)", confirmed.ok && after?.status === "confirmed_heuristic");
+
+      // cleanup
+      await prisma.reasoningCacheEntry.deleteMany({ where: { operatorId: opId, domain: "chat_compiled" } });
+      await prisma.compiledPattern.deleteMany({ where: { operatorId: opId, domain: "chat_compiled" } });
+      await prisma.bridgeSignal.deleteMany({ where: { sourceType: "heuristic_confirm" } });
+    }
+  }
+
+  console.log("── retrieval rerank: dedup near-identical chunks ──");
+  {
+    const { embedSource } = await import("../retrieval/embedPipeline.ts");
+    const { semanticRecall } = await import("../retrieval/retrieve.ts");
+    const { deleteEmbeddingsForSource } = await import("../retrieval/vectorStore.ts");
+    const text = `${TAG} the athlete deload week protocol reduces working volume by forty percent to manage fatigue`;
+    // Same content indexed from two different sources → recall must return it once.
+    await embedSource({ sourceType: "note", sourceId: `${TAG}_r1`, text, operatorId: null, domain: "personal" });
+    await embedSource({ sourceType: "corpus_doc", sourceId: `${TAG}_r2`, text, operatorId: null, domain: "personal" });
+    const hits = await semanticRecall({ query: text, limit: 8 });
+    const dupes = hits.filter((h) => h.chunkText.includes(`${TAG} the athlete deload`));
+    check("semanticRecall dedups identical chunk text across sources", dupes.length === 1);
+    await deleteEmbeddingsForSource("note", `${TAG}_r1`);
+    await deleteEmbeddingsForSource("corpus_doc", `${TAG}_r2`);
+
+    // Re-embedding a source into FEWER chunks must purge the stale tail chunks
+    // (Council fix) — else superseded text lingers in the index and resurfaces
+    // as a confident, wrong hit.
+    const longText = `${TAG} ` + "deload volume fatigue protocol ".repeat(80); // >1600 chars → multiple chunks
+    const nLong = await embedSource({ sourceType: "note", sourceId: `${TAG}_shrink`, text: longText, operatorId: null, domain: "personal" });
+    const nShort = await embedSource({ sourceType: "note", sourceId: `${TAG}_shrink`, text: `${TAG} short now`, operatorId: null, domain: "personal" });
+    const remaining = await prisma.vectorEmbedding.count({ where: { sourceType: "note", sourceId: `${TAG}_shrink` } });
+    check("re-embedding into fewer chunks purges the stale tail chunks", nLong > 1 && nShort === 1 && remaining === 1);
+    await deleteEmbeddingsForSource("note", `${TAG}_shrink`);
+  }
+
+  console.log("── salience: anticipation over cron ──");
+  {
+    const { scoreSalience, shouldPushNow } = await import("../core/salience.ts");
+    check(
+      "salience scores a critical risk above an info background result",
+      scoreSalience({ kind: "risk", severity: "critical" }) > scoreSalience({ kind: "background_result", severity: "info" })
+    );
+    check(
+      "shouldPushNow: critical always pushes; low-salience info never does",
+      shouldPushNow({ kind: "risk", severity: "critical" }) === true &&
+        shouldPushNow({ kind: "background_result", severity: "info" }) === false
+    );
+
+    // surfaceSignal files the row; push is dormant (no Telegram token) so pushed=false.
+    const { surfaceSignal } = await import("../core/bridge.ts");
+    const r = await surfaceSignal({
+      kind: "background_result",
+      sourceType: "smoke_salience",
+      sourceId: `${TAG}_sig`,
+      severity: "info",
+      title: `${TAG} quiet signal`,
+      body: "low salience — stays on the Bridge",
+    });
+    const filed = await prisma.bridgeSignal.findUnique({ where: { id: r.id } });
+    check("surfaceSignal files the signal and doesn't push a low-salience one", !!filed && r.pushed === false);
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "smoke_salience" } });
+
+    // Event-driven calendar conflict: a non-focus event over a Deep Work block
+    // surfaces once, then dedups.
+    const { detectAndSurfaceConflicts } = await import("../calendar/engine.ts");
+    const soon = new Date(Date.now() + 3 * 3600_000);
+    const end = new Date(soon.getTime() + 90 * 60000);
+    const focus = await prisma.calendarEvent.create({
+      data: { externalId: `${TAG}_focus`, domain: "personal", title: "Deep Work (protected)", startAt: soon, endAt: end, syncedAt: new Date(), raw: { allDay: false } as any },
+    });
+    const clash = await prisma.calendarEvent.create({
+      data: { externalId: `${TAG}_clash`, domain: "personal", title: `${TAG} Team Sync`, startAt: new Date(soon.getTime() + 15 * 60000), endAt: end, syncedAt: new Date(), raw: { allDay: false } as any },
+    });
+    const first = await detectAndSurfaceConflicts(new Date(Date.now() + 7 * 86400_000));
+    const second = await detectAndSurfaceConflicts(new Date(Date.now() + 7 * 86400_000));
+    check("a new event over a focus block surfaces a conflict once, then dedups", first === 1 && second === 0);
+
+    // cleanup
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "calendar_conflict" } });
+    await prisma.calendarEvent.deleteMany({ where: { id: { in: [focus.id, clash.id] } } });
+  }
+
   console.log("── new tools: gmail + fred (keyless: honest connect/config fails) ──");
   const { gmailAdapter } = await import("../tools/adapters/gmail.ts");
   const { fredAdapter } = await import("../tools/adapters/fred.ts");
@@ -231,6 +352,106 @@ async function main() {
   const f = await fredAdapter.run("macro_snapshot", {});
   check("fred tool honest about config state", fredConfigured() ? f.ok : (!f.ok && /FRED_API_KEY/.test(f.error ?? "")));
 
+  // sync_roster: keyless honest-fail (no service account in the sandbox).
+  {
+    const { googleSheetsAdapter } = await import("../tools/adapters/googleSheets.ts");
+    const sr = await googleSheetsAdapter.run("sync_roster", {});
+    check(
+      "sheets sync_roster fails honestly without a service account",
+      process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH
+        ? true
+        : !sr.ok && /SERVICE_ACCOUNT/i.test(sr.error ?? "")
+    );
+  }
+
+  console.log("── engines: never a silent empty answer (fail over unless unfunded) ──");
+  {
+    const { isNonAnswer } = await import("../llm/router.ts");
+    check(
+      "router treats empty/errored as a non-answer, real text as an answer",
+      isNonAnswer("") === true &&
+        isNonAnswer("   ") === true &&
+        isNonAnswer("Anthropic API error: 429") === true &&
+        isNonAnswer("Missing GEMINI_API_KEY") === true &&
+        isNonAnswer("Here is a real answer.") === false
+    );
+    // The regex gap the sweeps flagged: 5 of 6 engines say "<X>_API_KEY is not
+    // configured." (no "Missing", no "engine") — those must still fail over, and
+    // the all-providers-down line must never be served/filed as an answer.
+    check(
+      "router fails over on every keyless-provider string + all-providers-down",
+      isNonAnswer("GROQ_API_KEY is not configured.") === true &&
+        isNonAnswer("XAI_API_KEY is not configured.") === true &&
+        isNonAnswer("OPENAI_API_KEY is not configured.") === true &&
+        isNonAnswer("All configured LLM providers failed (anthropic → openai). Last error: x") === true
+    );
+    // …but a legitimate answer that mentions an unconfigured integration is a REAL
+    // answer (Aurelius is dormant-until-configured), not a non-answer to fail over.
+    check(
+      "a real 'X is not configured' answer is NOT mistaken for an engine failure",
+      isNonAnswer("Your Google Calendar is not configured yet — connect it at /api/calendar/auth.") === false &&
+        isNonAnswer("Paperless is not configured, so document sync is dormant.") === false
+    );
+  }
+
+  console.log("── live web: search + fetch (keyless: honest fail) ──");
+  {
+    const { webAdapter } = await import("../tools/adapters/web.ts");
+    const { htmlToText } = await import("../web/webSearch.ts");
+    check("html→text strips tags + scripts", htmlToText("<p>Hi <b>there</b></p><script>bad()</script>") === "Hi there");
+    const s = await webAdapter.run("search", { query: "test" });
+    check(
+      "web.search honest about config (or returns a result when keyed)",
+      process.env.TAVILY_API_KEY || process.env.GEMINI_API_KEY
+        ? true
+        : !s.ok && /not configured|GEMINI_API_KEY|TAVILY/i.test(s.error ?? "")
+    );
+    const bad = await webAdapter.run("fetch", { url: "not-a-url" });
+    check("web.fetch rejects a non-url", !bad.ok && /valid http/i.test(bad.error ?? ""));
+  }
+
+  console.log("── tool directives: parse every form the model writes ──");
+  {
+    const { extractToolDirectives, extractDirectives } = await import("../llm/directiveParser.ts");
+    const forms = [
+      '[TOOL: tool=web action=search data={"query":"x"}]',
+      '[TOOL: tool=web.search data={"query":"x"}]',
+      '[TOOL: web.search {"query":"x"}]',
+      '[TOOL: web.search data={"query":"x"}]',
+    ];
+    let allParse = true;
+    for (const f of forms) {
+      const ds = extractToolDirectives("Sure.\n\n" + f);
+      if (ds.length !== 1 || ds[0].tool !== "web" || ds[0].action !== "search" || ds[0].data?.query !== "x")
+        allParse = false;
+    }
+    check("every tool-directive form parses to web.search", allParse);
+    const stripped = extractDirectives('Here you go. [TOOL: web.search {"query":"x"}]').cleanedText;
+    check("tool directive stripped from the visible reply", !/\[TOOL:/.test(stripped) && stripped.includes("Here you go"));
+
+    // Zero-arg actions (no data block) must run — "plan my week" etc. broke
+    // because [TOOL: planning.plan_week] required a trailing "{".
+    const zero = extractToolDirectives("On it.\n\n[TOOL: planning.plan_week]");
+    check(
+      "zero-arg tool directive parses (data defaults to {})",
+      zero.length === 1 && zero[0].tool === "planning" && zero[0].action === "plan_week"
+    );
+    const zeroCanonical = extractToolDirectives("[TOOL: tool=gmail action=read_inbox]");
+    check(
+      "zero-arg canonical form parses",
+      zeroCanonical.length === 1 && zeroCanonical[0].tool === "gmail" && zeroCanonical[0].action === "read_inbox"
+    );
+    const zeroStripped = extractDirectives("Done. [TOOL: planning.plan_week]").cleanedText;
+    check("zero-arg directive stripped from the reply", !/\[TOOL:/.test(zeroStripped) && zeroStripped.includes("Done"));
+
+    // A directive quoted inside a code fence is the model SHOWING syntax — it must
+    // NOT execute (adversarial sweep found quoted directives firing for real).
+    const fenced = extractToolDirectives('Example:\n```\n[TOOL: web.search {"query":"x"}]\n```\nThat\'s the format.');
+    check("directive inside a code fence does not execute", fenced.length === 0);
+    const inline = extractToolDirectives("Write `[TOOL: gmail.read_inbox]` to check mail.");
+    check("directive inside inline code does not execute", inline.length === 0);
+  }
+
   console.log("── multimodal: photo/video in chat (keyless: honest fail) ──");
   {
     const { mediaKind, analyzeMedia } = await import("../media/ingestMedia.ts");
@@ -242,6 +463,138 @@ async function main() {
     try { await analyzeMedia(Buffer.from("not-an-image"), "image/png"); }
     catch (e: any) { honest = /GEMINI_API_KEY|Gemini/i.test(e?.message ?? ""); }
     check("media analysis fails honestly without a real Gemini call", honest);
+  }
+
+  console.log("── self-service tools: productivity + autonomy from chat ──");
+  {
+    const { productivityAdapter } = await import("../tools/adapters/productivity.ts");
+    const addT = await productivityAdapter.run("add_task", { title: `${TAG} intake form`, priority: "high" });
+    const taskId = addT.output?.id as string | undefined;
+    check("productivity.add_task creates a task", addT.ok && !!taskId);
+    const todayR = await productivityAdapter.run("get_today", {});
+    check("productivity.get_today returns a snapshot", todayR.ok && Array.isArray(todayR.output?.tasks));
+    const compT = await productivityAdapter.run("complete_task", { title: `${TAG} intake form` });
+    check("productivity.complete_task marks it done by title", compT.ok && compT.output?.id === taskId);
+    // Ambiguity guard: a loose substring matching >1 OPEN task must NOT silently
+    // complete one ("call" ⊂ "recall the order").
+    const aTask = await productivityAdapter.run("add_task", { title: `${TAG} call mom` });
+    const bTask = await productivityAdapter.run("add_task", { title: `${TAG} recall the order` });
+    const ambigC = await productivityAdapter.run("complete_task", { title: "call" });
+    check("complete_task refuses an ambiguous substring", !ambigC.ok && /matches \d+ open tasks/i.test(ambigC.error ?? ""));
+    for (const t of [aTask, bTask]) {
+      const tid = t.output?.id as string | undefined;
+      if (tid) {
+        await prisma.vectorEmbedding.deleteMany({ where: { sourceId: tid } }).catch(() => {});
+        await prisma.task.delete({ where: { id: tid } }).catch(() => {});
+      }
+    }
+    const setF = await productivityAdapter.run("set_focus", { focus: `${TAG} ship the page` });
+    check("productivity.set_focus sets today's focus", setF.ok);
+    const addG = await productivityAdapter.run("add_goal", { name: `${TAG} sign athletes`, horizon: "quarter", target: 10 });
+    const goalId = addG.output?.id as string | undefined;
+    check("productivity.add_goal creates a goal", addG.ok && !!goalId);
+
+    const { autonomyAdapter } = await import("../tools/adapters/autonomy.ts");
+    const { isActionGranted } = await import("../autonomy/grants.ts");
+    const listG = await autonomyAdapter.run("list_grants", {});
+    check("autonomy.list_grants returns the grantable menu", listG.ok && Array.isArray(listG.output?.grantable));
+    const before = await isActionGranted("calendar.schedule_protection");
+    const grantR = await autonomyAdapter.run("grant", { actionClass: "calendar.schedule_protection" });
+    const after = await isActionGranted("calendar.schedule_protection");
+    check(
+      "autonomy.grant GATES (files a Bridge confirm, never flips the switch itself — hard rule 1)",
+      grantR.ok && !!grantR.output?.bridgeSignalId && after === before
+    );
+    const badGrant = await autonomyAdapter.run("grant", { actionClass: "email.send" });
+    check("autonomy.grant refuses an outward class", !badGrant.ok && /can't grant/i.test(badGrant.error ?? ""));
+    const revR = await autonomyAdapter.run("revoke", { actionClass: "research.ingest" });
+    check("autonomy.revoke runs directly (reducing autonomy is always safe)", revR.ok);
+
+    // cleanup this block's artifacts
+    if (taskId) {
+      await prisma.vectorEmbedding.deleteMany({ where: { sourceId: taskId } }).catch(() => {});
+      await prisma.task.delete({ where: { id: taskId } }).catch(() => {});
+    }
+    if (goalId) await prisma.goal.delete({ where: { id: goalId } }).catch(() => {});
+    if (grantR.output?.bridgeSignalId) await prisma.bridgeSignal.delete({ where: { id: grantR.output.bridgeSignalId } }).catch(() => {});
+    await prisma.dailyPlan.deleteMany({ where: { focus: { contains: TAG } } }).catch(() => {});
+  }
+
+  console.log("── schedule control: Cole re-times a ritual from chat ──");
+  {
+    const { scheduleNamed, setSchedule, setEnabled, isJobEnabled, listSchedules, parseTime, getEffectiveTime } = await import("../core/schedule.ts");
+    check(
+      "parseTime reads 6:30 / 7am / 10pm / 22:00 / 7, rejects junk",
+      JSON.stringify(parseTime("6:30")) === JSON.stringify({ hour: 6, minute: 30 }) &&
+        JSON.stringify(parseTime("7am")) === JSON.stringify({ hour: 7, minute: 0 }) &&
+        JSON.stringify(parseTime("10pm")) === JSON.stringify({ hour: 22, minute: 0 }) &&
+        JSON.stringify(parseTime("22:00")) === JSON.stringify({ hour: 22, minute: 0 }) &&
+        JSON.stringify(parseTime("7")) === JSON.stringify({ hour: 7, minute: 0 }) &&
+        parseTime("banana") === null &&
+        parseTime("25:00") === null
+    );
+    // Register throwaway jobs (real node-schedule, harmless; process exits at end).
+    scheduleNamed(`${TAG}_daily`, "0 7 * * *", "test morning briefing", () => {});
+    scheduleNamed(`${TAG}_sun`, "0 20 * * 0", "test weekly scoreboard", () => {});
+
+    const rd = await setSchedule(`${TAG}_daily`, "6:30", { persist: false });
+    check("re-time a daily ritual: new time, cadence stays daily", rd.ok && rd.time === "06:30" && rd.cadence === "daily");
+    const rs = await setSchedule("test weekly scoreboard", "9:15", { persist: false }); // fuzzy label
+    check("re-time by fuzzy label: Sunday cadence preserved", rs.ok && rs.time === "09:15" && rs.cadence === "Sundays");
+    const eff = getEffectiveTime(`${TAG}_daily`);
+    check("catch-up sees the overridden time (no double/missed fire)", eff?.hour === 6 && eff?.minute === 30);
+    check("listSchedules reflects the change", listSchedules().some((r) => r.name === `${TAG}_daily` && r.time === "06:30"));
+    const bad = await setSchedule("no such ritual", "6:30", { persist: false });
+    check("unknown ritual rejected honestly", !bad.ok && /no scheduled ritual/i.test(bad.error ?? ""));
+    const badTime = await setSchedule(`${TAG}_daily`, "banana", { persist: false });
+    check("unparseable time rejected honestly", !badTime.ok && /couldn't read/i.test(badTime.error ?? ""));
+
+    // Pause / resume
+    const pause = await setEnabled(`${TAG}_daily`, false, { persist: false });
+    check("pause a ritual: disabled + catch-up skips it", pause.ok && pause.enabled === false && isJobEnabled(`${TAG}_daily`) === false);
+    check("listSchedules shows the paused ritual as disabled", listSchedules().some((r) => r.name === `${TAG}_daily` && r.enabled === false));
+    // Re-timing while paused records the new time without touching a live job.
+    const retimedWhilePaused = await setSchedule(`${TAG}_daily`, "5:00", { persist: false });
+    check("re-time while paused is recorded (applied on resume)", retimedWhilePaused.ok && retimedWhilePaused.time === "05:00");
+    const resume = await setEnabled(`${TAG}_daily`, true, { persist: false });
+    check("resume a ritual: re-enabled at its current time", resume.ok && resume.enabled === true && isJobEnabled(`${TAG}_daily`) === true);
+    check("resumed ritual keeps the time set while paused", getEffectiveTime(`${TAG}_daily`)?.hour === 5);
+    // Ambiguity guard: a query matching >1 ritual (both throwaway jobs share the
+    // TAG in their names) must list candidates, not silently pick the first.
+    const ambigJob = await setEnabled(`${TAG}`, false, { persist: false });
+    check("resolveJob refuses an ambiguous ritual query", !ambigJob.ok && /matches \d+ rituals/i.test(ambigJob.error ?? ""));
+  }
+
+  console.log("── outward path: draft (inward) + publish (gated, never on its own) ──");
+  {
+    const { contentAdapter } = await import("../tools/adapters/content.ts");
+    const { instagramConfigured } = await import("../outward/instagram.ts");
+    const { confirmAction } = await import("../autonomy/executor.ts");
+    const { isActionGranted } = await import("../autonomy/grants.ts");
+    const { registerActionFinalizer } = await import("../autonomy/actionRegistry.ts");
+    const { finalizeContentPublish } = await import("../autonomy/workflows/contentPublish.ts");
+    registerActionFinalizer("content.publish", finalizeContentPublish);
+
+    check("instagram dormant-honest without a token", instagramConfigured() === false);
+    check("content.publish is non-grantable (outward by construction)", (await isActionGranted("content.publish")) === false);
+
+    const noImg = await contentAdapter.run("publish_post", { caption: "hi" });
+    check("publish_post refuses instagram without a public image url", !noImg.ok && /image/i.test(noImg.error ?? ""));
+
+    const staged = await contentAdapter.run("publish_post", { caption: `${TAG} 500lb squat`, imageUrl: "https://example.com/pr.jpg" });
+    const sigId = staged.output?.bridgeSignalId as string | undefined;
+    const sig = sigId ? await prisma.bridgeSignal.findUnique({ where: { id: sigId } }) : null;
+    check("publish_post GATES — files a pending Bridge confirm, nothing published", staged.ok && staged.output?.gated === true && sig?.status === "pending");
+
+    // Confirm without a token: honest failure (no fake 'posted!'), reverts to pending.
+    const confirmed = sigId ? await confirmAction(sigId) : { ok: true, error: "" };
+    const after = sigId ? await prisma.bridgeSignal.findUnique({ where: { id: sigId } }) : null;
+    check(
+      "confirm without IG token fails honestly + reverts to pending (rule 3)",
+      !confirmed.ok && /not configured/i.test(confirmed.error ?? "") && after?.status === "pending"
+    );
+
+    if (sigId) await prisma.bridgeSignal.delete({ where: { id: sigId } }).catch(() => {});
   }
 
   console.log("── the acting layer: autonomy grants (§2.5 Hybrid Autonomy) ──");
@@ -297,9 +650,36 @@ async function main() {
     const confirmedSig = await prisma.bridgeSignal.findUnique({ where: { id: gated.bridgeSignalId } });
     check("confirming a gated proposal executes it (loop closed)", confirmed.ok && finalizedCount === 2 && confirmedSig?.status === "acted");
 
+    // Idempotency: a second confirm (double-click / retry) must NOT re-run the
+    // finalizer — confirm gates irreversible outward actions, so no double send.
+    const reconfirm = await confirmAction(gated.bridgeSignalId);
+    check("re-confirming an acted proposal is a no-op (no double outward action)", reconfirm.ok && finalizedCount === 2);
+
+    // Concurrent confirm of a FRESH gated proposal → exactly one finalize (the
+    // atomic row-claim serializes the double-click race).
+    const race = await executeAction({ actionClass: "research.ingest", prepare: prep });
+    const before = finalizedCount;
+    await Promise.all([confirmAction(race.bridgeSignalId), confirmAction(race.bridgeSignalId)]);
+    check("concurrent confirm finalizes exactly once (atomic claim)", finalizedCount === before + 1);
+
+    // A DISMISSED proposal must NOT be confirmable. A later /confirm (a stale
+    // tab, a retry) on something Cole rejected must not run its finalizer —
+    // "Dismiss" means no. (Council fix: whitelist claimable states ["pending",
+    // "surfaced"] instead of blacklisting only ["acting","acted"].)
+    const toDismiss = await executeAction({ actionClass: "research.ingest", prepare: prep });
+    await prisma.bridgeSignal.update({ where: { id: toDismiss.bridgeSignalId }, data: { status: "dismissed" } });
+    const beforeDismiss = finalizedCount;
+    await confirmAction(toDismiss.bridgeSignalId);
+    const dismissedSig = await prisma.bridgeSignal.findUnique({ where: { id: toDismiss.bridgeSignalId } });
+    check(
+      "a dismissed proposal cannot be confirmed (finalizer stays unrun, status stays dismissed)",
+      finalizedCount === beforeDismiss && dismissedSig?.status === "dismissed"
+    );
+
     // Outward action can never finalize on its own (no standing grant possible).
+    const beforeOutward = finalizedCount;
     const outward = await executeAction({ actionClass: "email.send", prepare: prep });
-    check("outward action never finalizes on its own through the executor", !outward.finalized && finalizedCount === 2);
+    check("outward action never finalizes on its own through the executor", !outward.finalized && finalizedCount === beforeOutward);
 
     // The surface: active grants list reflects reality; grantable menu excludes outward.
     const { listActiveGrants } = await import("../autonomy/grants.ts");
@@ -341,6 +721,496 @@ async function main() {
 
     await prisma.bridgeSignal.deleteMany({ where: { title: { contains: TAG } } });
     await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
+  }
+
+  console.log("── trust ledger + real undo (§2.5, master-class #4) ──");
+  {
+    const { registerActionFinalizer, registerActionInverse } = await import("../autonomy/actionRegistry.ts");
+    const { executeAction, undoAction } = await import("../autonomy/executor.ts");
+    const { getTrustLedger } = await import("../autonomy/trustLedger.ts");
+    const { grantAutonomy } = await import("../autonomy/grants.ts");
+    const { resolveOperatorId } = await import("../knowledge/store.ts");
+
+    // A finalizer that "creates" something + an inverse that "deletes" it.
+    let created = 0, deleted = 0;
+    registerActionFinalizer("research.ingest", async () => { created++; return { externalId: `${TAG}_evt` }; });
+    registerActionInverse("research.ingest", async (_p, result) => { if (result?.externalId) deleted++; return { ok: true }; });
+    await grantAutonomy({ actionClass: "research.ingest", note: "smoke" });
+
+    const exec = await executeAction({
+      actionClass: "research.ingest",
+      prepare: async () => ({ title: `${TAG} undo test`, body: "held a thing", domain: "personal", payload: { n: 1 } }),
+    });
+    const sig = await prisma.bridgeSignal.findUnique({ where: { id: exec.bridgeSignalId } });
+    const hasUndo = ((sig?.actions as any[]) ?? []).some((a) => a?.action === "undo_action");
+    check("an executed action with an inverse gets a one-tap Undo", exec.finalized && created === 1 && hasUndo);
+
+    const undo = await undoAction(exec.bridgeSignalId);
+    const after = await prisma.bridgeSignal.findUnique({ where: { id: exec.bridgeSignalId } });
+    check("undo runs the inverse and marks the signal undone", undo.ok && deleted === 1 && after?.status === "undone");
+
+    const undo2 = await undoAction(exec.bridgeSignalId);
+    check("re-undo is a no-op (inverse runs exactly once)", undo2.ok && deleted === 1);
+
+    // Ledger aggregation from traces — deterministic via direct inserts (runTraced
+    // writes are fire-and-forget, so don't race them here).
+    const opId = await resolveOperatorId("global");
+    if (opId) {
+      await prisma.logEntry.createMany({
+        data: [
+          { operatorId: opId, type: "trace", level: "info", message: `action:${TAG}.cls`, context: { status: "ok" } as any },
+          { operatorId: opId, type: "trace", level: "info", message: `action:confirm:${TAG}.cls`, context: { status: "ok" } as any },
+          { operatorId: opId, type: "trace", level: "info", message: `action:undo:${TAG}.cls`, context: { status: "ok" } as any },
+        ],
+      });
+      const ledger = await getTrustLedger();
+      const row = ledger.find((r) => r.actionClass === `${TAG}.cls`);
+      check("trust ledger aggregates acted/confirmed/undone from action traces", !!row && row.acted === 1 && row.confirmed === 1 && row.undone === 1);
+      await prisma.logEntry.deleteMany({ where: { message: { contains: `${TAG}.cls` } } });
+    } else {
+      check("trust ledger (skipped — no global operator)", true);
+    }
+
+    await prisma.bridgeSignal.deleteMany({ where: { id: exec.bridgeSignalId } });
+    await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
+  }
+
+  // ── command deck: the confronting home screen (master-class #5) ──
+  console.log("── command deck: biggest-risk line + inline bridge ──");
+  const deck = await getDeck();
+  check("deck names a single biggest-risk line", typeof deck.biggestRisk === "string" && deck.biggestRisk.length > 0);
+  check("deck inlines the pending-Bridge queue", Array.isArray(deck.bridge));
+  check("deck surfaces the overnight 'while you were away' row", Array.isArray(deck.overnight));
+
+  // ── semantic operator routing (master-class #6) ──
+  // Under mock embeddings (this suite's provider) the semantic router falls back
+  // to keyword routing — a hash isn't semantic. So we assert the async path runs,
+  // routes an unambiguous message correctly, and MATCHES the keyword router
+  // exactly in fallback (no divergence, no throw). Semantic quality itself needs
+  // real embeddings and is exercised in the live app, not the mock suite.
+  const semTrain = await routeOperatorsSemantic("plan my training block for hypertrophy this week");
+  check("semantic router routes an unambiguous training message to training", semTrain.primary === "training");
+  const kwTrain = routeOperators("plan my training block for hypertrophy this week");
+  check("semantic router matches keyword router under mock (clean fallback)", semTrain.primary === kwTrain.primary);
+  const semEmpty = await routeOperatorsSemantic("");
+  check("semantic router handles an empty message without throwing", semEmpty.primary === "strategy");
+
+  // ── single trace-thread view (master-class #7) ──
+  // (a) AsyncLocalStorage threads ONE id through nested traced scopes — the
+  // property that lets routeLLM/tools/executeAction all file under one turn
+  // without any signature change. Pure in-memory, no DB read race.
+  let innerId: string | null = null;
+  const outerId = await withTrace("smoke:thread", async () => {
+    const id = currentTraceId();
+    await withTrace("smoke:nested", async () => { innerId = currentTraceId(); });
+    return id;
+  });
+  check("trace context threads one id through nested traced scopes", !!outerId && innerId === outerId);
+  check("no trace id leaks outside the scope", currentTraceId() === null);
+
+  // (b) The reader reassembles rows sharing a traceId into one ordered thread.
+  // Deterministic via direct inserts (the live trace writes are fire-and-forget).
+  const traceOpId = await resolveOperatorId("global");
+  if (traceOpId) {
+    const tid = `smoketrace_${TAG}`;
+    await prisma.logEntry.createMany({
+      data: [
+        { operatorId: traceOpId, type: "trace", level: "info", message: "request:/api/aurelius", context: { traceId: tid, kind: "request", name: "/api/aurelius", method: "POST", statusCode: 200, durationMs: 1200 } as any },
+        { operatorId: traceOpId, type: "llm_call", level: "info", message: "openai/gpt", context: { traceId: tid, taskType: "chat", tokensUsed: 500, latencyMs: 800 } as any },
+        { operatorId: traceOpId, type: "trace", level: "info", message: "tool:calendar.sync", context: { traceId: tid, kind: "tool", name: "calendar.sync", status: "ok", durationMs: 40 } as any },
+      ],
+    });
+    const thread = await getTraceThread(tid);
+    check(
+      "trace-thread reader assembles rows sharing a traceId into one thread",
+      !!thread && thread.count === 3 && thread.label === "/api/aurelius" && thread.kinds.includes("llm") && thread.kinds.includes("tool") && thread.kinds.includes("request")
+    );
+    check(
+      "trace-thread carries per-step detail (llm tokens, request status)",
+      !!thread && thread.steps.some((s) => s.kind === "llm" && s.detail.tokensUsed === 500)
+    );
+    await prisma.logEntry.deleteMany({ where: { context: { path: ["traceId"], equals: tid } } });
+  } else {
+    check("trace-thread reader (skipped — no global operator)", true);
+  }
+
+  // ── curriculum: auto-learning the canon of every field ──
+  console.log("── curriculum: the auto-learning canon ──");
+  {
+    const { CURRICULUM, getCurriculumProgress, parseDiscoveries } = await import("../learning/curriculum.ts");
+    const domains = new Set(CURRICULUM.map((t) => t.domain));
+    check(
+      "curriculum covers all seven operator fields",
+      CURRICULUM.length === 7 &&
+        ["strategy", "training", "athlete", "wealth", "business", "content", "identity"].every((d) => domains.has(d))
+    );
+    check(
+      "every track has a deep, well-formed seed canon (>=10 units)",
+      CURRICULUM.every((t) => t.canon.length >= 10 && t.canon.every((u) => !!u.title && u.query.length > 40))
+    );
+    const strat = CURRICULUM.find((t) => t.domain === "strategy")!;
+    check(
+      "the strategy canon includes Sun Tzu and Musashi (as specified)",
+      strat.canon.some((u) => /sun tzu/i.test(u.title)) && strat.canon.some((u) => /musashi/i.test(u.title))
+    );
+    check(
+      "decision science is present (Kahneman) — the council's biggest content gap",
+      strat.canon.some((u) => /kahneman/i.test(u.title)) &&
+        strat.canon.some((u) => /cognitive bias|dual-process|system 1/i.test(u.title))
+    );
+    const train = CURRICULUM.find((t) => t.domain === "training")!;
+    check(
+      "the training canon reaches from the Soviet school to modern coaches",
+      train.canon.some((u) => /verkhoshansky|medvedyev|zatsiorsky/i.test(u.title)) &&
+        train.canon.some((u) => /jordan shallow|israetel|nuckols|zingler/i.test(u.title))
+    );
+    // The field itself, not only a book list — concepts/mechanisms are studied too.
+    check(
+      "every field studies the topics/concepts of the field, not only works",
+      train.canon.some((u) => /hypertrophy|fitness-fatigue|periodization|energy system/i.test(u.title)) &&
+        CURRICULUM.find((t) => t.domain === "strategy")!.canon.some((u) => /game theory|order thinking|opportunity cost|bayesian/i.test(u.title)) &&
+        CURRICULUM.find((t) => t.domain === "wealth")!.canon.some((u) => /compounding|risk of ruin|valuation|diversification/i.test(u.title))
+    );
+    // Self-expansion: the discovery parser adds NEW works and dedups known ones.
+    const seedForParse = [{ title: "The Art of War — Sun Tzu", query: "" }];
+    const parsed = parseDiscoveries(
+      "1. The Art of War — Sun Tzu (already known)\n- On War — Clausewitz — friction\n• The Prince — Machiavelli",
+      "strategy",
+      seedForParse as any
+    );
+    check(
+      "curriculum self-expansion parses new works and dedups known ones",
+      parsed.length >= 2 && !parsed.some((u) => /art of war/i.test(u.title)) && parsed.some((u) => /on war/i.test(u.title))
+    );
+    // Bug-test fixes: non-ASCII titles survive; short generic tokens don't over-dedup.
+    const robust = parseDiscoveries(
+      "孫子兵法 — a classic in its own script\nFlow states and arousal regulation — a real sub-topic",
+      "strategy",
+      [{ title: "Flow", query: "" }] as any
+    );
+    check(
+      "parseDiscoveries keeps non-ASCII titles and doesn't let short tokens over-dedup",
+      robust.some((u) => /孫子兵法/.test(u.title)) && robust.some((u) => /flow states/i.test(u.title))
+    );
+
+    // Distillation: study → decision heuristic. Parser is pure; the full path is
+    // honest-failure safe (keyless → files nothing).
+    const { parseHeuristics, distillAndProposeHeuristic } = await import("../learning/distill.ts");
+    const hs = parseHeuristics("Heuristic: When a plan needs perfect discipline, cut it — because willpower is unreliable.\nrandom noise line\n- If leverage is available, prefer it over effort — because it compounds.");
+    check(
+      "distill parses well-formed heuristics and drops noise",
+      hs.length === 2 && hs.every((h) => /because/i.test(h)) && !hs.some((h) => /random noise/i.test(h))
+    );
+    const filed = await distillAndProposeHeuristic({ operatorName: "strategy", domain: "strategy", unitTitle: `${TAG} test`, synthesisBody: "x".repeat(120) });
+    check("distill files nothing when no LLM engine (honest failure)", filed === 0);
+
+    // ── reason-through-the-lens (design-council build) ──
+    const { isDecisionQuery } = await import("../router/operatorRouter.ts");
+    check(
+      "decision detector fires on real decisions, not on facts/chat/lookups",
+      isDecisionQuery("should I take this client or protect my training?") === true &&
+        isDecisionQuery("which is better, block or DUP periodization?") === true &&
+        isDecisionQuery("what time is my next meeting") === false &&
+        isDecisionQuery("what's the best time to call?") === false &&
+        isDecisionQuery("which doc did I save yesterday?") === false
+    );
+
+    // The framework render APPLIES (reason-through) and strips the citation so it
+    // can't be name-dropped from the prompt.
+    const lensOp = await resolveOperatorId("global");
+    if (lensOp) {
+      const pat = await prisma.compiledPattern.create({
+        data: {
+          operatorId: lensOp, domain: "strategy", entityKey: null, patternType: "heuristic",
+          patternSignature: { recurringReasoningTheme: `${TAG} When downside is irreversible, size to survive being wrong`, source: "curriculum: The Art of War" } as any,
+          status: "confirmed_heuristic", evidence: ["x"], supportCount: 1, confidenceScore: 0.9,
+        },
+      });
+      const { loadOperatorPatternsForPrompt } = await import("../compiled/reasoningHelper.ts");
+      const block = await loadOperatorPatternsForPrompt({ operatorId: lensOp, query: "irreversible downside decision", role: "primary" });
+      check(
+        "framework render shows the rule, strips the book citation, instructs to apply",
+        block.includes(`${TAG} When downside is irreversible`) && !/The Art of War/.test(block) && /apply their logic/i.test(block)
+      );
+      await prisma.compiledPattern.delete({ where: { id: pat.id } });
+    } else {
+      check("framework render (skipped — no global operator)", true);
+    }
+
+    // Decision Curriculum: honest-failure safe (keyless → proposes nothing, no throw).
+    const { runDecisionCurriculum } = await import("../learning/decisionCurriculum.ts");
+    const dc = await runDecisionCurriculum();
+    check(
+      "decision curriculum + judge run honestly with no LLM engine",
+      dc.ok === true && dc.proposed === 0 && (dc.judged ?? 0) === 0
+    );
+
+    // The measurement script refuses mock embeddings (it proves semantics, not
+    // plumbing) — and says exactly what to run instead.
+    const { measureFit } = await import("./measureEmbeddingFit.ts");
+    const mf = await measureFit();
+    check("embedding-fit measurement refuses mock provider with the fix", mf.ok === false && /real provider/i.test(mf.reason ?? ""));
+
+    // ── Shadow short-circuit (work order #8): case → precedent → shadow, no skips ──
+    const { recordDecisionCase, canShortCircuit, gradeShadowAgreements } = await import("../compiled/shortCircuit.ts");
+    const shadowDecision = `${TAG} should I take the retainer client or protect the training block?`;
+    const first = await recordDecisionCase({ decision: shadowDecision, answer: "Protect the block; counter with a scope-bound retainer." });
+    check("first decision case stores without a precedent (nothing to shadow)", first.shadowed === false);
+    const second = await recordDecisionCase({ decision: shadowDecision, answer: "Protect the block; counter with a scope-bound retainer." });
+    check("a near-identical decision logs a shadow hit (frontier still answered)", second.shadowed === true);
+    const gate = await canShortCircuit();
+    check(
+      "the gate reports not-yet until agreements are EARNED (no silent skips)",
+      gate.eligible === false && /not yet/.test(gate.reason)
+    );
+    const gradedKeyless = await gradeShadowAgreements();
+    check("shadow grading is honest keyless (grades nothing)", gradedKeyless === 0);
+    // Cleanup: shadow exhaust (cases, shadows, their vectors).
+    const smokeCases = await prisma.logEntry.findMany({
+      where: { message: "decision:case", context: { path: ["decision"], string_contains: TAG } },
+      select: { id: true },
+    });
+    const caseIds = smokeCases.map((c) => c.id);
+    if (caseIds.length) {
+      await prisma.vectorEmbedding.deleteMany({ where: { sourceType: "decision_case", sourceId: { in: caseIds } } });
+      await prisma.logEntry.deleteMany({ where: { id: { in: caseIds } } });
+    }
+    await prisma.logEntry.deleteMany({ where: { message: "decision:shadow", context: { path: ["decision"], string_contains: TAG } } });
+
+    // ── Operator Council tribunal (deliberate) ──
+    const { deliberate, stripCouncilTrigger, isCouncilTrigger } = await import("../council/deliberate.ts");
+    check(
+      "council trigger fires on explicit convene, not on plain decisions",
+      isCouncilTrigger("council this: should I take the client?") === true &&
+        isCouncilTrigger("pressure-test this move") === true &&
+        isCouncilTrigger("convene the council on my Q3 plan") === true &&
+        isCouncilTrigger("should I take this client?") === false
+    );
+    check(
+      "stripCouncilTrigger removes the trigger phrase, keeps the decision",
+      stripCouncilTrigger("council this: take the client or protect training?") === "take the client or protect training?" &&
+        stripCouncilTrigger("pressure-test this — move to Austin") === "move to Austin"
+    );
+    // Honest-failure: no LLM engine → the council refuses to invent a verdict.
+    const del = await deliberate("should I take the client or protect my training block?");
+    check("council fails honestly with no LLM engine (ok:false, no fabricated verdict)", del.ok === false && !!del.error);
+    // Empty decision → guarded, never convenes.
+    const delEmpty = await deliberate("  ");
+    check("council rejects an empty decision", delEmpty.ok === false);
+
+    // ── Semantic when-retrieval of the compiled lens (council fix #1) ──
+    // The lens Aurelius has of COLE (his corrections) must be findable by the
+    // SITUATION of a decision, not shared words. (Mock embeddings are hash-based —
+    // this proves the plumbing + Cole-bonus + honest fallback; true semantic
+    // discrimination proves out only on a real embedding model.)
+    const { extractWhenClause, isColeDerived, indexConfirmedPatterns, retrieveFitPatterns } = await import("../compiled/patternIndex.ts");
+    check(
+      "extractWhenClause pulls the situation, not the action or the reason",
+      extractWhenClause("When the downside is irreversible, size to survive being wrong — because ruin is unrecoverable") === "the downside is irreversible"
+    );
+    check(
+      "extractWhenClause keeps multi-part conditions (no first-comma amputation)",
+      extractWhenClause("When you're tired, sore, or unmotivated, cut volume before intensity — because grinding compounds fatigue") ===
+        "you're tired, sore, or unmotivated"
+    );
+    check(
+      "isColeDerived flags corrections-sourced heuristics, not canon",
+      isColeDerived({ recurringReasoningTheme: "x", source: "cole's corrections" }) === true &&
+        isColeDerived({ recurringReasoningTheme: "x", source: "curriculum: The Art of War" }) === false
+    );
+    const semOp = await resolveOperatorId("global");
+    if (semOp) {
+      const pA = await prisma.compiledPattern.create({
+        data: { operatorId: semOp, domain: "strategy", entityKey: null, patternType: "heuristic",
+          patternSignature: { recurringReasoningTheme: `${TAG} When capital is irreversible, size to survive being wrong`, source: "cole's corrections" } as any,
+          status: "confirmed_heuristic", evidence: ["cole's corrections"], supportCount: 1, confidenceScore: 0.98 },
+      });
+      const pB = await prisma.compiledPattern.create({
+        data: { operatorId: semOp, domain: "training", entityKey: null, patternType: "heuristic",
+          patternSignature: { recurringReasoningTheme: `${TAG} When deloading, cut volume before intensity`, source: "curriculum: Starting Strength" } as any,
+          status: "confirmed_heuristic", evidence: ["curriculum"], supportCount: 1, confidenceScore: 0.99 },
+      });
+      const nIdx = await indexConfirmedPatterns(semOp);
+      check("compiled patterns index into the vector store (when-clause embeddings)", nIdx >= 2);
+      // Cost-idempotent: a second backfill embeds nothing (no per-boot API spend).
+      const nIdxAgain = await indexConfirmedPatterns(semOp);
+      check("backfill re-run embeds only what's missing (zero on second pass)", nIdxAgain === 0);
+      const fit = await retrieveFitPatterns({ operatorId: semOp, query: "should I risk irreversible capital on this", limit: 10 });
+      check("retrieveFitPatterns returns semantic hits (not null) with an engine", Array.isArray(fit) && (fit as any[]).length >= 2);
+      const { loadOperatorPatternsForPrompt } = await import("../compiled/reasoningHelper.ts");
+      const blk = await loadOperatorPatternsForPrompt({ operatorId: semOp, query: "should I risk irreversible capital on this", role: "primary" });
+      check("compiled-lens block renders the retrieved rules", blk.includes(`${TAG} When capital is irreversible`));
+      // Honest fallback: no embedding engine → retrieval returns null, prompt falls
+      // back to confidence order without throwing.
+      const prevEnv = process.env.RETRIEVAL_EMBEDDINGS_ENABLED;
+      process.env.RETRIEVAL_EMBEDDINGS_ENABLED = "false";
+      const nullFit = await retrieveFitPatterns({ operatorId: semOp, query: "anything", limit: 10 });
+      const blkFallback = await loadOperatorPatternsForPrompt({ operatorId: semOp, query: "anything", role: "primary" });
+      if (prevEnv === undefined) delete process.env.RETRIEVAL_EMBEDDINGS_ENABLED; else process.env.RETRIEVAL_EMBEDDINGS_ENABLED = prevEnv;
+      check("retrieval falls back honestly with no embedding engine", nullFit === null && blkFallback.includes(TAG));
+      // GC: discarding a rule (Cole's hand) removes its vector from the index.
+      const { recordCorrection: rcGc } = await import("../knowledge/corrections.ts");
+      await rcGc({ targetType: "compiled_pattern", targetId: pB.id, correctionType: "pattern_wrong", reason: `smoke ${TAG} gc` });
+      const gcRows = await prisma.vectorEmbedding.count({ where: { sourceType: "compiled_pattern", sourceId: pB.id } });
+      const gcPattern = await prisma.compiledPattern.findUnique({ where: { id: pB.id } });
+      check("discarded rules leave the retrieval index (vector GC)", gcRows === 0 && gcPattern?.status === "discarded");
+      await prisma.correction.deleteMany({ where: { targetId: pB.id } });
+      const { deleteEmbeddingsForSource } = await import("../retrieval/vectorStore.ts");
+      await deleteEmbeddingsForSource("compiled_pattern", pA.id);
+      await deleteEmbeddingsForSource("compiled_pattern", pB.id);
+      await prisma.compiledPattern.deleteMany({ where: { id: { in: [pA.id, pB.id] } } });
+
+      // ── Outcome loop (decision spine #2): fire → decay on correction → ratify to earn trust ──
+      const { recordPatternsFired, decayRecentlyFired, ratifyRecentDecision, TRUST_FLOOR, DECAY_STEP, REINFORCE_STEP } =
+        await import("../compiled/outcomeLoop.ts");
+      const mk = (theme: string) =>
+        prisma.compiledPattern.create({
+          data: { operatorId: semOp, domain: "strategy", entityKey: null, patternType: "heuristic",
+            patternSignature: { recurringReasoningTheme: `${TAG} ${theme}`, source: "cole's corrections" } as any,
+            status: "confirmed_heuristic", evidence: ["smoke"], supportCount: 1, confidenceScore: 0.5 },
+        });
+      const pWrong = await mk("When smoke-wrong, do the wrong thing");
+      const pRight = await mk("When smoke-right, do the right thing");
+
+      // A decision fires pWrong; Cole corrects it → pWrong decays.
+      await recordPatternsFired([pWrong.id], `${TAG} decision one`);
+      const nDecayed = await decayRecentlyFired({ reason: `smoke ${TAG}` });
+      const afterDecay = await prisma.compiledPattern.findUnique({ where: { id: pWrong.id } });
+      check(
+        "correcting a decision decays the patterns that informed it",
+        nDecayed >= 1 && Math.abs((afterDecay?.confidenceScore ?? 0) - (0.5 - DECAY_STEP)) < 1e-6
+      );
+      // Consumed: a second correction can't double-decay the same fired event.
+      const nDouble = await decayRecentlyFired({ reason: `smoke ${TAG} again` });
+      const afterDouble = await prisma.compiledPattern.findUnique({ where: { id: pWrong.id } });
+      check(
+        "a fired event is consumed — double-correction never double-decays",
+        nDouble === 0 && Math.abs((afterDouble?.confidenceScore ?? 0) - (0.5 - DECAY_STEP)) < 1e-6
+      );
+      // Facts are exempt: judgment corrections never erase auto-compiled facts.
+      const { decayPatterns } = await import("../compiled/outcomeLoop.ts");
+      const pFact = await prisma.compiledPattern.create({
+        data: { operatorId: semOp, domain: "strategy", entityKey: null, patternType: "factual",
+          patternSignature: { recurringReasoningTheme: `${TAG} fact: squat PR is 405` } as any,
+          status: "auto_factual", evidence: ["smoke"], supportCount: 2, confidenceScore: 0.8 },
+      });
+      const nFact = await decayPatterns({ patternIds: [pFact.id], reason: `smoke ${TAG}` });
+      const factAfter = await prisma.compiledPattern.findUnique({ where: { id: pFact.id } });
+      check("auto_factual patterns are exempt from judgment decay", nFact === 0 && factAfter?.confidenceScore === 0.8);
+      // Reward never lowers: at/above the cap, reinforcement is a no-op.
+      const { adjustPatternConfidence } = await import("../compiled/outcomeLoop.ts");
+      await prisma.compiledPattern.update({ where: { id: pFact.id }, data: { confidenceScore: 0.97 } });
+      const clamped = await adjustPatternConfidence(pFact.id, REINFORCE_STEP, "smoke clamp");
+      check("reinforcement above the cap is a no-op, never a writedown", clamped === 0.97);
+      await prisma.compiledPattern.delete({ where: { id: pFact.id } });
+
+      // Decay leaves a durable counter — the monotone record the gate will read.
+      const wrongCounters = await prisma.compiledPattern.findUnique({ where: { id: pWrong.id } });
+      check("decay increments correctionsSinceConfirm (monotone, non-saturating)", wrongCounters?.correctionsSinceConfirm === 1);
+
+      // Trust rises ONLY on explicit ratification — never on silence. Fire pRight,
+      // Cole says "good call" → counters + small confidence raise; the consumed
+      // event can't be ratified twice.
+      await recordPatternsFired([pRight.id], `${TAG} decision two`);
+      const nRatified = await ratifyRecentDecision({ note: `smoke ${TAG} good call` });
+      const afterRatify = await prisma.compiledPattern.findUnique({ where: { id: pRight.id } });
+      check(
+        "ratification raises trust: counters tick, confidence nudges up",
+        nRatified === 1 &&
+          afterRatify?.validatedCount === 1 &&
+          afterRatify?.ratifiedCount === 1 &&
+          Math.abs((afterRatify?.confidenceScore ?? 0) - (0.5 + REINFORCE_STEP)) < 1e-6
+      );
+      const nDoubleRatify = await ratifyRecentDecision({ note: `smoke ${TAG} again` });
+      check("a ratified event is consumed — no double-crediting", nDoubleRatify === 0);
+      const { parseRatification } = await import("../compiled/mirror.ts");
+      check(
+        "ratification parser fires on endorsements, not on chat",
+        parseRatification("good call") === true && parseRatification("that was right") === true &&
+          parseRatification("good call but let's talk about the second point in more depth") === false &&
+          parseRatification("is that the right call?") === false
+      );
+
+      // ── Mirror & mailbox (the trust loop's front door) ──
+      const { isWhyQuery, parseRuleCorrection, handleWhyQuery, handleCorrectionReply } = await import("../compiled/mirror.ts");
+      check(
+        "why-detector fires on provenance asks, not on chat",
+        isWhyQuery("why?") === true && isWhyQuery("what informed that?") === true &&
+          isWhyQuery("why is the sky blue") === false && isWhyQuery("tell me why you like squats") === false
+      );
+      check(
+        "correction parser: named rule, whole decision, and safe negatives",
+        JSON.stringify(parseRuleCorrection("rule 2 is wrong")) === JSON.stringify({ kind: "rule", index: 1 }) &&
+          JSON.stringify(parseRuleCorrection("that was wrong")) === JSON.stringify({ kind: "decision" }) &&
+          parseRuleCorrection("that was a wrong turn in the essay about ethics") === null &&
+          parseRuleCorrection("I think rule of thirds applies here") === null
+      );
+      // Live round-trip: fire → "why?" mirrors the rule → "rule 1 is wrong" retires it.
+      await recordPatternsFired([pRight.id], `${TAG} mirror decision`);
+      const mirror = await handleWhyQuery();
+      check("mirror shows the rules behind the last decision, numbered", mirror.includes("smoke-right") && mirror.includes("1."));
+      const retireReply = await handleCorrectionReply("rule 1 is wrong");
+      const retired = await prisma.compiledPattern.findUnique({ where: { id: pRight.id } });
+      check(
+        "mailbox retires the named rule through Cole's-hand correction",
+        !!retireReply && retired?.status === "discarded"
+      );
+      await prisma.compiledPattern.update({ where: { id: pRight.id }, data: { status: "confirmed_heuristic" } });
+      await prisma.knowledgeEntry.deleteMany({ where: { operatorId: semOp, scope: "system", key: "mirror:last_shown" } });
+      await prisma.correction.deleteMany({ where: { targetId: pRight.id } });
+
+      // Repeatedly-wrong rules fall below the trust floor and stop loading.
+      await prisma.compiledPattern.update({ where: { id: pWrong.id }, data: { confidenceScore: TRUST_FLOOR - 0.05, status: "proposed_heuristic" } });
+      const blkFloor = await loadOperatorPatternsForPrompt({ operatorId: semOp, role: "primary" });
+      check(
+        "patterns below the trust floor stop loading into prompts",
+        !blkFloor.includes("smoke-wrong") // pRight may or may not render depending on other patterns; the floor test is pWrong's absence
+      );
+
+      // But a rule COLE CONFIRMED never dies silently: decay clamps it AT the
+      // floor (it keeps loading) and a retire proposal lands on the Bridge.
+      const pSacred = await mk("When smoke-sacred, protect what Cole ratified");
+      await prisma.compiledPattern.update({ where: { id: pSacred.id }, data: { confidenceScore: 0.2 } });
+      await decayPatterns({ patternIds: [pSacred.id], reason: `smoke ${TAG} sacred` });
+      const sacredAfter = await prisma.compiledPattern.findUnique({ where: { id: pSacred.id } });
+      const retireSignals = await prisma.bridgeSignal.count({ where: { sourceType: "heuristic_retire", sourceId: `pattern-retire:${pSacred.id}` } });
+      const blkSacred = await loadOperatorPatternsForPrompt({ operatorId: semOp, role: "primary" });
+      check(
+        "confirmed rules clamp at the floor + retire proposal (never a silent death)",
+        Math.abs((sacredAfter?.confidenceScore ?? 0) - TRUST_FLOOR) < 1e-6 && retireSignals === 1 && blkSacred.includes("smoke-sacred")
+      );
+      await prisma.bridgeSignal.deleteMany({ where: { sourceId: `pattern-retire:${pSacred.id}` } });
+      await prisma.compiledPattern.delete({ where: { id: pSacred.id } });
+
+      // Cleanup (smoke artifacts only — filter trace rows by the TAG in their context).
+      await prisma.compiledPattern.deleteMany({ where: { id: { in: [pWrong.id, pRight.id] } } });
+      await prisma.logEntry.deleteMany({
+        where: { message: "decision:patterns_fired", context: { path: ["decision"], string_contains: TAG } },
+      });
+      await prisma.logEntry.deleteMany({
+        where: { message: "decision:patterns_decayed", context: { path: ["reason"], string_contains: TAG } },
+      });
+    } else {
+      check("semantic when-retrieval (skipped — no global operator)", true);
+    }
+
+    // Cursor → progress round-trip (deterministic; no research/network). The
+    // cursor lives under scope="system" so it never enters the vector index.
+    const curOp = await resolveOperatorId("global");
+    if (curOp) {
+      const studiedSeed = { studied: ["the art of war sun tzu", "the book of five rings miyamoto musashi"], cycles: 0 };
+      await prisma.knowledgeEntry.upsert({
+        where: { operatorId_scope_key: { operatorId: curOp, scope: "system", key: "curriculum:strategy" } },
+        update: { value: studiedSeed as any },
+        create: { operatorId: curOp, scope: "system", key: "curriculum:strategy", value: studiedSeed as any, sourceType: "curriculum_cursor", createdBy: "system" },
+      });
+      const prog = await getCurriculumProgress();
+      const sp = prog.find((p) => p.domain === "strategy");
+      check("curriculum progress reflects the studied set (reorder-proof)", !!sp && sp.read === 2 && sp.total >= 5);
+      await prisma.knowledgeEntry.deleteMany({ where: { operatorId: curOp, scope: "system", key: "curriculum:strategy" } });
+    } else {
+      check("curriculum progress (skipped — no global operator)", true);
+    }
   }
 
   // ── cleanup (smoke artifacts only) ──
