@@ -64,6 +64,15 @@ export function parseRuleCorrection(message: string): RuleCorrection | null {
   return null;
 }
 
+const RATIFY_RE =
+  /^(yes[,.]?\s+)?(good|great|solid|right) call\b[.!]?$|^that was (right|correct|spot[- ]on|the right call|a good call)\b[.!]?$|^you (were|got that) right\b[.!]?$/i;
+
+/** Explicit ratification — the ONLY signal that raises trust (silence never does). */
+export function parseRatification(message: string): boolean {
+  const m = (message ?? "").trim();
+  return m.length <= 60 && RATIFY_RE.test(m);
+}
+
 type MirrorContext = { patternIds: string[]; firedEventId: string; shownAt: string };
 
 async function globalOperatorId(): Promise<string | null> {
@@ -193,4 +202,31 @@ export async function handleCorrectionReply(message: string): Promise<string | n
   return res.applied
     ? "Noted — the rules that informed that call each lost trust. Ones that keep missing will stop loading entirely."
     : "Noted and recorded. No compiled rules were behind that call, so there was nothing to decay — but the correction still teaches the Sunday curriculum.";
+}
+
+/**
+ * RATIFICATION reply ("good call") — the rules behind the decision earn
+ * validated/ratified counters and a small trust raise. One-shot: uses the live
+ * mirror context if shown (then clears it), else consumes the latest fired-set.
+ * Returns null when the message isn't a ratification.
+ */
+export async function handleRatificationReply(message: string): Promise<string | null> {
+  if (!parseRatification(message)) return null;
+
+  const operatorId = await globalOperatorId();
+  const ctx = operatorId ? await loadMirrorContext(operatorId) : null;
+  const { ratifyPatterns, ratifyRecentDecision } = await import("./outcomeLoop.ts");
+
+  let n = 0;
+  if (ctx) {
+    n = await ratifyPatterns({ patternIds: ctx.patternIds, note: message.slice(0, 120) });
+    if (operatorId) {
+      await prisma.knowledgeEntry.deleteMany({ where: { operatorId, scope: "system", key: MIRROR_KEY } });
+    }
+  } else {
+    n = await ratifyRecentDecision({ note: message.slice(0, 120) });
+  }
+  return n > 0
+    ? `Logged — ${n} rule${n === 1 ? "" : "s"} behind that call earned trust. That's how the lens sharpens.`
+    : "Glad it landed — no compiled rules were behind that one, so nothing to credit. The win still counts.";
 }

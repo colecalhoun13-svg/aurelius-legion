@@ -159,11 +159,17 @@ function readTheme(sig: any): string {
   return "";
 }
 
-/** Bridge-confirm finalizer target: a confirmed heuristic starts grounding chat. */
+/** Bridge-confirm finalizer target: a confirmed heuristic starts grounding chat.
+ * Cole's hand: ratifiedCount ticks up and the corrections slate wipes clean —
+ * the counters (not the confidence float) are what the short-circuit will read. */
 export async function confirmHeuristic(patternId: string): Promise<any> {
   if (!patternId) throw new Error("confirmHeuristic needs a patternId");
   return prisma.compiledPattern.update({
     where: { id: patternId },
-    data: { status: "confirmed_heuristic" },
+    data: {
+      status: "confirmed_heuristic",
+      ratifiedCount: { increment: 1 },
+      correctionsSinceConfirm: 0,
+    },
   });
 }

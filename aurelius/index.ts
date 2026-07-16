@@ -601,8 +601,10 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
     // wrong" / "that was wrong" IS the correction, recorded against exactly the
     // rules Cole is looking at. Cheap regex gates — non-matches fall through.
     if (taskType !== "reflect") {
-      const { isWhyQuery, handleWhyQuery, handleCorrectionReply } = await import("./compiled/mirror.ts");
-      const mirrorReply = isWhyQuery(message) ? await handleWhyQuery() : await handleCorrectionReply(message);
+      const { isWhyQuery, handleWhyQuery, handleCorrectionReply, handleRatificationReply } = await import("./compiled/mirror.ts");
+      const mirrorReply = isWhyQuery(message)
+        ? await handleWhyQuery()
+        : (await handleCorrectionReply(message)) ?? (await handleRatificationReply(message));
       if (mirrorReply) {
         return res.json({
           reply: mirrorReply,

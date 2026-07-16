@@ -136,17 +136,10 @@ export async function runDecisionCurriculum(): Promise<DecisionCurriculumResult>
     await setCursor(globalId, now);
   }
 
-  // Grade the week (outcome loop): rules that informed decisions without drawing
-  // a correction earn a little trust. Deterministic DB work — no LLM, so it runs
-  // even keyless. Decay happened live, at correction time.
-  let reinforced = 0;
-  try {
-    const { reinforceSurvivors } = await import("../compiled/outcomeLoop.ts");
-    reinforced = await reinforceSurvivors({ sinceDays: 7 });
-  } catch (err) {
-    console.warn("[decisionCurriculum] reinforcement failed (non-fatal):", (err as any)?.message ?? err);
-  }
+  // NOTE: no silence-reinforcement here anymore (council red team): quiet weeks
+  // never raise trust — only Cole's explicit ratification does (outcomeLoop.
+  // ratifyPatterns, via the chat mailbox), so the counters can't inflate.
 
-  console.log(`[decisionCurriculum] scanned ${corrections.length} corrections across ${byOp.size} operators · proposed ${proposed} · reinforced ${reinforced}`);
-  return { ok: true, proposed, reinforced };
+  console.log(`[decisionCurriculum] scanned ${corrections.length} corrections across ${byOp.size} operators · proposed ${proposed}`);
+  return { ok: true, proposed };
 }

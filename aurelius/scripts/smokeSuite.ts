@@ -1010,8 +1010,8 @@ async function main() {
       await deleteEmbeddingsForSource("compiled_pattern", pB.id);
       await prisma.compiledPattern.deleteMany({ where: { id: { in: [pA.id, pB.id] } } });
 
-      // ── Outcome loop (decision spine #2): fire → decay on correction → reinforce survivors ──
-      const { recordPatternsFired, decayRecentlyFired, reinforceSurvivors, TRUST_FLOOR, DECAY_STEP, REINFORCE_STEP } =
+      // ── Outcome loop (decision spine #2): fire → decay on correction → ratify to earn trust ──
+      const { recordPatternsFired, decayRecentlyFired, ratifyRecentDecision, TRUST_FLOOR, DECAY_STEP, REINFORCE_STEP } =
         await import("../compiled/outcomeLoop.ts");
       const mk = (theme: string) =>
         prisma.compiledPattern.create({
@@ -1054,16 +1054,31 @@ async function main() {
       check("reinforcement above the cap is a no-op, never a writedown", clamped === 0.97);
       await prisma.compiledPattern.delete({ where: { id: pFact.id } });
 
-      // A later decision fires pRight; no correction → weekly grading reinforces it, not pWrong.
+      // Decay leaves a durable counter — the monotone record the gate will read.
+      const wrongCounters = await prisma.compiledPattern.findUnique({ where: { id: pWrong.id } });
+      check("decay increments correctionsSinceConfirm (monotone, non-saturating)", wrongCounters?.correctionsSinceConfirm === 1);
+
+      // Trust rises ONLY on explicit ratification — never on silence. Fire pRight,
+      // Cole says "good call" → counters + small confidence raise; the consumed
+      // event can't be ratified twice.
       await recordPatternsFired([pRight.id], `${TAG} decision two`);
-      const nReinforced = await reinforceSurvivors({ sinceDays: 1 });
-      const afterReinforce = await prisma.compiledPattern.findUnique({ where: { id: pRight.id } });
-      const wrongAfter = await prisma.compiledPattern.findUnique({ where: { id: pWrong.id } });
+      const nRatified = await ratifyRecentDecision({ note: `smoke ${TAG} good call` });
+      const afterRatify = await prisma.compiledPattern.findUnique({ where: { id: pRight.id } });
       check(
-        "quiet survivors reinforce; decayed patterns are excluded from the reward",
-        nReinforced >= 1 &&
-          Math.abs((afterReinforce?.confidenceScore ?? 0) - (0.5 + REINFORCE_STEP)) < 1e-6 &&
-          Math.abs((wrongAfter?.confidenceScore ?? 0) - (0.5 - DECAY_STEP)) < 1e-6
+        "ratification raises trust: counters tick, confidence nudges up",
+        nRatified === 1 &&
+          afterRatify?.validatedCount === 1 &&
+          afterRatify?.ratifiedCount === 1 &&
+          Math.abs((afterRatify?.confidenceScore ?? 0) - (0.5 + REINFORCE_STEP)) < 1e-6
+      );
+      const nDoubleRatify = await ratifyRecentDecision({ note: `smoke ${TAG} again` });
+      check("a ratified event is consumed — no double-crediting", nDoubleRatify === 0);
+      const { parseRatification } = await import("../compiled/mirror.ts");
+      check(
+        "ratification parser fires on endorsements, not on chat",
+        parseRatification("good call") === true && parseRatification("that was right") === true &&
+          parseRatification("good call but let's talk about the second point in more depth") === false &&
+          parseRatification("is that the right call?") === false
       );
 
       // ── Mirror & mailbox (the trust loop's front door) ──

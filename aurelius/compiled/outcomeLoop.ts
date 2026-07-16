@@ -103,7 +103,15 @@ export async function decayPatterns(args: { patternIds: string[]; reason: string
   let decayed = 0;
   for (const { id } of eligible) {
     const next = await adjustPatternConfidence(id, -DECAY_STEP, `decayed — Cole corrected a decision this informed (${args.reason.slice(0, 120)})`);
-    if (next !== null) decayed++;
+    if (next !== null) {
+      // The counter is the durable record — monotone, never saturates, and the
+      // short-circuit gate reads it (confidence is only the floor veto).
+      await prisma.compiledPattern.update({
+        where: { id },
+        data: { correctionsSinceConfirm: { increment: 1 } },
+      });
+      decayed++;
+    }
   }
   const operatorId = await traceOperatorId();
   if (operatorId && decayed > 0) {
@@ -150,38 +158,57 @@ export async function decayRecentlyFired(args: { reason: string; withinHours?: n
 }
 
 /**
- * Weekly grading (rides the Sunday decision-curriculum job): patterns that
- * informed decisions this window and drew NO correction and NO decay gain a
- * small reinforcement. Weak evidence, deliberately capped — surviving quiet
- * weeks never rivals Cole's explicit confirm.
+ * RATIFICATION — the ONLY way trust rises (red-team amendment: silence never
+ * rewards; the old reinforce-on-quiet-weeks saturated everything at the cap
+ * within ~15 Sundays and made the number meaningless). When Cole explicitly
+ * endorses a decision ("good call"), the rules that informed it earn:
+ * validatedCount++ and ratifiedCount++ (the monotone counters the short-circuit
+ * gate reads) plus a small confidence raise — which is also the recovery path
+ * for a rule that took collateral decay but keeps proving out.
  */
-export async function reinforceSurvivors(args?: { sinceDays?: number }): Promise<number> {
-  const since = new Date(Date.now() - (args?.sinceDays ?? 7) * 86_400_000);
-  const events = await prisma.logEntry.findMany({
-    where: { type: "trace", message: { in: [FIRED_MSG, DECAYED_MSG] }, createdAt: { gte: since } },
-    orderBy: { createdAt: "asc" },
+export async function ratifyPatterns(args: { patternIds: string[]; note: string }): Promise<number> {
+  const ids = [...new Set(args.patternIds)].filter((v) => typeof v === "string" && v.length > 0);
+  if (ids.length === 0) return 0;
+  const eligible = await prisma.compiledPattern.findMany({
+    where: { id: { in: ids }, status: { not: "discarded" } },
+    select: { id: true },
   });
 
-  const firedIds = new Set<string>();
-  const decayedIds = new Set<string>();
-  for (const e of events) {
-    const ids: string[] = ((e.context as any)?.patternIds ?? []).filter((v: any) => typeof v === "string");
-    for (const id of ids) (e.message === DECAYED_MSG ? decayedIds : firedIds).add(id);
+  let ratified = 0;
+  for (const { id } of eligible) {
+    await prisma.compiledPattern.update({
+      where: { id },
+      data: { validatedCount: { increment: 1 }, ratifiedCount: { increment: 1 } },
+    });
+    await adjustPatternConfidence(id, REINFORCE_STEP, `ratified — Cole endorsed a decision this informed (${args.note.slice(0, 120)})`);
+    ratified++;
   }
-  if (firedIds.size === 0) return 0;
+  return ratified;
+}
 
-  // Any correction directly on the pattern in-window also disqualifies it.
-  const corrected = await prisma.correction.findMany({
-    where: { targetType: "compiled_pattern", targetId: { in: [...firedIds] }, createdAt: { gte: since } },
-    select: { targetId: true },
+/**
+ * Ratify the latest unconsumed fired-set (fallback when no mirror was shown).
+ * Consumes the event — repeated "good call" can't ratchet the same decision.
+ */
+export async function ratifyRecentDecision(args: { note: string; withinHours?: number }): Promise<number> {
+  const withinHours = args.withinHours ?? 48;
+  const recent = await prisma.logEntry.findMany({
+    where: {
+      type: "trace",
+      message: FIRED_MSG,
+      createdAt: { gte: new Date(Date.now() - withinHours * 3600_000) },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 10,
   });
-  for (const c of corrected) decayedIds.add(c.targetId);
+  const fired = recent.find((r) => (r.context as any)?.consumed !== true);
+  if (!fired) return 0;
+  const ids: string[] = ((fired.context as any)?.patternIds ?? []).filter((v: any) => typeof v === "string");
+  if (ids.length === 0) return 0;
 
-  let reinforced = 0;
-  for (const id of firedIds) {
-    if (decayedIds.has(id)) continue;
-    const next = await adjustPatternConfidence(id, REINFORCE_STEP, "reinforced — informed decisions without drawing a correction");
-    if (next !== null) reinforced++;
-  }
-  return reinforced;
+  await prisma.logEntry.update({
+    where: { id: fired.id },
+    data: { context: { ...(fired.context as any), consumed: true } as any },
+  });
+  return ratifyPatterns({ patternIds: ids, note: args.note });
 }
