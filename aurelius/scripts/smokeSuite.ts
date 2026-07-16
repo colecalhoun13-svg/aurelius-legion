@@ -974,6 +974,11 @@ async function main() {
       extractWhenClause("When the downside is irreversible, size to survive being wrong — because ruin is unrecoverable") === "the downside is irreversible"
     );
     check(
+      "extractWhenClause keeps multi-part conditions (no first-comma amputation)",
+      extractWhenClause("When you're tired, sore, or unmotivated, cut volume before intensity — because grinding compounds fatigue") ===
+        "you're tired, sore, or unmotivated"
+    );
+    check(
       "isColeDerived flags corrections-sourced heuristics, not canon",
       isColeDerived({ recurringReasoningTheme: "x", source: "cole's corrections" }) === true &&
         isColeDerived({ recurringReasoningTheme: "x", source: "curriculum: The Art of War" }) === false
@@ -992,6 +997,9 @@ async function main() {
       });
       const nIdx = await indexConfirmedPatterns(semOp);
       check("compiled patterns index into the vector store (when-clause embeddings)", nIdx >= 2);
+      // Cost-idempotent: a second backfill embeds nothing (no per-boot API spend).
+      const nIdxAgain = await indexConfirmedPatterns(semOp);
+      check("backfill re-run embeds only what's missing (zero on second pass)", nIdxAgain === 0);
       const fit = await retrieveFitPatterns({ operatorId: semOp, query: "should I risk irreversible capital on this", limit: 10 });
       check("retrieveFitPatterns returns semantic hits (not null) with an engine", Array.isArray(fit) && (fit as any[]).length >= 2);
       const { loadOperatorPatternsForPrompt } = await import("../compiled/reasoningHelper.ts");
@@ -1005,6 +1013,13 @@ async function main() {
       const blkFallback = await loadOperatorPatternsForPrompt({ operatorId: semOp, query: "anything", role: "primary" });
       if (prevEnv === undefined) delete process.env.RETRIEVAL_EMBEDDINGS_ENABLED; else process.env.RETRIEVAL_EMBEDDINGS_ENABLED = prevEnv;
       check("retrieval falls back honestly with no embedding engine", nullFit === null && blkFallback.includes(TAG));
+      // GC: discarding a rule (Cole's hand) removes its vector from the index.
+      const { recordCorrection: rcGc } = await import("../knowledge/corrections.ts");
+      await rcGc({ targetType: "compiled_pattern", targetId: pB.id, correctionType: "pattern_wrong", reason: `smoke ${TAG} gc` });
+      const gcRows = await prisma.vectorEmbedding.count({ where: { sourceType: "compiled_pattern", sourceId: pB.id } });
+      const gcPattern = await prisma.compiledPattern.findUnique({ where: { id: pB.id } });
+      check("discarded rules leave the retrieval index (vector GC)", gcRows === 0 && gcPattern?.status === "discarded");
+      await prisma.correction.deleteMany({ where: { targetId: pB.id } });
       const { deleteEmbeddingsForSource } = await import("../retrieval/vectorStore.ts");
       await deleteEmbeddingsForSource("compiled_pattern", pA.id);
       await deleteEmbeddingsForSource("compiled_pattern", pB.id);

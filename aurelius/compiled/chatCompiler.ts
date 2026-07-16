@@ -164,7 +164,7 @@ function readTheme(sig: any): string {
  * the counters (not the confidence float) are what the short-circuit will read. */
 export async function confirmHeuristic(patternId: string): Promise<any> {
   if (!patternId) throw new Error("confirmHeuristic needs a patternId");
-  return prisma.compiledPattern.update({
+  const pattern = await prisma.compiledPattern.update({
     where: { id: patternId },
     data: {
       status: "confirmed_heuristic",
@@ -172,4 +172,9 @@ export async function confirmHeuristic(patternId: string): Promise<any> {
       correctionsSinceConfirm: 0,
     },
   });
+  // NOW the rule earns its place in the retrieval index (proposed rules never
+  // occupy the window's slots; confirm is the moment it can start steering).
+  const { indexPatternSafe } = await import("./patternIndex.ts");
+  indexPatternSafe(pattern as any);
+  return pattern;
 }

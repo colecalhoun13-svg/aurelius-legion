@@ -55,11 +55,18 @@ export async function recordCorrection(input: CorrectionInput) {
     const pattern = await prisma.compiledPattern.findUnique({ where: { id: input.targetId } });
     before = pattern?.patternSignature ?? null;
     if (pattern) {
-      // A corrected pattern stops steering — kept as observation only.
+      // A corrected pattern stops steering — kept as observation only. Its
+      // vector leaves the index too (dead rules crowd the retrieval window).
       await prisma.compiledPattern.update({
         where: { id: input.targetId },
         data: { status: "discarded" },
       });
+      try {
+        const { deleteEmbeddingsForSource } = await import("../retrieval/vectorStore.ts");
+        await deleteEmbeddingsForSource("compiled_pattern", input.targetId);
+      } catch (err) {
+        console.warn("[corrections] vector GC failed (pattern still discarded):", err);
+      }
       applied = true;
     }
   } else if (input.targetType === "reasoning_output") {

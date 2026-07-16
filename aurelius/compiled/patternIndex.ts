@@ -54,15 +54,22 @@ export function isColeDerived(sig: any, evidence?: string[]): boolean {
  * The SITUATION clause a heuristic triggers on. Matching happens on this, not the
  * action or the rationale — a lens fires when its precondition matches the decision.
  * "When <situation>, <do this> — because <reason>" → "<situation>".
- * Falls back to the text before the reason, then the whole rule.
+ *
+ * The situation itself may contain commas ("tired, sore, or unmotivated"), so we
+ * strip the rationale first, then drop only the FINAL comma-segment (the action) —
+ * a lazy first-comma cut would embed "you're tired" and lose the condition.
  */
 export function extractWhenClause(heuristic: string): string {
   const h = (heuristic ?? "").trim();
   if (!h) return "";
-  const m = h.match(/^\s*(?:when|if|whenever)\b\s+(.+?)\s*(?:,|—|–|\bthen\b|\bprefer\b|\bavoid\b|\bbecause\b|\bso that\b)/i);
-  if (m && m[1] && m[1].trim().length >= 4) return m[1].trim();
-  const beforeReason = h.split(/\s*(?:—|–|\bbecause\b|\bso that\b)\s*/i)[0];
-  return (beforeReason || h).trim();
+  const head = h.split(/\s*(?:—|–|\bbecause\b|\bso that\b)\s*/i)[0].trim();
+  const m = head.match(/^\s*(?:when|if|whenever)\b\s+(.+)$/i);
+  if (!m) return head || h;
+  const body = m[1].trim();
+  const segs = body.split(/\s*,\s*/);
+  if (segs.length <= 1) return body;
+  const situation = segs.slice(0, -1).join(", ").trim();
+  return situation.length >= 4 ? situation : body;
 }
 
 /**
@@ -102,22 +109,30 @@ export function indexPatternSafe(p: { id: string; operatorId: string; domain: st
 }
 
 /**
- * Backfill: embed every usable pattern that isn't indexed yet (idempotent — upsert
- * on the same sourceId is a no-op if unchanged). Lets patterns compiled before this
- * layer existed become retrievable. Returns the count embedded.
+ * Backfill: embed USABLE patterns (confirmed + factual — proposed/discarded
+ * vectors would only crowd the retrieval window) that aren't already indexed by
+ * the CURRENT embedding model. Cost-idempotent: already-indexed patterns cost
+ * zero embedding calls, so a boot re-run is free, not N API calls.
  */
 export async function indexConfirmedPatterns(operatorId?: string): Promise<number> {
   const adapter = getEmbeddingAdapter();
   if (!adapter) return 0;
+  const model = `${adapter.name}:${adapter.model}`;
+  const existing = await prisma.vectorEmbedding.findMany({
+    where: { sourceType: PATTERN_SOURCE, embeddingModel: model },
+    select: { sourceId: true },
+  });
+  const have = new Set(existing.map((e) => e.sourceId));
   const patterns = await prisma.compiledPattern.findMany({
     where: {
-      status: { in: ["auto_factual", "confirmed_heuristic", "proposed_heuristic"] },
+      status: { in: ["auto_factual", "confirmed_heuristic"] },
       ...(operatorId ? { operatorId } : {}),
     },
     select: { id: true, operatorId: true, domain: true, patternSignature: true },
   });
   let n = 0;
   for (const p of patterns) {
+    if (have.has(p.id)) continue;
     try {
       if (await indexPattern(p as any)) n++;
     } catch (err) {
@@ -125,6 +140,13 @@ export async function indexConfirmedPatterns(operatorId?: string): Promise<numbe
     }
   }
   return n;
+}
+
+/** GC: a retired rule leaves the index — dead vectors crowd the retrieval window. */
+export function removePatternVectorSafe(patternId: string): void {
+  import("../retrieval/vectorStore.ts")
+    .then(({ deleteEmbeddingsForSource }) => deleteEmbeddingsForSource(PATTERN_SOURCE, patternId))
+    .catch((err) => console.warn("[patternIndex] vector GC failed (non-fatal):", (err as any)?.message ?? err));
 }
 
 /**
