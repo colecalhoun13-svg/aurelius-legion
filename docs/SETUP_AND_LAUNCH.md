@@ -149,6 +149,19 @@ tavily.com) — the web tool prefers it automatically.
 4. **Share each athlete's Sheet** with the service-account email
    (`…@project.iam.gserviceaccount.com`) as Editor. Restart.
 
+**Easier (recommended for a single coach):** skip the service account entirely
+and let Aurelius read your sheets **as you** — the same Google login as Calendar.
+1. Make sure `.env` has `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` (same as
+   Calendar/Gmail), then **re-authorize once** at `/api/calendar/auth` — the login
+   now also asks for Sheets permission. Approve it.
+2. That's it. **No service account, no sharing, no folders.** Just name an
+   athlete: *"pull up Jake's sheet and drop his squat volume 10%"* → Aurelius
+   finds the spreadsheet named Jake in your Drive, reads it, makes the change, and
+   remembers it for next time. New athlete? Just name them — first mention finds
+   and registers the sheet automatically.
+   (If two sheets match a name, it'll ask which one. Rename sheets to your
+   athletes' names for cleanest matching.)
+
 ## 9. Instagram — connect once, then metrics + publishing
 
 Drafting works today (keyless, `content.draft_post`). To read your **metrics /

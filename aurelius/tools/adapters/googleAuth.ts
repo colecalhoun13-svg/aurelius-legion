@@ -21,25 +21,32 @@ let cachedClient: sheets_v4.Sheets | null = null;
 let cachedDrive: drive_v3.Drive | null = null;
 let attemptedInit = false;
 
-// One auth, both scopes: spreadsheets (read/write cells) + drive.readonly (LIST
-// what's been shared with the service account — this powers sync_roster, so Cole
-// shares one folder once instead of registering every sheet by hand).
+// Two ways to authenticate, preferred in order:
+//   1. Cole's own Google login (OAuth) — reads/writes HIS sheets as HIM, so
+//      nothing needs sharing. This is the "as easy as the calendar" path.
+//   2. A service account JSON (GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH) — the older
+//      shared-folder path, kept for multi-user / headless setups.
 async function initAuth(): Promise<any | null> {
-  const keyPath = process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH;
-  if (!keyPath) {
-    console.warn(
-      "[googleAuth] GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH not set — Sheets adapter will return errors on every call."
-    );
-    return null;
+  // 1) Prefer Cole's OAuth login when it's connected + authorized for Sheets.
+  try {
+    const { getUserGoogleClient } = await import("../../calendar/googleAuth.ts");
+    const userClient = await getUserGoogleClient();
+    if (userClient) {
+      console.log("[googleAuth] Sheets via Cole's Google login (no sharing needed)");
+      return userClient;
+    }
+  } catch (err) {
+    console.warn("[googleAuth] OAuth Sheets client unavailable, trying service account:", (err as any)?.message ?? err);
   }
 
+  // 2) Fall back to the service account key file, if configured.
+  const keyPath = process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH;
+  if (!keyPath) return null;
   const resolvedPath = path.isAbsolute(keyPath) ? keyPath : path.resolve(process.cwd(), keyPath);
-
   if (!fs.existsSync(resolvedPath)) {
     console.warn(`[googleAuth] service account key file not found at ${resolvedPath}`);
     return null;
   }
-
   const auth = new google.auth.GoogleAuth({
     keyFile: resolvedPath,
     scopes: [
@@ -52,17 +59,13 @@ async function initAuth(): Promise<any | null> {
 
 export async function getSheetsClient(): Promise<sheets_v4.Sheets | null> {
   if (cachedClient) return cachedClient;
-  if (attemptedInit) return null; // already tried and failed; don't retry every call
-
-  attemptedInit = true;
-
+  // No permanent attemptedInit latch: Cole may connect Google AFTER first boot,
+  // so re-check each call until a client builds (cheap; result is cached on success).
   try {
     const authClient = await initAuth();
     if (!authClient) return null;
     cachedClient = google.sheets({ version: "v4", auth: authClient as any });
     cachedDrive = google.drive({ version: "v3", auth: authClient as any });
-
-    console.log("[googleAuth] Sheets client initialized successfully");
     return cachedClient;
   } catch (err: any) {
     console.error("[googleAuth] failed to initialize Sheets client:", err?.message ?? err);

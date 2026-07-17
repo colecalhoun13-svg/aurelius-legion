@@ -17,10 +17,18 @@
 // surfaced by semantic recall. Credentials are not knowledge.
 
 import { prisma } from "../core/db/prisma.ts";
+import { google } from "googleapis";
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-const SCOPE = "https://www.googleapis.com/auth/calendar";
+// One Google login covers Calendar AND Sheets — so Aurelius reads/writes Cole's
+// own athlete sheets AS HIM (no service account, no per-sheet sharing). Adding
+// scopes means re-authorizing once at /api/calendar/auth to grant them.
+const SCOPE = [
+  "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/spreadsheets", // read + write cells
+  "https://www.googleapis.com/auth/drive.readonly", // find sheets by name in his Drive
+].join(" ");
 const TOKEN_SCOPE = "system";
 const TOKEN_KEY = "google_calendar_tokens";
 
@@ -201,6 +209,22 @@ export async function getAccessToken(forceRefresh = false): Promise<string | nul
     return stored.access_token;
   }
   return refreshAccessToken(stored);
+}
+
+/**
+ * A googleapis OAuth2 client authenticated AS COLE — seeded with his stored
+ * refresh token so it auto-refreshes. Any Google API (Sheets, Drive) can use it,
+ * which is how Aurelius reads his own sheets with zero sharing. Null when the
+ * Google login isn't configured/connected (or wasn't re-authorized for Sheets).
+ */
+export async function getUserGoogleClient(): Promise<any | null> {
+  const cfg = clientConfig();
+  if (!cfg) return null;
+  const stored = await loadTokens();
+  if (!stored?.refresh_token) return null;
+  const client = new google.auth.OAuth2(cfg.id, cfg.secret, redirectUri());
+  client.setCredentials({ refresh_token: stored.refresh_token });
+  return client;
 }
 
 /**
