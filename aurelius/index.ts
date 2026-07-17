@@ -767,6 +767,37 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
     const parsed = extractDirectives(response.text);
     let cleanedText = parsed.cleanedText;
 
+    // Directive integrity (council fix): near-misses page instead of vanishing,
+    // and only format-reliable engines get their directives EXECUTED.
+    try {
+      const { detectNearMisses } = await import("./llm/directiveParser.ts");
+      const { DIRECTIVE_CAPABLE } = await import("./llm/router.ts");
+      const misses = detectNearMisses(response.text);
+      if (misses.length > 0) {
+        const { pageFailure } = await import("./core/trace.ts");
+        pageFailure(
+          "directive_near_miss",
+          `${response.engine} wrote ${misses.length} directive(s) that didn't parse — nothing was saved/run. First: ${misses[0].fragment.slice(0, 120)}`
+        );
+        for (const miss of misses) cleanedText = cleanedText.split(miss.fragment).join("").trim();
+      }
+      if (!DIRECTIVE_CAPABLE.has(response.engine) && (parsed.saves.length || parsed.tools.length || parsed.knowledgeProposals.length || parsed.knowledgeConfirmations.length)) {
+        // A prose-only engine emitted directives (learned the shape from context).
+        // Refuse quietly but honestly — acting on unvetted formatting is how
+        // memory rots. The text stays; the actions don't fire.
+        parsed.saves.length = 0;
+        parsed.tools.length = 0;
+        parsed.knowledgeProposals.length = 0;
+        parsed.knowledgeConfirmations.length = 0;
+        cleanedText += `\n\n_(answered by ${response.engine} — actions from fallback engines don't auto-run; ask again if you want it done)_`;
+      }
+      if (response.failedOverFrom) {
+        cleanedText += `\n\n_(${response.failedOverFrom} was unreachable — ${response.engine} answered this one)_`;
+      }
+    } catch (err) {
+      console.warn("[aurelius] directive integrity pass failed (non-fatal):", err);
+    }
+
     const savedAuto: any[] = [];
     const autoSavedForReflection: Array<{ category: string; value: string }> = [];
 
