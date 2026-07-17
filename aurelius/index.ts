@@ -1448,6 +1448,17 @@ app.use((err: any, _req: Request, res: Response, _next: any) => {
 });
 
 const PORT = Number(process.env.PORT) || 3001;
+// Dead-man heartbeat: a 5-min proof-of-life ping to an external check
+// (Healthchecks.io free tier, Telegram alert channel) — so a completely dark
+// Mini still texts Cole. Dormant without the env (rule 4). Pairs with the
+// morning-briefing ping in core/trace.ts, which proves the SPINE works.
+if (process.env.HEALTHCHECKS_PING_URL) {
+  const beat = () => fetch(process.env.HEALTHCHECKS_PING_URL!).catch(() => {});
+  beat();
+  setInterval(beat, 5 * 60_000);
+  console.log("[heartbeat] dead-man pings armed (5 min)");
+}
+
 app.listen(PORT, "0.0.0.0", () => {
   logBootMarker(); // cockpit uptime derives from the latest boot row
   console.log(`Aurelius server running on port ${PORT}`);
