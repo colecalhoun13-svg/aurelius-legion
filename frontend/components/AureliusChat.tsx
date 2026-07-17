@@ -8,7 +8,7 @@
 
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Attachment = { file: File; mimeType: string; kind: "image" | "video"; dataUrl: string };
 type Message = {
@@ -33,6 +33,27 @@ export function AureliusChat() {
   const [error, setError] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Restore the conversation on mount — the turns were always persisted
+  // server-side (that's Aurelius's own continuity); the screen just never
+  // asked. Only seeds an empty screen, so it can't clobber a live exchange.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/chat/history")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.messages?.length) return;
+        setMessages((prev) =>
+          prev.length > 0
+            ? prev
+            : data.messages.map((m: any) => ({ role: m.role === "user" ? "user" : "aurelius", content: String(m.content ?? "") }))
+        );
+      })
+      .catch(() => {}); // history is a nicety — a failed load never blocks chat
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // The backend accepts ≤25MB of JSON, and base64 inflates bytes ~33%. Cap the
   // COMBINED raw size of attached files at ~17MB so the encoded payload stays

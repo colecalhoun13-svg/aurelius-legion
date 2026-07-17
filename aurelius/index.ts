@@ -606,6 +606,10 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
         ? await handleWhyQuery()
         : (await handleCorrectionReply(message)) ?? (await handleRatificationReply(message));
       if (mirrorReply) {
+        // Continuity: mirror exchanges are part of the conversation too.
+        import("./memory/conversation.ts")
+          .then((m) => m.recordTurns({ coleMessage: message, aureliusReply: mirrorReply, operatorName: "global" }))
+          .catch(() => {});
         return res.json({
           reply: mirrorReply,
           operators: { primary: "global", secondaries: [] },
@@ -640,8 +644,13 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
     if (councilAsk) {
       if (secondaries.length > 0 && message.trim().length >= 4) {
         const result = await deliberate(message, { routing });
+        const councilReply = formatDeliberation(result);
+        // Continuity: the tribunal's full exchange survives restarts.
+        import("./memory/conversation.ts")
+          .then((m) => m.recordTurns({ coleMessage: message, aureliusReply: councilReply, operatorName: primary }))
+          .catch(() => {});
         return res.json({
-          reply: formatDeliberation(result),
+          reply: councilReply,
           operators: { primary, secondaries },
           meta: {
             mode: "council",
