@@ -39,6 +39,27 @@ export const contentAdapter: ToolAdapter = {
       dataSchema: '{ caption: string, imageUrl: string (public URL), channel?: string (default "instagram") }',
       example: '[TOOL: content.publish_post {"caption": "500lb squat. 3 years.", "imageUrl": "https://.../pr.jpg"}]',
     },
+    {
+      name: "instagram_metrics",
+      description:
+        "Read-only Instagram performance: followers, reach, profile views over the last 30 days, plus recent posts and the top performer. Use for 'how's my Instagram doing', 'what's my reach', 'which post landed best'.",
+      dataSchema: "{} (no fields)",
+      example: "[TOOL: content.instagram_metrics]",
+    },
+    {
+      name: "instagram_recent_posts",
+      description:
+        "Read-only per-post Instagram numbers for recent posts (reach, likes, comments, saves, engagement), newest first. Use for 'break down my last few posts'.",
+      dataSchema: "{ limit?: number (default 8, max 25) }",
+      example: '[TOOL: content.instagram_recent_posts {"limit": 6}]',
+    },
+    {
+      name: "instagram_strategy",
+      description:
+        "Leverage read: analyzes Cole's own posting patterns (best day/time, best media type, engagement-rate trend) and returns concrete recommendations for what to post more of and when. Use for 'how do I grow my Instagram', 'what should I post', 'read my algorithm'.",
+      dataSchema: "{} (no fields)",
+      example: "[TOOL: content.instagram_strategy]",
+    },
   ],
 
   async run(action, data): Promise<ToolAdapterResult> {
@@ -92,6 +113,83 @@ ${data.notes ? `Notes to weave in: ${String(data.notes)}\n` : ""}Return ONLY the
             gated: !exec.finalized,
           },
         };
+      }
+
+      case "instagram_metrics": {
+        try {
+          const { metricsDigest } = await import("../../instagram/insights.ts");
+          const digest = await metricsDigest();
+          return { ok: true, output: { summary: digest } };
+        } catch (err: any) {
+          return { ok: false, output: null, error: err?.message ?? "couldn't read Instagram metrics" };
+        }
+      }
+
+      case "instagram_recent_posts": {
+        try {
+          const { recentPostMetrics } = await import("../../instagram/insights.ts");
+          const limit = Math.min(Math.max(Number(data?.limit) || 8, 1), 25);
+          const posts = await recentPostMetrics(limit);
+          return {
+            ok: true,
+            output: {
+              summary: `${posts.length} recent post(s), newest first`,
+              posts: posts.map((p) => ({
+                date: new Date(p.timestamp).toLocaleDateString(),
+                caption: p.caption,
+                reach: p.reach,
+                likes: p.likes,
+                comments: p.comments,
+                saves: p.saved,
+                engagement: p.engagement,
+                permalink: p.permalink,
+              })),
+            },
+          };
+        } catch (err: any) {
+          return { ok: false, output: null, error: err?.message ?? "couldn't read recent posts" };
+        }
+      }
+
+      case "instagram_strategy": {
+        try {
+          const { postingPatterns, accountMetrics } = await import("../../instagram/insights.ts");
+          const patterns = await postingPatterns(25);
+          if (patterns.sampleSize === 0) {
+            return { ok: false, output: null, error: "No recent posts to analyze yet — post a few times, then ask again." };
+          }
+          const acct = await accountMetrics(30).catch(() => null);
+          // Hand the REAL patterns to the content operator (which studies content
+          // strategy via the curriculum) for a concrete, Cole-specific read.
+          const brief =
+            `Cole's Instagram data (his own posts — this IS his algorithm signal):\n` +
+            `- ${patterns.sampleSize} recent posts · avg ${patterns.avgEngagement} engagement · ${patterns.avgReach} reach · ${patterns.engagementRatePct}% engagement rate · trend: ${patterns.trend}\n` +
+            `- Best media type: ${patterns.bestMediaType ?? "n/a"}\n` +
+            `- Best day: ${patterns.bestDay ?? "n/a"} · best time: ${patterns.bestHourBlock ?? "n/a"}\n` +
+            `- By type: ${patterns.byMediaType.map((t) => `${t.type} ${t.avgEngagement}`).join(", ")}\n` +
+            `- By day: ${patterns.byDay.map((d) => `${d.day} ${d.avgEngagement}`).join(", ")}\n` +
+            (acct ? `- ${acct.followers} followers · ${acct.reach} reach last 30d\n` : "") +
+            `\nGive Cole 3-4 concrete, specific moves to grow — what format to post more, when to post, ` +
+            `what to double down on based on HIS numbers above. No generic advice; cite his data. Tight and tactical.`;
+          const res = await runLLM({ taskType: "chat", operators: { primary: "content", secondaries: [] }, input: brief });
+          const read = extractDirectives(res.text ?? "").cleanedText || res.text;
+          return {
+            ok: true,
+            output: {
+              summary: read,
+              patterns: {
+                sampleSize: patterns.sampleSize,
+                engagementRatePct: patterns.engagementRatePct,
+                trend: patterns.trend,
+                bestDay: patterns.bestDay,
+                bestTime: patterns.bestHourBlock,
+                bestMediaType: patterns.bestMediaType,
+              },
+            },
+          };
+        } catch (err: any) {
+          return { ok: false, output: null, error: err?.message ?? "couldn't build a strategy read" };
+        }
       }
 
       default:

@@ -61,6 +61,7 @@ import { wikiRouter } from "./router/wikiRouter.ts";
 import { calendarRouter } from "./router/calendarRouter.ts";
 import { correctionsRouter } from "./router/correctionsRouter.ts";
 import { gmailRouter } from "./router/gmailRouter.ts";
+import { instagramRouter } from "./router/instagramRouter.ts";
 
 // Structured tracing — every request and scheduled run leaves a LogEntry
 // row the cockpit can read. Telemetry is fire-and-forget by design.
@@ -116,6 +117,7 @@ app.use("/api/wiki", wikiRouter);
 app.use("/api/calendar", calendarRouter);
 app.use("/api/corrections", correctionsRouter);
 app.use("/api/gmail", gmailRouter);
+app.use("/api/instagram", instagramRouter);
 
 app.get("/", (req: Request, res: Response) => {
   res.send("Aurelius OS backend is running");
