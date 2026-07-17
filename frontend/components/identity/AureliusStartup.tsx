@@ -74,23 +74,37 @@ export default function AureliusStartup({ children }: { children: React.ReactNod
         />
       )}
 
-      {/* The crest — assembling, then blooming, at watermark size/position */}
+      {/* Standing halo — the artwork's warm glow, present from the first leaf */}
+      <div
+        className="absolute"
+        style={{
+          width: "100vmin",
+          height: "100vmin",
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle, rgba(212,165,32,0.16) 0%, rgba(212,165,32,0.06) 45%, rgba(0,0,0,0) 70%)",
+        }}
+      />
+
+      {/* The crest — assembling, then blooming, at watermark size/position.
+          The faceted A ignites at the bloom (crest-a delay in globals.css). */}
       <div className="absolute inset-0 flex items-center justify-center">
         <div
           className={`relative ${blooming ? "animate-wreathBloom" : ""}`}
           style={{ width: "108vmin", height: "108vmin" }}
         >
-          <WreathSVG variant="gold" animated className="w-full h-full" />
+          <WreathSVG variant="gold" animated showA className="w-full h-full" />
         </div>
       </div>
 
-      {/* The name arrives with the bloom */}
+      {/* The name arrives with the bloom, under the crest */}
       {blooming && (
         <div
           className="absolute animate-titleIn"
           style={{
+            bottom: "12vh",
             fontFamily: "var(--font-serif, Georgia, serif)",
-            fontSize: "clamp(1.4rem, 3.2vmin, 2.2rem)",
+            fontSize: "clamp(1.1rem, 2.6vmin, 1.8rem)",
             color: "#e8d48b",
             textShadow: "0 0 24px rgba(212,175,55,0.45)",
             textTransform: "uppercase",
