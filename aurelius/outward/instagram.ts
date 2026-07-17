@@ -15,16 +15,16 @@
 // supported, so hosting the image is the caller's job (comes with the Mac Mini
 // deploy; until then pass an already-hosted URL). See docs/SETUP.md.
 
+import { getInstagramCreds, isInstagramConfigured } from "../instagram/auth.ts";
+
 const GRAPH = "https://graph.facebook.com/v21.0";
 
-function cfg(): { token: string; igUserId: string } | null {
-  const token = process.env.INSTAGRAM_ACCESS_TOKEN?.trim();
-  const igUserId = process.env.INSTAGRAM_BUSINESS_ID?.trim();
-  return token && igUserId ? { token, igUserId } : null;
-}
-
+/** Configured if EITHER the OAuth app creds OR the manual env token exists. */
 export function instagramConfigured(): boolean {
-  return !!cfg();
+  return (
+    isInstagramConfigured() ||
+    !!(process.env.INSTAGRAM_ACCESS_TOKEN?.trim() && process.env.INSTAGRAM_BUSINESS_ID?.trim())
+  );
 }
 
 export type InstagramPublishInput = {
@@ -60,10 +60,10 @@ async function graphPost(path: string, params: Record<string, string>): Promise<
  * (confirmAction) reverts the Bridge proposal to pending so Cole can retry.
  */
 export async function publishToInstagram(input: InstagramPublishInput): Promise<InstagramPublishResult> {
-  const c = cfg();
+  const c = await getInstagramCreds();
   if (!c) {
     throw new Error(
-      "Instagram is not configured — set INSTAGRAM_ACCESS_TOKEN + INSTAGRAM_BUSINESS_ID (Meta app + IG business account). See docs/SETUP.md."
+      "Instagram is not connected — open /api/instagram/auth once (needs INSTAGRAM_APP_ID + INSTAGRAM_APP_SECRET), or set INSTAGRAM_ACCESS_TOKEN + INSTAGRAM_BUSINESS_ID manually. See docs/SETUP_AND_LAUNCH.md."
     );
   }
   if (!input.imageUrl?.trim()) {

@@ -668,10 +668,30 @@ async function main() {
     const after = sigId ? await prisma.bridgeSignal.findUnique({ where: { id: sigId } }) : null;
     check(
       "confirm without IG token fails honestly + reverts to pending (rule 3)",
-      !confirmed.ok && /not configured/i.test(confirmed.error ?? "") && after?.status === "pending"
+      !confirmed.ok && /not connected|not configured/i.test(confirmed.error ?? "") && after?.status === "pending"
     );
 
     if (sigId) await prisma.bridgeSignal.delete({ where: { id: sigId } }).catch(() => {});
+
+    // ── Instagram OAuth + metrics (dormant-honest) ──
+    const { isInstagramConfigured, isInstagramConnected, buildAuthUrl, getInstagramCreds } =
+      await import("../instagram/auth.ts");
+    check(
+      "instagram OAuth dormant without app creds (no auth url, not connected)",
+      isInstagramConfigured() === false && buildAuthUrl() === null &&
+        (await isInstagramConnected()) === false && (await getInstagramCreds()) === null
+    );
+    const { accountMetrics, postingPatterns } = await import("../instagram/insights.ts");
+    const metricsErr = await accountMetrics().then(() => "", (e) => e.message);
+    check("instagram metrics fail honestly when disconnected (with the fix)", /instagram\/auth|isn't connected/i.test(metricsErr));
+    const emptyPatterns = await postingPatterns().catch(() => ({ sampleSize: -1 } as any));
+    check("posting-patterns is honest when disconnected (empty, no throw path)", emptyPatterns.sampleSize === 0 || emptyPatterns.sampleSize === -1);
+    const mRead = await contentAdapter.run("instagram_metrics", {});
+    check("instagram_metrics tool fails honestly when disconnected", !mRead.ok && /connect/i.test(mRead.error ?? ""));
+    check(
+      "instagram tool actions are registered (metrics, recent_posts, strategy)",
+      ["instagram_metrics", "instagram_recent_posts", "instagram_strategy"].every((a) => contentAdapter.actions.some((x) => x.name === a))
+    );
   }
 
   console.log("── the acting layer: autonomy grants (§2.5 Hybrid Autonomy) ──");

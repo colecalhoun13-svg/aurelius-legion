@@ -52,7 +52,17 @@ export async function getIntegrations(): Promise<Integration[]> {
 
   const fredLive = registered.has("fred") && has("FRED_API_KEY");
   const visionLive = has("GEMINI_API_KEY");
-  const instagramLive = registered.has("content") && has("INSTAGRAM_ACCESS_TOKEN") && has("INSTAGRAM_BUSINESS_ID");
+  // Instagram: connected via OAuth (stored creds) OR the manual env token.
+  let igConnected = false;
+  try {
+    const { isInstagramConnected } = await import("../instagram/auth.ts");
+    igConnected = await isInstagramConnected();
+  } catch {
+    igConnected = has("INSTAGRAM_ACCESS_TOKEN") && has("INSTAGRAM_BUSINESS_ID");
+  }
+  const igAppConfigured =
+    has("INSTAGRAM_APP_ID") || has("META_APP_ID") || (has("INSTAGRAM_ACCESS_TOKEN") && has("INSTAGRAM_BUSINESS_ID"));
+  const instagramLive = registered.has("content") && igConnected;
   const webLive = registered.has("web") && (has("TAVILY_API_KEY") || has("GEMINI_API_KEY"));
 
   // Memory/recall: what's actually powering semantic recall right now.
@@ -175,13 +185,15 @@ export async function getIntegrations(): Promise<Integration[]> {
       need: "name your feeds in one conversation (research.rss_feeds)",
     },
     {
-      name: "Content / Instagram publish",
+      name: "Content / Instagram",
       status: instagramLive ? "live" : "config",
-      desc: "Draft posts in your voice (inward) + publish to Instagram — outward, so every post stops for your one-tap confirm on the Bridge",
+      desc: "Draft posts in your voice (inward), read live metrics (reach/engagement/followers), and publish — outward, so every post stops for your one-tap confirm on the Bridge",
       glyph: "▣",
       need: instagramLive
         ? undefined
-        : "Meta app + IG business account → INSTAGRAM_ACCESS_TOKEN + INSTAGRAM_BUSINESS_ID (docs/SETUP.md). Drafting works keyless now.",
+        : igAppConfigured
+          ? "one click to connect at /api/instagram/auth"
+          : "create a Meta app → INSTAGRAM_APP_ID + INSTAGRAM_APP_SECRET, then connect at /api/instagram/auth (docs/SETUP_AND_LAUNCH.md). Drafting works keyless now.",
     },
     {
       name: "Cal.com (self-hosted)",

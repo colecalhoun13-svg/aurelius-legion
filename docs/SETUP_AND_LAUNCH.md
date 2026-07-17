@@ -149,23 +149,56 @@ tavily.com) — the web tool prefers it automatically.
 4. **Share each athlete's Sheet** with the service-account email
    (`…@project.iam.gserviceaccount.com`) as Editor. Restart.
 
-## 9. Instagram — the outward publish channel (draft works now; posting needs Meta)
+## 9. Instagram — connect once, then metrics + publishing
 
-Drafting a post works today (keyless, `content.draft_post`). *Publishing* is
-outward — it always stops for your one-tap Bridge confirm — and needs a Meta app:
+Drafting works today (keyless, `content.draft_post`). To read your **metrics /
+algorithm** and to **publish** (outward — always your one-tap Bridge confirm),
+connect your account **once**. The only manual step Meta forces is creating a
+developer app; after that it's a single click.
 
-1. You need a **Facebook Page** linked to an **Instagram Business/Creator**
-   account.
-2. **developers.facebook.com** → create an app (Business type) → add **Instagram
-   Graph API** → get a **long-lived access token** with
-   `instagram_content_publish` + `pages_read_engagement` (Meta requires **app
-   review** for content publishing — allow a few days).
-3. Find your **IG user id** (the Graph API "business account id").
-4. `.env`: `INSTAGRAM_ACCESS_TOKEN=...` and `INSTAGRAM_BUSINESS_ID=...` → restart.
-5. Note: IG publishing needs a **public image URL** (Meta fetches the bytes).
-   Image hosting lands with the Mac Mini deploy; until then pass an already-hosted
-   URL. Until the token's set, confirming a post fails honestly (never a fake
-   "posted").
+**Your side (~10 min, one time):**
+
+1. Your Instagram must be a **Business or Creator** account (IG app → Settings →
+   Account type), and **linked to a Facebook Page** (IG → Settings → linked
+   accounts, or from the Page's settings). No Page = no API, that's Meta's rule.
+2. Go to **developers.facebook.com** → **My Apps** → **Create App** → type
+   **Business**. Name it anything (e.g. "Aurelius").
+3. In the app: **Add Product → Instagram** (Instagram Graph API). Under
+   **App settings → Basic**, copy the **App ID** and **App Secret**.
+4. Under the Instagram/Facebook Login product → **Settings → Valid OAuth Redirect
+   URIs**, add exactly:
+   `http://localhost:3001/api/instagram/callback`
+   (on the Mac Mini, also add your Tailscale HTTPS callback.)
+5. Put both values in `.env` and restart:
+   ```
+   INSTAGRAM_APP_ID=...
+   INSTAGRAM_APP_SECRET=...
+   ```
+   The app stays in **Development mode** — that's fine, it works fully for *your
+   own* account (you're the admin). App Review is only needed to let *other*
+   people connect, which you don't need.
+
+**Connect (one click):** open **`http://localhost:3001/api/instagram/auth`** →
+approve on Meta's screen → done. Aurelius auto-resolves your business account id
+and stores a long-lived token (auto-refreshed before it expires). Check state at
+`/api/instagram/status`; disconnect with `POST /api/instagram/disconnect`.
+
+**What you get immediately after connecting:**
+- *"how's my Instagram doing"* → followers, reach, profile views (30d), recent
+  posts, top performer (`content.instagram_metrics`).
+- *"read my algorithm" / "what should I post"* → a leverage read from **your own**
+  numbers: best day, best time, best format, engagement-rate trend, and 3–4
+  concrete moves (`content.instagram_strategy`).
+- *"break down my last 6 posts"* → per-post reach/likes/comments/saves
+  (`content.instagram_recent_posts`).
+- Publishing works too — but stays outward, so every post is a Bridge confirm.
+
+**One caveat on publishing:** IG requires a **public image URL** (Meta fetches
+the bytes itself); image hosting lands with the Mac Mini deploy. Metrics and the
+strategy read have no such dependency — they work the moment you connect.
+
+*(Legacy path still supported: if you'd rather hand-copy a long-lived token,
+`INSTAGRAM_ACCESS_TOKEN` + `INSTAGRAM_BUSINESS_ID` in `.env` also work.)*
 
 ## 10. Point Aurelius at your reading feeds (RSS) — by conversation
 
