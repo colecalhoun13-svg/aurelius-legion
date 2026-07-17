@@ -147,6 +147,25 @@ export async function findClientSheetId(clientName: string): Promise<string | nu
       }
     }
 
+    // Not registered yet → look it up LIVE in Cole's Drive by name (OAuth), and
+    // remember it on first hit. This is the "as easy as the calendar" path: he
+    // just names an athlete and Aurelius finds the sheet, no pre-registration.
+    try {
+      const { searchDriveForSheet } = await import("../tools/adapters/googleSheets.ts");
+      const found = await searchDriveForSheet(clientName);
+      if (found?.sheetId) {
+        await saveMemory({
+          operator: "training",
+          category: "clients",
+          value: `${clientName} — training sheet (auto-found in Drive as "${found.title}")`,
+          metadata: { kind: "sheet_registration", clientName, sheetId: found.sheetId, title: found.title, source: "drive_search" },
+        }).catch(() => {});
+        return found.sheetId;
+      }
+    } catch (err) {
+      console.warn("[memoryService] live Drive sheet lookup skipped:", (err as any)?.message ?? err);
+    }
+
     return null;
   } catch (err) {
     console.error("[memoryService] findClientSheetId error:", err);

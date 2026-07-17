@@ -31,7 +31,16 @@ export async function getIntegrations(): Promise<Integration[]> {
   const has = (k: string) => !!process.env[k]?.trim();
   const telegramLive = has("TELEGRAM_BOT_TOKEN") && has("TELEGRAM_CHAT_ID");
   const voiceLive = has("GROQ_API_KEY");
-  const sheetsLive = registered.has("google_sheets") && has("GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH");
+  // Sheets is live via Cole's own Google login (once re-authorized for Sheets)
+  // OR the legacy service account.
+  let sheetsViaOAuth = false;
+  try {
+    const { getUserGoogleClient } = await import("../calendar/googleAuth.ts");
+    sheetsViaOAuth = (await getUserGoogleClient()) !== null;
+  } catch {
+    sheetsViaOAuth = false;
+  }
+  const sheetsLive = registered.has("google_sheets") && (sheetsViaOAuth || has("GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH"));
 
   let calendarLive = false;
   try {
@@ -111,9 +120,9 @@ export async function getIntegrations(): Promise<Integration[]> {
     {
       name: "Google Sheets",
       status: sheetsLive ? "live" : "config",
-      desc: "Reads athlete sessions, writes feedback + PRs back (training engine)",
+      desc: "Reads athlete sessions by name, writes feedback + PRs back (training engine)",
       glyph: "▦",
-      need: sheetsLive ? undefined : "GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH",
+      need: sheetsLive ? undefined : "re-authorize Google at /api/calendar/auth (adds Sheets to your login) — then just name an athlete",
     },
     {
       name: "Planning",

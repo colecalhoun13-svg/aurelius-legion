@@ -32,6 +32,42 @@ import { getSheetsClient, getDriveClient } from "./googleAuth.ts";
 import { prisma } from "../../core/db/prisma.ts";
 import { saveMemory } from "../../memory/memoryService.ts";
 
+/**
+ * Live name → sheet lookup against Cole's Drive (as him, via OAuth). This is what
+ * makes "pull up Jake's sheet" work with NO pre-registration — Aurelius searches
+ * his spreadsheets by name and picks the best match. Returns null on no/ambiguous
+ * match so the caller can ask. Best match = exact (case-insensitive) name, else a
+ * single "name contains" hit; multiple partial hits → null (don't guess).
+ */
+export async function searchDriveForSheet(
+  name: string
+): Promise<{ sheetId: string; title: string } | null> {
+  const drive = await getDriveClient();
+  if (!drive || !name?.trim()) return null;
+  const q = name.trim().replace(/'/g, "\\'");
+  try {
+    const res = await drive.files.list({
+      q: `mimeType='application/vnd.google-apps.spreadsheet' and trashed=false and name contains '${q}'`,
+      fields: "files(id, name)",
+      pageSize: 20,
+    });
+    const files = (res.data.files ?? []).filter((f) => f.id && f.name) as Array<{ id: string; name: string }>;
+    if (files.length === 0) return null;
+    const target = name.trim().toLowerCase();
+    const exact = files.find((f) => f.name.toLowerCase() === target);
+    if (exact) return { sheetId: exact.id, title: exact.name };
+    // Also treat "<name>" matching a title that STARTS with the name as strong
+    // (e.g. "Jake" → "Jake Powerlifting Block").
+    const starts = files.filter((f) => f.name.toLowerCase().startsWith(target));
+    if (starts.length === 1) return { sheetId: starts[0].id, title: starts[0].name };
+    if (files.length === 1) return { sheetId: files[0].id, title: files[0].name };
+    return null; // ambiguous — let the caller ask which one
+  } catch (err) {
+    console.warn("[googleSheets] drive name search failed:", (err as any)?.message ?? err);
+    return null;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // ACTION DEFINITIONS (for the tool catalog injected into LLM prompt)
 // ═══════════════════════════════════════════════════════════════════

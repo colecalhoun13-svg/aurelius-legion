@@ -197,6 +197,17 @@ async function main() {
     check("voice transcription configured", true);
   }
 
+  console.log("── sheets: OAuth-as-Cole + live name lookup (dormant-honest) ──");
+  {
+    const { getUserGoogleClient } = await import("../calendar/googleAuth.ts");
+    check("google client is null when not connected (dormant)", (await getUserGoogleClient()) === null);
+    const { searchDriveForSheet } = await import("../tools/adapters/googleSheets.ts");
+    check("drive name-search fails safe (null) with no Google client", (await searchDriveForSheet("Jake")) === null);
+    // findClientSheetId falls through to the live search, which no-ops safely.
+    const { findClientSheetId } = await import("../memory/memoryService.ts");
+    check("findClientSheetId returns null for an unknown athlete when disconnected", (await findClientSheetId(`${TAG}_ghost`)) === null);
+  }
+
   console.log("── directive integrity (near-miss detection + capability class) ──");
   {
     const { detectNearMisses } = await import("../llm/directiveParser.ts");
