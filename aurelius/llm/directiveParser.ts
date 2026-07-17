@@ -237,6 +237,81 @@ function extractJSONFromPosition(
   return null;
 }
 
+// ── Near-miss detection (council fix — the silent save-loss bug) ──────
+// A fallback model that writes value='...' instead of value="..." or drops a
+// field produced a directive that strict parsing ignores — the memory/tool call
+// silently vanished AND the junk leaked into the reply. This loose scan finds
+// anything that LOOKS like it wanted to be a directive, then checks whether the
+// strict rules actually consumed it. What didn't parse is a near-miss: the
+// caller pages Cole and strips the fragment, instead of silence.
+
+export type NearMiss = { kind: string; fragment: string };
+
+/**
+ * Defuse directive syntax inside EXTERNAL content (email bodies, RSS items,
+ * fetched pages) before it enters a prompt — an injected "[TOOL: ...]" in an
+ * inbound email must never survive verbatim echo into an executable position.
+ * The red team's finding: the LLM is an unauthenticated route; this closes the
+ * cheapest attack. Inserting a space breaks strict parsing AND near-miss
+ * stripping leaves it visible, so a poisoned source is inspectable, not silent.
+ */
+export function defuseDirectives(text: string): string {
+  return (text ?? "").replace(/\[(\s*)(SAVE|TOOL|KNOWLEDGE_UPDATE_PROPOSE|KNOWLEDGE_UPDATE_CONFIRM)(\s*):/gi, "[$2 (defused):");
+}
+
+const LOOSE_DIRECTIVE = /\[\s*(SAVE|TOOL|KNOWLEDGE_UPDATE_PROPOSE|KNOWLEDGE_UPDATE_CONFIRM)\b/gi;
+
+function strictParsesAt(text: string, idx: number, kind: string): boolean {
+  const slice = text.slice(idx);
+  if (kind === "SAVE") {
+    return /^\[SAVE:\s*category=[a-z_]+\s+value="[^"]*"\s*\]/i.test(slice);
+  }
+  if (kind === "TOOL") {
+    const head = slice.match(/^\[TOOL:\s*([^{}\]]*?)\s*(?=[{\]])/i);
+    if (!head || !parseToolHead(head[1])) return false;
+    const dataStart = idx + head[0].length;
+    if (text[dataStart] === "]") return true;
+    const json = extractJSONFromPosition(text, dataStart);
+    if (!json) return false;
+    try {
+      JSON.parse(json.json);
+    } catch {
+      return false;
+    }
+    return /^\s*\]/.test(text.slice(json.endIndex));
+  }
+  // Knowledge directives
+  const head = slice.match(new RegExp(`^\\[${kind}:\\s*data=`, "i"));
+  if (!head) return false;
+  const json = extractJSONFromPosition(text, idx + head[0].length);
+  if (!json) return false;
+  try {
+    JSON.parse(json.json);
+  } catch {
+    return false;
+  }
+  return /^\s*\]/.test(text.slice(json.endIndex));
+}
+
+/** Find would-be directives the strict parser did NOT consume. Code-fenced
+ * examples are exempt (they're the model showing, not asking). */
+export function detectNearMisses(text: string): NearMiss[] {
+  const misses: NearMiss[] = [];
+  const codeRanges = computeCodeRanges(text);
+  LOOSE_DIRECTIVE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = LOOSE_DIRECTIVE.exec(text)) !== null) {
+    if (indexInCode(codeRanges, m.index)) continue;
+    const kind = m[1].toUpperCase();
+    if (strictParsesAt(text, m.index, kind)) continue;
+    // Fragment for the page + for stripping: through the first "]" or 160 chars.
+    const slice = text.slice(m.index, m.index + 160);
+    const close = slice.indexOf("]");
+    misses.push({ kind, fragment: close >= 0 ? slice.slice(0, close + 1) : slice });
+  }
+  return misses;
+}
+
 function stripAllDirectives(text: string): string {
   // A directive quoted in a code fence is neither executed (see extractors) nor
   // stripped — it stays visible as the example the model meant to show.

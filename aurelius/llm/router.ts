@@ -571,6 +571,13 @@ const PROVIDER_KEYS: Record<string, string> = {
   xai: "XAI_API_KEY",
 };
 const FALLBACK_ORDER = ["anthropic", "openai", "groq", "gemini", "deepseek", "xai"];
+
+// Directive capability (council fix): only format-reliable providers get
+// "hands" — the right to have their [TOOL:]/[SAVE:] directives EXECUTED. All
+// six providers keep their task types (core architecture); groq/deepseek/xai
+// answer in prose. Failover preserves the class: a directive-bearing turn
+// never silently lands on a prose-only model mid-conversation.
+export const DIRECTIVE_CAPABLE = new Set(["anthropic", "openai", "gemini"]);
 const FALLBACK_MODELS: Record<string, string> = {
   anthropic: "claude-sonnet-5",
   openai: "gpt-5.4-mini",
@@ -617,9 +624,19 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
   // Attempt chain: the routed choice, then every OTHER configured
   // provider in fallback order. A keyless deployment gets a chain of
   // one — exactly the old behavior, honest failure included.
+  // Capability-preserving failover: when the routed choice can emit directives,
+  // fallbacks must too — otherwise a mid-conversation failover hands the tool
+  // catalog to a model whose directives we'd refuse (or worse, mangle silently).
+  // Prose-only primaries (groq quick replies, deepseek math) fall back anywhere.
+  const preserveDirectives = DIRECTIVE_CAPABLE.has(choice.provider);
   const chain: Array<{ provider: string; model: string }> = [
     { provider: choice.provider, model: choice.model },
-    ...FALLBACK_ORDER.filter((p) => p !== choice.provider && providerConfigured(p)).map((p) => ({
+    ...FALLBACK_ORDER.filter(
+      (p) =>
+        p !== choice.provider &&
+        providerConfigured(p) &&
+        (!preserveDirectives || DIRECTIVE_CAPABLE.has(p))
+    ).map((p) => ({
       provider: p,
       model: FALLBACK_MODELS[p],
     })),

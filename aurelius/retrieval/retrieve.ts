@@ -9,6 +9,7 @@
 // an empty array/string instead of an exception.
 
 import { getEmbeddingAdapter } from "./embeddingAdapter.ts";
+import { defuseDirectives as defuse } from "../llm/directiveParser.ts";
 import {
   searchSimilar,
   type SimilarChunk,
@@ -136,7 +137,10 @@ export function formatRecallForPrompt(hits: SimilarChunk[]): string {
   for (const h of hits) {
     const label = SOURCE_LABELS[h.sourceType] ?? h.sourceType;
     const pct = Math.round(h.similarity * 100);
-    lines.push(`[${label} · ${pct}%] ${h.chunkText}`);
+    // Recalled chunks include ingested EXTERNAL content (emails, RSS, docs) —
+    // defuse directive syntax so an injected "[TOOL: ...]" in a source can
+    // never be echoed into an executable position (red-team finding).
+    lines.push(`[${label} · ${pct}%] ${defuse(h.chunkText)}`);
   }
   return lines.join("\n");
 }

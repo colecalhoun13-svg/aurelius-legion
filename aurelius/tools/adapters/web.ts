@@ -79,7 +79,10 @@ export const webAdapter: ToolAdapter = {
       if (blocked) return { ok: false, output: null, error: `refusing to fetch a ${blocked} — web.fetch is for the public internet only` };
       try {
         const r = await webFetch(url);
-        return { ok: true, output: { title: r.title, url: r.url, text: r.text.slice(0, 8000) } };
+        // Defuse directive syntax in fetched pages — external content must never
+        // carry an executable [TOOL:]/[SAVE:] back into the conversation.
+        const { defuseDirectives } = await import("../../llm/directiveParser.ts");
+        return { ok: true, output: { title: r.title, url: r.url, text: defuseDirectives(r.text.slice(0, 8000)) } };
       } catch (e: any) {
         return { ok: false, output: null, error: e?.message ?? "web fetch failed" };
       }

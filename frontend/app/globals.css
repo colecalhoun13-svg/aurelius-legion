@@ -110,6 +110,132 @@
   animation: contentDissolve 0.85s ease-out forwards;
 }
 
+/* ── Startup v2: the wreath ASSEMBLES ──────────────────────────────
+   Stems draw upward, leaves unfurl in sequence up both branches (per-leaf
+   delays set inline), the branches meet — then the whole crest BLOOMS gold
+   and settles into the dashboard. */
+
+/* Each leaf grows from its base along the branch. */
+@keyframes leafGrow {
+  0% {
+    opacity: 0;
+    transform: scale(0.1) rotate(-24deg);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.12) rotate(4deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+.wreath-leaf {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: leafGrow 0.42s cubic-bezier(0.34, 1.4, 0.5, 1) forwards;
+}
+
+/* The stem draws from the bottom to the tip, pacing the leaves. */
+@keyframes stemDraw {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.wreath-stem {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: stemDraw 1.05s ease-out forwards;
+}
+
+/* The moment the branches meet: the crest goes bright — a breath of gold —
+   then eases back to settle. */
+@keyframes wreathBloom {
+  0% {
+    filter: brightness(1) drop-shadow(0 0 0 rgba(212, 175, 55, 0));
+  }
+  45% {
+    filter: brightness(1.75) drop-shadow(0 0 42px rgba(212, 175, 55, 0.85));
+  }
+  100% {
+    filter: brightness(1.05) drop-shadow(0 0 14px rgba(212, 175, 55, 0.25));
+  }
+}
+.animate-wreathBloom {
+  animation: wreathBloom 0.9s ease-in-out forwards;
+}
+
+/* Soft radial gold wash behind the crest during the bloom. */
+@keyframes bloomWash {
+  0% {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  40% {
+    opacity: 0.55;
+    transform: scale(1.05);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.3);
+  }
+}
+.animate-bloomWash {
+  animation: bloomWash 1.1s ease-out forwards;
+}
+
+/* A single ring of light expanding outward from the meeting moment. */
+@keyframes ringPulse {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.62);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.25);
+  }
+}
+.animate-ringPulse {
+  animation: ringPulse 1s cubic-bezier(0.2, 0.6, 0.35, 1) forwards;
+}
+
+/* The name arrives with the bloom — tracking eases in like a breath. */
+@keyframes titleIn {
+  0% {
+    opacity: 0;
+    letter-spacing: 0.6em;
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 0.92;
+    letter-spacing: 0.34em;
+    transform: translateY(0);
+  }
+}
+.animate-titleIn {
+  animation: titleIn 0.8s ease-out forwards;
+}
+
+/* Motion-sensitive users get the crest without the theater. */
+@media (prefers-reduced-motion: reduce) {
+  .wreath-leaf,
+  .wreath-stem,
+  .animate-wreathBloom,
+  .animate-bloomWash,
+  .animate-ringPulse,
+  .animate-titleIn,
+  .animate-wreathFlash,
+  .animate-bootFade,
+  .animate-contentDissolve {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+  }
+}
+
 /* ===============================================
    AURELIUS — IMPERIAL PANEL LANGUAGE (per mockup)
    =============================================== */

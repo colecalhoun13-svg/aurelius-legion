@@ -121,6 +121,12 @@ export async function runTraced<T>(
     try {
       const result = await fn();
       write("info", `${kind}:${name}`, { kind, name, durationMs: Date.now() - started, status: "ok", ...meta });
+      // Dead-man proof-of-life: the morning briefing pinging its check is how an
+      // external service knows the SPINE works (process-alive pings can't tell
+      // "up" from "up but rituals silently failing"). Dormant without the env.
+      if (name === "morning_briefing" && process.env.HEALTHCHECKS_BRIEFING_URL) {
+        fetch(process.env.HEALTHCHECKS_BRIEFING_URL).catch(() => {});
+      }
       return result;
     } catch (err: any) {
       write("error", `${kind}:${name}`, {
@@ -131,9 +137,29 @@ export async function runTraced<T>(
         error: (err?.message ?? String(err)).slice(0, 500),
         ...meta,
       });
+      // Failure PAGES Cole — a dead briefing as a console.error nobody reads is
+      // how trust dies. Scheduled/catch-up/action failures only (requests speak
+      // for themselves), deduped per job per 6h so a crashloop can't spam him.
+      if (kind === "schedule" || kind === "catchup" || kind === "action") {
+        pageFailure(name, (err?.message ?? String(err)).slice(0, 200));
+      }
       throw err;
     }
   });
+}
+
+// One page per job name per 6h — a crashlooping cron pages once, not forever.
+const _pagedAt = new Map<string, number>();
+const PAGE_DEDUPE_MS = 6 * 3600_000;
+
+/** Page Cole on Telegram about a failed job. Fire-and-forget; never throws. */
+export function pageFailure(name: string, error: string): void {
+  const last = _pagedAt.get(name) ?? 0;
+  if (Date.now() - last < PAGE_DEDUPE_MS) return;
+  _pagedAt.set(name, Date.now());
+  import("../telegram/bot.ts")
+    .then((m) => m.sendToCole(`⚠️ ${name} failed: ${error}\n\nI'll retry on schedule. This pages once per 6h.`))
+    .catch(() => {});
 }
 
 /**
