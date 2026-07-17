@@ -197,6 +197,23 @@ async function main() {
     check("voice transcription configured", true);
   }
 
+  console.log("── phone Bridge (callback parsing + dormant mirror) ──");
+  {
+    const { parseBridgeCallback, pushBridgeAsk } = await import("../telegram/bot.ts");
+    check(
+      "bridge callbacks parse strictly (opcode + id only, junk rejected)",
+      JSON.stringify(parseBridgeCallback("cf:cmabc123def456ghi789")) === JSON.stringify({ op: "confirm", signalId: "cmabc123def456ghi789" }) &&
+        parseBridgeCallback("cf:short")?.op === undefined &&
+        parseBridgeCallback("rm -rf /") === null &&
+        parseBridgeCallback("cf:../../etc/passwd") === null
+    );
+    const savedTok = process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    const mirrored = await pushBridgeAsk({ id: "x".repeat(20), title: "t", body: "b", status: "pending" });
+    if (savedTok !== undefined) process.env.TELEGRAM_BOT_TOKEN = savedTok;
+    check("bridge mirror is dormant-safe without a token (no throw, false)", mirrored === false);
+  }
+
   console.log("── vision (provider failover; keyless: fails honestly) ──");
   {
     const { analyzeImage, analyzeVideo, visionConfigured } = await import("../media/vision.ts");

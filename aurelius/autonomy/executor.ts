@@ -113,6 +113,12 @@ export async function executeAction(args: {
       ],
     },
   });
+  // The phone Bridge: every ask reaches Cole's thumb with Confirm/Dismiss
+  // buttons (Cole's directive — the web Bridge alone starves the loop).
+  // Fire-and-forget; dormant-safe without a Telegram token.
+  import("../telegram/bot.ts")
+    .then((m) => m.pushBridgeAsk({ id: sig.id, title: sig.title, body: sig.body, status: sig.status, actions: sig.actions }))
+    .catch(() => {});
   return { finalized: false, reason: gateReason, bridgeSignalId: sig.id };
 }
 

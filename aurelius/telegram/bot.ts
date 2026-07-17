@@ -70,6 +70,109 @@ async function send(chatId: string | number, text: string) {
   }
 }
 
+// ── The phone Bridge ────────────────────────────────────────────────
+// Every Bridge ask ALSO reaches Cole's thumb: inline Confirm/Dismiss/Undo
+// buttons whose callbacks ride the EXACT same paths as the web Bridge
+// (confirmAction's atomic claim makes phone/web double-taps a safe no-op).
+// callback_data carries ONLY an opcode + signal id — payloads stay in the DB.
+
+export type BridgeButton = { label: string; data: string };
+
+/** Parse a callback payload. Pure, exported for tests. */
+export function parseBridgeCallback(data: string): { op: "confirm" | "undo" | "dismiss"; signalId: string } | null {
+  const m = (data ?? "").match(/^(cf|un|ds):([A-Za-z0-9_-]{10,64})$/);
+  if (!m) return null;
+  const op = m[1] === "cf" ? "confirm" : m[1] === "un" ? "undo" : "dismiss";
+  return { op, signalId: m[2] };
+}
+
+async function sendWithButtons(chatId: string | number, text: string, buttons: BridgeButton[]) {
+  await api("sendMessage", {
+    chat_id: chatId,
+    text: text.slice(0, 4000),
+    reply_markup: { inline_keyboard: [buttons.map((b) => ({ text: b.label, callback_data: b.data }))] },
+  });
+}
+
+/**
+ * Mirror a Bridge ask to the phone. pending → Confirm/Dismiss; acted+undoable →
+ * Undo. Dormant-safe (no token/chat → false); never throws into the caller.
+ */
+export async function pushBridgeAsk(signal: {
+  id: string;
+  title: string;
+  body: string;
+  status: string;
+  actions?: any;
+}): Promise<boolean> {
+  const chat = allowedChat();
+  if (!token() || !chat) return false;
+  try {
+    const acts: any[] = Array.isArray(signal.actions) ? signal.actions : [];
+    const buttons: BridgeButton[] = [];
+    if (signal.status === "pending") {
+      buttons.push({ label: "✅ Confirm", data: `cf:${signal.id}` });
+      buttons.push({ label: "✖ Dismiss", data: `ds:${signal.id}` });
+    } else if (acts.some((a) => a?.action === "undo_action")) {
+      buttons.push({ label: "↩ Undo", data: `un:${signal.id}` });
+    }
+    const text = `${signal.title}\n\n${signal.body}`.slice(0, 3500);
+    if (buttons.length === 0) return sendToCole(text);
+    await sendWithButtons(chat, text, buttons);
+    return true;
+  } catch (err) {
+    console.warn("[telegram] bridge mirror failed (signal still filed):", (err as any)?.message ?? err);
+    return false;
+  }
+}
+
+/** Handle a tapped button — routes to the same executor paths as the web. */
+async function handleBridgeCallback(cb: any, allowed: string): Promise<void> {
+  const ack = (text: string) => api("answerCallbackQuery", { callback_query_id: cb.id, text: text.slice(0, 190) }).catch(() => {});
+  // Verify the PRESSER, not the chat — a forwarded keyboard still fires
+  // callbacks to this bot with the presser's from.id.
+  if (String(cb.from?.id ?? "") !== allowed) return ack("This is a private system.");
+  const parsed = parseBridgeCallback(cb.data ?? "");
+  if (!parsed) return ack("Unknown button.");
+
+  let outcome = "";
+  try {
+    if (parsed.op === "confirm") {
+      const { confirmAction } = await import("../autonomy/executor.ts");
+      const r = await confirmAction(parsed.signalId);
+      outcome = r?.ok === false ? `Couldn't confirm: ${r?.error ?? "already handled"}` : "✓ Confirmed — done.";
+    } else if (parsed.op === "undo") {
+      const { undoAction } = await import("../autonomy/executor.ts");
+      const r = await undoAction(parsed.signalId);
+      outcome = r?.ok ? "↩ Undone." : `Couldn't undo: ${r?.error ?? "already handled"}`;
+    } else {
+      const { prisma } = await import("../core/db/prisma.ts");
+      const updated = await prisma.bridgeSignal.updateMany({
+        where: { id: parsed.signalId, status: "pending" },
+        data: { status: "dismissed" },
+      });
+      outcome = updated.count > 0 ? "✖ Dismissed." : "Already handled.";
+    }
+  } catch (err: any) {
+    outcome = `Failed: ${(err?.message ?? String(err)).slice(0, 150)}`;
+  }
+  await ack(outcome);
+  // Strike the keyboard and stamp the outcome on the message so the thread
+  // shows resolved state (mirrors the web Bridge's status).
+  try {
+    const orig = cb.message;
+    if (orig?.message_id) {
+      await api("editMessageText", {
+        chat_id: orig.chat.id,
+        message_id: orig.message_id,
+        text: `${(orig.text ?? "").slice(0, 3800)}\n\n${outcome}`,
+      });
+    }
+  } catch {
+    /* cosmetic — outcome already delivered via the toast */
+  }
+}
+
 /** Push a message to Cole's chat. No-op (false) when the bridge is dormant. */
 export async function sendToCole(text: string): Promise<boolean> {
   const chat = allowedChat();
@@ -344,6 +447,11 @@ export function startTelegramBridge() {
         conflictStreak = 0;
         for (const u of updates) {
           offset = u.update_id + 1;
+          // Button taps — the phone Bridge. Handled before message parsing.
+          if (u.callback_query) {
+            if (chat) await handleBridgeCallback(u.callback_query, chat).catch(() => {});
+            continue;
+          }
           const msg = u.message;
           const voice = msg?.voice ?? msg?.audio;
           const media = mediaFromMessage(msg);
@@ -372,9 +480,13 @@ export function startTelegramBridge() {
               );
               captureMediaNote({ kind, analysis, caption: msg.caption }).catch(() => {});
               if (msg.caption?.trim()) {
-                const { ask } = await import("../corpus/ask.ts");
-                const result = await ask(`${msg.caption}\n\n[Cole attached a ${kind}. What's in it:]\n${analysis}`);
-                await send(msg.chat.id, result.answer);
+                // FULL pipeline, not just recall — so "add these to my calendar"
+                // on a schedule screenshot fires the calendar tool from the phone,
+                // exactly like the web chat.
+                await handleCommand(
+                  msg.chat.id,
+                  `${msg.caption}\n\n[Cole attached a ${kind}. What I can see in it:]\n${analysis}`
+                );
               } else {
                 await send(msg.chat.id, `Saw your ${kind}:\n\n${analysis}`);
               }
