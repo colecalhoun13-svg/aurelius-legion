@@ -220,10 +220,35 @@
   animation: titleIn 0.8s ease-out forwards;
 }
 
+/* The faceted A ignites AS the branches meet — rising out of the glow. */
+@keyframes aRise {
+  0% {
+    opacity: 0;
+    transform: scale(0.82);
+    filter: brightness(2.2) blur(3px);
+  }
+  55% {
+    opacity: 1;
+    filter: brightness(1.5) blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+.crest-a {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: 50% 60%;
+  animation: aRise 0.85s cubic-bezier(0.3, 1.2, 0.5, 1) 1s forwards;
+}
+
 /* Motion-sensitive users get the crest without the theater. */
 @media (prefers-reduced-motion: reduce) {
   .wreath-leaf,
   .wreath-stem,
+  .crest-a,
   .animate-wreathBloom,
   .animate-bloomWash,
   .animate-ringPulse,
