@@ -247,6 +247,18 @@ function extractJSONFromPosition(
 
 export type NearMiss = { kind: string; fragment: string };
 
+/**
+ * Defuse directive syntax inside EXTERNAL content (email bodies, RSS items,
+ * fetched pages) before it enters a prompt — an injected "[TOOL: ...]" in an
+ * inbound email must never survive verbatim echo into an executable position.
+ * The red team's finding: the LLM is an unauthenticated route; this closes the
+ * cheapest attack. Inserting a space breaks strict parsing AND near-miss
+ * stripping leaves it visible, so a poisoned source is inspectable, not silent.
+ */
+export function defuseDirectives(text: string): string {
+  return (text ?? "").replace(/\[(\s*)(SAVE|TOOL|KNOWLEDGE_UPDATE_PROPOSE|KNOWLEDGE_UPDATE_CONFIRM)(\s*):/gi, "[$2 (defused):");
+}
+
 const LOOSE_DIRECTIVE = /\[\s*(SAVE|TOOL|KNOWLEDGE_UPDATE_PROPOSE|KNOWLEDGE_UPDATE_CONFIRM)\b/gi;
 
 function strictParsesAt(text: string, idx: number, kind: string): boolean {

@@ -98,17 +98,24 @@ export async function runInboxTriage(opts: { max?: number } = {}): Promise<Inbox
         sourceId: dedupKey,
         prepare: async () => {
           const full = await readMessage(item.id);
+          // Inbound email is UNTRUSTED — defuse directive syntax before it enters
+          // a prompt, so a malicious sender can't smuggle a [TOOL:] into the turn.
+          const { defuseDirectives } = await import("../../llm/directiveParser.ts");
           const draft = await runLLM({
             taskType: "quick_reply",
             operator: "strategy",
             input:
               `Draft a concise, warm, on-voice reply to this email as Cole. Return ONLY the reply body — no subject, no "Dear", no sign-off placeholder like [Name].\n\n` +
-              `From: ${full.from}\nSubject: ${full.subject}\n\n${full.body.slice(0, 4000)}`,
+              `From: ${defuseDirectives(full.from)}\nSubject: ${defuseDirectives(full.subject)}\n\n${defuseDirectives(full.body.slice(0, 4000))}`,
           });
           const replyBody = (draft.text ?? "").trim();
           return {
             title: `Reply drafted — ${item.subject}`,
-            body: `**From:** ${item.from}\n**Their note:** ${item.snippet}\n\n**Draft reply:**\n\n${replyBody}`,
+            // Honest button (Outsider's spec): say what Confirm actually DOES.
+            // Today's Gmail scope is draft-only — Confirm files the draft; it
+            // does not send. True send-on-confirm lands with the gmail.send
+            // scope re-auth.
+            body: `**From:** ${item.from}\n**Their note:** ${item.snippet}\n\n**Draft reply:**\n\n${replyBody}\n\n_Confirm puts this in your Gmail drafts (it does not send yet)._`,
             domain: "personal",
             payload: {
               to: item.from,
