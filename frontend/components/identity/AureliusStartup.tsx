@@ -10,7 +10,7 @@
 
 import { useEffect, useState } from "react";
 
-const ASSEMBLE_MS = 1250; // leaves appear (conic reveal) + flare at the tail
+const ASSEMBLE_MS = 1750; // leaves appear (conic reveal) + flare at the tail — slower
 const HOLD_MS = 500; // settled beat at full brightness
 const FADE_MS = 950; // glow fades / content dissolves in
 
@@ -38,14 +38,14 @@ export default function AureliusStartup({ children }: { children: React.ReactNod
       <div
         className="absolute animate-crestGlow"
         style={{
-          width: "80vmin",
-          height: "80vmin",
+          width: "92vmin",
+          height: "92vmin",
           borderRadius: "50%",
           background: "radial-gradient(circle, rgba(212,175,55,0.28) 0%, rgba(212,175,55,0.08) 45%, rgba(0,0,0,0) 70%)",
         }}
       />
       {/* the ACTUAL logo, revealed leaf-by-leaf by the conic mask, then flaring */}
-      <div className="relative animate-wreathAssemble" style={{ width: "min(74vmin, 740px)", height: "min(74vmin, 740px)" }}>
+      <div className="relative animate-wreathAssemble" style={{ width: "min(86vmin, 860px)", height: "min(86vmin, 860px)" }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/crest/aurelius-crest.png" alt="Aurelius" className="w-full h-full object-contain" />
       </div>
