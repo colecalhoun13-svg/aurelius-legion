@@ -1,44 +1,31 @@
 // ===============================================
-// AURELIUS OS — STARTUP SEQUENCE v2
-// The wreath ASSEMBLES: stems draw upward while leaves unfurl in sequence
-// up both branches until they meet at the tips — then the crest BLOOMS
-// bright gold (radial wash + ring of light + the name), holds a beat, and
-// slowly settles into the dashboard as the overlay fades. Pure SVG — no
-// pixels at any size — and it lands exactly on the watermark's position,
-// so the crest reads as settling INTO the field it lives on.
+// AURELIUS OS — STARTUP SEQUENCE
+// The REAL crest (public/crest/aurelius-crest.png — the gold laurel + A) glows
+// up out of black, flares once, holds a beat, then dissolves into the dashboard.
+// No redrawn art — the actual logo, displayed at a size that stays crisp.
 // ===============================================
 
 "use client";
 
 import { useEffect, useState } from "react";
-import WreathSVG from "./WreathSVG";
 
-const ASSEMBLE_MS = 1150; // stems + 14 staggered leaves per branch
-const BLOOM_MS = 900;     // the meeting flash (starts just before assembly ends)
-const HOLD_MS = 350;      // let the settled crest breathe
-const FADE_MS = 900;      // overlay fade / content dissolve
+const RISE_MS = 1100; // crest fades/scales up + glow builds
+const HOLD_MS = 550; // settled beat
+const FADE_MS = 900; // overlay fade / content dissolve
 
-const BLOOM_AT = ASSEMBLE_MS - 150; // bloom ignites AS the tips meet
-const DISSOLVE_AT = BLOOM_AT + BLOOM_MS + HOLD_MS;
-const DONE_AT = DISSOLVE_AT + FADE_MS;
-
-type Phase = "assemble" | "bloom" | "dissolve" | "done";
+type Phase = "rise" | "dissolve" | "done";
 
 export default function AureliusStartup({ children }: { children: React.ReactNode }) {
-  const [phase, setPhase] = useState<Phase>("assemble");
+  const [phase, setPhase] = useState<Phase>("rise");
 
   useEffect(() => {
-    const t1 = setTimeout(() => setPhase("bloom"), BLOOM_AT);
-    const t2 = setTimeout(() => setPhase("dissolve"), DISSOLVE_AT);
-    const t3 = setTimeout(() => setPhase("done"), DONE_AT);
+    const t1 = setTimeout(() => setPhase("dissolve"), RISE_MS + HOLD_MS);
+    const t2 = setTimeout(() => setPhase("done"), RISE_MS + HOLD_MS + FADE_MS);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
-      clearTimeout(t3);
     };
   }, []);
-
-  const blooming = phase === "bloom" || phase === "dissolve";
 
   const overlay = phase !== "done" && (
     <div
@@ -46,73 +33,18 @@ export default function AureliusStartup({ children }: { children: React.ReactNod
         phase === "dissolve" ? "animate-bootFade" : ""
       }`}
     >
-      {/* Radial gold wash — ignites behind the crest the moment the tips meet */}
-      {blooming && (
-        <div
-          className="absolute animate-bloomWash"
-          style={{
-            width: "120vmin",
-            height: "120vmin",
-            borderRadius: "50%",
-            background:
-              "radial-gradient(circle, rgba(212,175,55,0.35) 0%, rgba(212,175,55,0.12) 40%, rgba(0,0,0,0) 70%)",
-          }}
-        />
-      )}
-
-      {/* A single ring of light expanding from the meeting moment */}
-      {blooming && (
-        <div
-          className="absolute animate-ringPulse"
-          style={{
-            width: "88vmin",
-            height: "88vmin",
-            borderRadius: "50%",
-            border: "1px solid rgba(212,175,55,0.55)",
-            boxShadow: "0 0 30px rgba(212,175,55,0.25), inset 0 0 30px rgba(212,175,55,0.15)",
-          }}
-        />
-      )}
-
-      {/* Standing halo — the artwork's warm glow, present from the first leaf */}
-      <div
-        className="absolute"
+      {/* warm gold wash blooming behind the crest */}
+      <div className="absolute animate-crestGlow"
         style={{
-          width: "100vmin",
-          height: "100vmin",
-          borderRadius: "50%",
-          background:
-            "radial-gradient(circle, rgba(212,165,32,0.16) 0%, rgba(212,165,32,0.06) 45%, rgba(0,0,0,0) 70%)",
+          width: "80vmin", height: "80vmin", borderRadius: "50%",
+          background: "radial-gradient(circle, rgba(212,175,55,0.28) 0%, rgba(212,175,55,0.08) 45%, rgba(0,0,0,0) 70%)",
         }}
       />
-
-      {/* The crest — assembling, then blooming, at watermark size/position.
-          The faceted A ignites at the bloom (crest-a delay in globals.css). */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        <div
-          className={`relative ${blooming ? "animate-wreathBloom" : ""}`}
-          style={{ width: "108vmin", height: "108vmin" }}
-        >
-          <WreathSVG variant="gold" animated showA className="w-full h-full" />
-        </div>
+      {/* the ACTUAL logo — sized to stay crisp (source is 1536px) */}
+      <div className="relative animate-crestRise" style={{ width: "min(74vmin, 740px)", height: "min(74vmin, 740px)" }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/crest/aurelius-crest.png" alt="Aurelius" className="w-full h-full object-contain" />
       </div>
-
-      {/* The name arrives with the bloom, under the crest */}
-      {blooming && (
-        <div
-          className="absolute animate-titleIn"
-          style={{
-            bottom: "12vh",
-            fontFamily: "var(--font-serif, Georgia, serif)",
-            fontSize: "clamp(1.1rem, 2.6vmin, 1.8rem)",
-            color: "#e8d48b",
-            textShadow: "0 0 24px rgba(212,175,55,0.45)",
-            textTransform: "uppercase",
-          }}
-        >
-          Aurelius
-        </div>
-      )}
     </div>
   );
 
