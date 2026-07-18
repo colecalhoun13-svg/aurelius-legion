@@ -286,7 +286,7 @@
     #000 calc(180deg + var(--wreath-sweep, 200deg)),
     transparent calc(180deg + var(--wreath-sweep, 200deg))
   );
-  animation: wreathAssemble 1.25s ease-out forwards, crestFlare 0.7s ease-out 1.05s forwards;
+  animation: wreathAssemble 1.75s ease-out forwards, crestFlare 0.75s ease-out 1.5s forwards;
 }
 
 /* Startup: the real crest rises out of black with a gold flare, then settles. */
