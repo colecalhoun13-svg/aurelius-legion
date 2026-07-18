@@ -244,21 +244,27 @@
   animation: aRise 0.85s cubic-bezier(0.3, 1.2, 0.5, 1) 1s forwards;
 }
 
-/* Startup: the REAL crest ASSEMBLES — a symmetric conic reveal sweeps from the
-   crossed stems (bottom) up both branches to the tips, so the leaves appear in
-   sequence and the A resolves as the two sides meet. Raster art, real logo. */
-@property --wreath-sweep {
-  syntax: "<angle>";
-  inherits: false;
-  initial-value: 200deg; /* fallback = fully revealed if @property/animation is unsupported */
+/* Startup: the REAL crest appears LEAF BY LEAF — each .crest-leafwin is a
+   soft-edged radial window onto the artwork, opening on its own delay as the
+   sequence climbs both branches from the crossed stems to the tips. */
+@keyframes leafWinIn {
+  0% {
+    opacity: 0;
+    filter: brightness(1.7);
+  }
+  60% {
+    opacity: 1;
+    filter: brightness(1.35);
+  }
+  100% {
+    opacity: 1;
+    filter: brightness(1);
+  }
 }
-@keyframes wreathAssemble {
-  from {
-    --wreath-sweep: 0deg;
-  }
-  to {
-    --wreath-sweep: 190deg;
-  }
+.crest-leafwin {
+  opacity: 0;
+  animation: leafWinIn 0.45s ease-out forwards;
+  /* per-leaf animation-delay set inline */
 }
 @keyframes crestFlare {
   0% {
@@ -271,22 +277,19 @@
     filter: brightness(1.05) drop-shadow(0 0 18px rgba(212, 175, 55, 0.3));
   }
 }
-.animate-wreathAssemble {
-  -webkit-mask-image: conic-gradient(
-    from 0deg at 50% 50%,
-    transparent calc(180deg - var(--wreath-sweep, 200deg)),
-    #000 calc(180deg - var(--wreath-sweep, 200deg)),
-    #000 calc(180deg + var(--wreath-sweep, 200deg)),
-    transparent calc(180deg + var(--wreath-sweep, 200deg))
-  );
-  mask-image: conic-gradient(
-    from 0deg at 50% 50%,
-    transparent calc(180deg - var(--wreath-sweep, 200deg)),
-    #000 calc(180deg - var(--wreath-sweep, 200deg)),
-    #000 calc(180deg + var(--wreath-sweep, 200deg)),
-    transparent calc(180deg + var(--wreath-sweep, 200deg))
-  );
-  animation: wreathAssemble 1.75s ease-out forwards, crestFlare 0.75s ease-out 1.5s forwards;
+/* The whole stack starts dim and BRIGHTENS as the wreath comes in,
+   then flares gold once the A has resolved. */
+@keyframes crestWarm {
+  from {
+    filter: brightness(0.55);
+  }
+  to {
+    filter: brightness(1);
+  }
+}
+.animate-crestWarm {
+  filter: brightness(0.55);
+  animation: crestWarm 1.35s ease-in forwards, crestFlare 0.8s ease-out 1.45s forwards;
 }
 
 /* Startup: the real crest rises out of black with a gold flare, then settles. */
@@ -337,6 +340,8 @@
   .crest-a,
   .animate-crestRise,
   .animate-crestGlow,
+  .crest-leafwin,
+  .animate-crestWarm,
   .animate-wreathBloom,
   .animate-bloomWash,
   .animate-ringPulse,
