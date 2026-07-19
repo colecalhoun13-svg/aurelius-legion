@@ -317,6 +317,10 @@ Full runbook: `docs/DEPLOY_MAC_MINI.md`.
 11. **Backups** — nightly `pg_dump | restic` to the NAS, 30-day keep, monthly
     restore test.
 12. Point Obsidian (desktop + mobile) at the NAS vault share.
+13. **MCP socket** — build per the frozen council spec (`docs/MCP_SPEC.md`),
+    first server Playwright, poison-probe smoke green. **This is a
+    definition-of-done line for the deploy itself** — the Mini isn't "done"
+    without it (or an explicit council re-vote deferring it again).
 
 ## D. Post-launch — the watch
 Deploying starts the soak (the one DoD line real time must prove: "runs for days,

@@ -14,6 +14,7 @@ import { productivityAdapter } from "./adapters/productivity.ts";
 import { autonomyAdapter } from "./adapters/autonomy.ts";
 import { contentAdapter } from "./adapters/content.ts";
 import { learningAdapter } from "./adapters/learning.ts";
+import { corpusAdapter } from "./adapters/corpus.ts";
 
 export function registerAllTools(): void {
   registerTool(googleSheetsAdapter);
@@ -26,4 +27,5 @@ export function registerAllTools(): void {
   registerTool(autonomyAdapter);     // grant (gated) / revoke / list keyholes from chat
   registerTool(contentAdapter);      // draft (inward) + publish (gated outward)
   registerTool(learningAdapter);     // curriculum: study the canon on demand / progress
+  registerTool(corpusAdapter);       // library inventory: what landed recently
 }

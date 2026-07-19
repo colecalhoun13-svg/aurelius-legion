@@ -180,6 +180,20 @@ export async function getIntegrations(): Promise<Integration[]> {
       need: fredLive ? undefined : "a free FRED API key (~2 min)",
     },
     {
+      name: "Ingest folder",
+      status: has("INGEST_WATCH_DIR") ? "live" : "config",
+      desc: "Drop a file (.md/.txt/.pdf) in one folder — the brain learns it within 10 min, no LLM in the loop",
+      glyph: "▽",
+      need: has("INGEST_WATCH_DIR") ? undefined : "set INGEST_WATCH_DIR to a drop folder (not the vault) and restart",
+    },
+    {
+      name: "YouTube transcripts",
+      status: "partial",
+      desc: "Paste a video link in chat — Aurelius pulls the transcript and ingests it",
+      glyph: "▶",
+      need: "best-effort here (YouTube blocks many server IPs) — fully reliable from the Mac Mini's home connection",
+    },
+    {
       name: "Paperless-ngx",
       status: "deploy",
       desc: "Scanned documents → OCR → second brain, every 10 min",
@@ -235,9 +249,9 @@ export async function getIntegrations(): Promise<Integration[]> {
     {
       name: "MCP connectors",
       status: "parked",
-      desc: "Plug into the tool ecosystem (Notion, files, more) — gated by the grant system",
+      desc: "Plug into the tool ecosystem — gated by the grant system, hardened per the frozen spec",
       glyph: "⧉",
-      need: "a near-term block; best on the Mac Mini so servers run local",
+      need: "spec frozen by council (docs/MCP_SPEC.md) — builds as part of the Mac Mini deploy's definition of done, first server: Playwright browser",
     },
   ];
 }

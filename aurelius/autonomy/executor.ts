@@ -144,11 +144,16 @@ export async function reapStaleActing(): Promise<number> {
     let outward = 0;
     for (const sig of stranded) {
       const actions = (sig.actions as any[]) ?? [];
-      const actionClass = actions.find((a) => a?.action === "confirm_action")?.payload?.actionClass ?? "";
+      const confirm = actions.find((a) => a?.action === "confirm_action");
+      const actionClass = confirm?.payload?.actionClass ?? "";
       // The apply_grant confirm wraps a to-be-granted class in its payload, but the
       // action itself (autonomy.apply_grant) is inward-safe to re-arm. Judge the
-      // confirm's OWN class tier; unknown → inward (safe).
-      const tier = getActionClass(actionClass)?.tier;
+      // confirm's OWN class tier. An UNKNOWN class on an executable confirm is
+      // treated as OUTWARD: a class this build can't identify may already have
+      // shipped, and silently re-arming it is the double-fire this reaper exists
+      // to prevent. Only a signal with no confirm_action at all (nothing to
+      // finalize) is safe to release back to pending.
+      const tier = getActionClass(actionClass)?.tier ?? (confirm ? "outward" : "inward");
       if (tier === "outward") {
         await prisma.bridgeSignal.update({
           where: { id: sig.id },
