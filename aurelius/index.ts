@@ -1275,6 +1275,10 @@ startTelegramBridge();
 import("./corpus/paperlessPoller.ts")
   .then((m) => m.startPaperlessPoller())
   .catch((err) => console.error("[paperless] init failed:", err));
+// Dormant without INGEST_WATCH_DIR; drop a file, the brain learns it.
+import("./corpus/inboxWatcher.ts")
+  .then((m) => m.startInboxWatcher())
+  .catch((err) => console.error("[inbox] init failed:", err));
 // Google Calendar: dormant without creds, awaiting-auth with them, live
 // after the one-time /api/calendar/auth. Syncs every 15 min once live.
 import("./calendar/engine.ts")

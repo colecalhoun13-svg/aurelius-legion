@@ -20,6 +20,20 @@ import { traceEvent } from "../core/trace.ts";
 
 const RETRY_DELAY_MS = 1000;
 const MAX_RETRIES = 1;
+// Per-call ceiling. A hung adapter (dead API, stuck child process) must fail
+// the call loudly instead of blocking the chat request forever. The underlying
+// promise isn't cancelled — the engine just stops waiting on it.
+const TOOL_TIMEOUT_MS = 120_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); }
+    );
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // MAIN ENTRY POINT
@@ -54,20 +68,28 @@ export async function executeToolCall(call: ToolCall): Promise<ToolResult> {
     return result;
   }
 
-  // Execute with retry policy
+  // Execute with retry policy. Adapters can override: maxRetries 0 for
+  // non-idempotent work (a failed call must never silently re-fire), timeoutMs
+  // for calls that can hang.
+  const maxRetries = adapter.maxRetries ?? MAX_RETRIES;
+  const timeoutMs = adapter.timeoutMs ?? TOOL_TIMEOUT_MS;
   let attempt = 0;
   let lastError: string | undefined;
   let lastOutput: Record<string, any> | null = null;
   let succeeded = false;
 
-  while (attempt <= MAX_RETRIES && !succeeded) {
+  while (attempt <= maxRetries && !succeeded) {
     if (attempt > 0) {
       console.warn(`[toolEngine] retrying ${call.tool}.${call.action} (attempt ${attempt + 1})`);
       await sleep(RETRY_DELAY_MS);
     }
 
     try {
-      const adapterResult = await adapter.run(call.action, call.data, call.context);
+      const adapterResult = await withTimeout(
+        adapter.run(call.action, call.data, call.context),
+        timeoutMs,
+        `${call.tool}.${call.action}`
+      );
       if (adapterResult.ok) {
         succeeded = true;
         lastOutput = adapterResult.output;

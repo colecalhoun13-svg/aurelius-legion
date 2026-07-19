@@ -38,7 +38,14 @@ export type ToolAdapter = {
   name: string;                       // tool name (e.g., "google_sheets")
   description: string;                // for the LLM tool catalog
   actions: ToolAction[];              // what this tool can do
-  
+
+  // Engine overrides. maxRetries: 0 for NON-IDEMPOTENT adapters — the engine's
+  // default retry re-runs on failure, which double-fires anything with side
+  // effects. timeoutMs: per-call ceiling; without one a hung adapter blocks the
+  // calling chat request forever.
+  maxRetries?: number;                // default: engine's MAX_RETRIES (1)
+  timeoutMs?: number;                 // default: engine's TOOL_TIMEOUT_MS
+
   // Execute an action. Adapter handles its own auth, retries (where adapter-specific),
   // and tool-specific error mapping.
   run(action: string, data: Record<string, any>, context?: ToolCall["context"]): Promise<ToolAdapterResult>;

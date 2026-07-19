@@ -53,6 +53,13 @@ export const webAdapter: ToolAdapter = {
       dataSchema: '{ "url": string }',
       example: '[TOOL: tool=web action=fetch data={"url": "https://example.com/article"}]',
     },
+    {
+      name: "youtube_transcript",
+      description:
+        "Fetch a YouTube video's transcript and (by default) ingest it into the corpus so the brain learns it. Best-effort — YouTube blocks some server IPs; reliable at the Mini.",
+      dataSchema: '{ "url": string, "ingest"?: boolean (default true), "domain"?: string }',
+      example: '[TOOL: tool=web action=youtube_transcript data={"url": "https://youtu.be/dQw4w9WgXcQ"}]',
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     if (action === "search") {
@@ -85,6 +92,43 @@ export const webAdapter: ToolAdapter = {
         return { ok: true, output: { title: r.title, url: r.url, text: defuseDirectives(r.text.slice(0, 8000)) } };
       } catch (e: any) {
         return { ok: false, output: null, error: e?.message ?? "web fetch failed" };
+      }
+    }
+    if (action === "youtube_transcript") {
+      const ref = (data?.url ?? "").toString().trim();
+      if (!ref) return { ok: false, output: null, error: "youtube_transcript needs a url (or video id)" };
+      try {
+        const { resolveContentSource } = await import("../../research/sources.ts");
+        const source = resolveContentSource(ref);
+        if (!source) return { ok: false, output: null, error: `no content source can handle: ${ref}` };
+        const fetched = await source.fetch(ref); // already defused by the source
+        let docId: string | null = null;
+        if (data?.ingest !== false) {
+          const { ingestDocument } = await import("../../corpus/ingest.ts");
+          const r = await ingestDocument({
+            title: fetched.title,
+            content: fetched.content,
+            sourceType: "url",
+            sourceUrl: fetched.url,
+            domain: (data?.domain ?? "research").toString(),
+            triggeredBy: "cole",
+            dedupKey: `youtube:${fetched.url}`,
+          });
+          docId = r.doc.id;
+        }
+        return {
+          ok: true,
+          output: {
+            title: fetched.title,
+            url: fetched.url,
+            ingested: docId !== null,
+            docId,
+            transcript: fetched.content.slice(0, 8000),
+            summary: `Transcript of "${fetched.title}" (${fetched.content.length} chars)${docId ? ", ingested into the corpus" : ""}`,
+          },
+        };
+      } catch (e: any) {
+        return { ok: false, output: null, error: e?.message ?? "transcript fetch failed" };
       }
     }
     return { ok: false, output: null, error: `unknown web action: ${action}` };
