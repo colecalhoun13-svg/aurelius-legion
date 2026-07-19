@@ -65,6 +65,7 @@ else proposes) · 07:00 morning briefing · 08:00 initiative ·
 13:00 midday check (silent when on pace) · 21:30 debrief · Sun 09:00 weekend
 sweep → wiki · Sun 17:00 persona observer · Sun 18:00 weekly planning ·
 Sun 19:00 freshness sweep ·
+Sun 19:30 capability gaps (repeated tool failures → one deduped fix signal) ·
 Sun 20:00 scoreboard · Sun 21:00 decision curriculum (mine Cole's corrections →
 heuristics; judge fired-and-corrected rules → gated retire proposals; trust
 rises only on Cole's explicit ratification, never on silence) ·

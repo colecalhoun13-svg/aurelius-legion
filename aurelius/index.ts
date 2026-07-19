@@ -1408,6 +1408,20 @@ scheduleNamed("freshness_sweep", "0 19 * * 0", "freshness sweep", async () => {
     console.error("[freshness] sweep failed:", err);
   }
 });
+// Capability gaps — Sunday 19:30: mine the week's tool failures; a
+// capability that keeps failing files ONE deduped "I keep failing you
+// here + the fix" signal. Finding gaps is automatic; closing them is
+// Cole's call (hard rule 1).
+scheduleNamed("capability_gaps", "30 19 * * 0", "capability gap sweep", async () => {
+  try {
+    await runTraced("schedule", "capability_gaps", async () => {
+      const { sweepCapabilityGaps } = await import("./autonomy/capabilityGaps.ts");
+      return sweepCapabilityGaps();
+    });
+  } catch (err) {
+    console.error("[gaps] sweep failed:", err);
+  }
+});
 // Weekly scoreboard — Sunday 20:00, one honest snapshot of both lanes.
 scheduleNamed("weekly_scoreboard", "0 20 * * 0", "weekly scoreboard", () => {
   runTraced("schedule", "weekly_scoreboard", () => computeWeeklySnapshot()).catch((err) =>

@@ -1428,6 +1428,37 @@ async function main() {
     }
   }
 
+  console.log("── capability gaps: repeated failures file one deduped signal ──");
+  {
+    const { saveMemory } = await import("../memory/memoryService.ts");
+    const { sweepCapabilityGaps } = await import("../autonomy/capabilityGaps.ts");
+    const gapTool = `smoke_gap_${TAG}`;
+    for (let i = 0; i < 3; i++) {
+      await saveMemory({
+        operator: "global",
+        category: "tool_result",
+        value: `Tool ${gapTool}.fire failed: ${TAG} not configured — add FAKE_SMOKE_API_KEY`,
+        relatedOperators: [],
+        metadata: { tool: gapTool, action: "fire", status: "failed", error: `${TAG} not configured — add FAKE_SMOKE_API_KEY` },
+      });
+    }
+    const sweep1 = await sweepCapabilityGaps();
+    const gapSig = await prisma.bridgeSignal.findFirst({
+      where: { sourceType: "capability_gap", sourceId: `gap:${gapTool}.fire` },
+    });
+    check(
+      "3 failures cross the threshold and file a gap_alert with the fix",
+      sweep1.filed >= 1 && gapSig?.kind === "gap_alert" && (gapSig?.body ?? "").includes("FAKE_SMOKE_API_KEY")
+    );
+    const sweep2 = await sweepCapabilityGaps();
+    const gapCount = await prisma.bridgeSignal.count({
+      where: { sourceType: "capability_gap", sourceId: `gap:${gapTool}.fire` },
+    });
+    check("second sweep never double-files (dedup + cooldown)", sweep2.filed === 0 && gapCount === 1);
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "capability_gap", sourceId: `gap:${gapTool}.fire` } });
+    await prisma.memory.deleteMany({ where: { value: { contains: gapTool } } });
+  }
+
   console.log("── content sources: youtube reference parsing ──");
   {
     const { parseYouTubeId } = await import("../research/youtubeTranscript.ts");
