@@ -11,6 +11,7 @@ type RunAnthropicInput = {
   systemPrompt?: string;
   userPrompt: string;
   maxTokens?: number;
+  tools?: any[]; // Anthropic-shaped tool definitions (router supplies)
 };
 
 async function runAnthropic({
@@ -18,6 +19,7 @@ async function runAnthropic({
   systemPrompt,
   userPrompt,
   maxTokens = 8192,
+  tools,
 }: RunAnthropicInput): Promise<{ text: string; tokensUsed: number; raw: any }> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -34,6 +36,7 @@ async function runAnthropic({
     max_tokens: maxTokens,
   };
   if (systemPrompt) body.system = systemPrompt;
+  if (tools?.length) body.tools = tools;
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -73,8 +76,10 @@ async function runAnthropic({
       text = json.content[0].text;
     }
 
-    if (!text) {
+    if (!text && json?.stop_reason !== "tool_use") {
       // Diagnostic: when the model spent tokens but we got no text, show why.
+      // (A pure tool_use turn legitimately has no text — the router reads the
+      // tool calls from `raw`, so that's not worth a warning.)
       console.warn(
         "[ANTHROPIC] empty text extracted — block types:",
         Array.isArray(json?.content) ? json.content.map((b: any) => b?.type) : typeof json?.content,
@@ -104,6 +109,7 @@ export const anthropicAdapter: EngineAdapter = {
       model: request.model,
       systemPrompt: request.systemPrompt,
       userPrompt: request.userPrompt,
+      tools: request.tools,
     });
     return {
       text: result.text,

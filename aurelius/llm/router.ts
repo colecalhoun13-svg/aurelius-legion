@@ -32,6 +32,8 @@ import {
   formatMemoriesForPrompt,
 } from "../memory/memoryService.ts";
 import { buildToolCatalog } from "../tools/toolRegistry.ts";
+import { nativeToolsFor, parseNativeToolCalls } from "./nativeTools.ts";
+import type { ToolDirective } from "./directiveParser.ts";
 
 // ═══════════════════════════════════════════════════════════════════
 // TYPES
@@ -58,6 +60,9 @@ export type LLMTask = {
   needsRealtime?: boolean;
   hasMultimodal?: boolean;
   decisionMode?: boolean;          // Cole is asking a real call → run the frameworks, don't quote
+  // Attach the native invoke_tool function on directive-capable providers so
+  // tool calls arrive structured instead of regex-parsed from prose.
+  nativeTools?: boolean;
   // Phase 4.5 — Knowledge update propose/confirm context
   knowledgeContext?: {
     operatorId: string;
@@ -77,6 +82,9 @@ export type LLMResponse = {
   model: string;
   tokensUsed: number;
   latencyMs: number;
+  /** Native invoke_tool calls the provider returned as STRUCTURED objects —
+   *  already normalized to the ToolDirective shape the executor runs. */
+  toolCalls?: import("./directiveParser.ts").ToolDirective[];
   /** Set when the routed provider failed and another served the call. */
   failedOverFrom?: string;
   reviewed?: {
@@ -464,6 +472,11 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     const toolCatalog = buildToolCatalog();
     if (toolCatalog) {
       parts.push("\n═══ " + toolCatalog);
+      if (task.nativeTools) {
+        parts.push(
+          "\nWhen you need a tool, PREFER calling the invoke_tool function with { tool, action, data } exactly as cataloged above — it cannot be mis-parsed. The [TOOL: ...] text form remains a working fallback."
+        );
+      }
     }
   } catch (err) {
     console.warn("[ROUTER] tool catalog generation failed:", err);
@@ -535,21 +548,25 @@ async function runAdapter(
   provider: string,
   model: string,
   systemPrompt: string,
-  userPrompt: string
-): Promise<{ text: string; tokensUsed: number; latencyMs: number }> {
+  userPrompt: string,
+  withNativeTools = false
+): Promise<{ text: string; tokensUsed: number; latencyMs: number; toolCalls?: ToolDirective[] }> {
   const adapter = adapters[provider];
   if (!adapter) {
     throw new Error(`No adapter found for provider "${provider}"`);
   }
 
+  const tools = withNativeTools ? nativeToolsFor(provider) : null;
   const start = Date.now();
-  const response = await adapter.run({ model, systemPrompt, userPrompt });
+  const response = await adapter.run({ model, systemPrompt, userPrompt, ...(tools ? { tools } : {}) });
   const latencyMs = Date.now() - start;
 
+  const toolCalls = tools ? parseNativeToolCalls(provider, response.raw) : [];
   return {
     text: response.text || "",
     tokensUsed: response.tokensUsed || 0,
     latencyMs,
+    ...(toolCalls.length ? { toolCalls } : {}),
   };
 }
 
@@ -642,7 +659,7 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
     })),
   ].slice(0, MAX_ATTEMPTS);
 
-  let primary: { text: string; tokensUsed: number; latencyMs: number } | null = null;
+  let primary: { text: string; tokensUsed: number; latencyMs: number; toolCalls?: ToolDirective[] } | null = null;
   let served = chain[0];
   let failedOver = false;
   let lastFailure = "unknown";
@@ -650,11 +667,24 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
   for (const attempt of chain) {
     const isLast = attempt === chain[chain.length - 1];
     try {
-      const result = await runAdapter(attempt.provider, attempt.model, systemPrompt, task.input);
+      const result = await runAdapter(
+        attempt.provider,
+        attempt.model,
+        systemPrompt,
+        task.input,
+        !!task.nativeTools && DIRECTIVE_CAPABLE.has(attempt.provider)
+      );
       // Fail over on anything that isn't a real answer: a missing key, an
       // adapter-level API error (e.g. a small-context model choking on a long
       // prompt), or an EMPTY response. Only accept a non-answer on the last
       // attempt, so the user still gets an honest message rather than a hang.
+      // A turn with NATIVE TOOL CALLS is a real answer even with empty text —
+      // the model chose to act instead of talk; the results turn writes the prose.
+      if (result.toolCalls?.length) {
+        primary = result;
+        served = attempt;
+        break;
+      }
       if (isNonAnswer(result.text) && !isLast) {
         lastFailure = result.text?.trim() || "empty response";
         console.warn(
@@ -691,6 +721,7 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
     model: served.model,
     tokensUsed: primary.tokensUsed,
     latencyMs: primary.latencyMs,
+    toolCalls: primary.toolCalls?.length ? primary.toolCalls : undefined,
     failedOverFrom: failedOver && served.provider !== choice.provider ? choice.provider : undefined,
   };
 

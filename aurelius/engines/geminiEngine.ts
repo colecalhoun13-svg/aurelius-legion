@@ -36,6 +36,7 @@ export const geminiAdapter: EngineAdapter = {
         parts: [{ text: req.systemPrompt }],
       };
     }
+    if (req.tools?.length) body.tools = req.tools;
 
     // Try: the requested model, then cached winner, then the rest — skipping a
     // model that just 404'd. First non-404 response wins and is cached.
@@ -86,7 +87,9 @@ export const geminiAdapter: EngineAdapter = {
           .join("")
           .trim();
       }
-      if (!text) {
+      const hasFunctionCall =
+        Array.isArray(cand?.content?.parts) && cand.content.parts.some((p: any) => p?.functionCall);
+      if (!text && !hasFunctionCall) {
         console.warn(
           "[GEMINI] empty text extracted — finishReason:",
           cand?.finishReason,
