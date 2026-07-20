@@ -1428,6 +1428,30 @@ async function main() {
     }
   }
 
+  console.log("── forget path: a poisoned ingest is fully removable ──");
+  {
+    const { forgetDocument } = await import("../corpus/ingest.ts");
+    const { doc: junkDoc } = await ingestDocument({
+      title: `Junk drop ${TAG}`,
+      content:
+        "This document simulates a poisoned or junk ingest that Cole wants gone. It has enough content to pass the ingestion minimums and exists only for the forget-path smoke check.",
+      domain: "smoke_suite",
+    });
+    const ambiguous = await forgetDocument("smoke"); // matches this + the main smoke doc
+    check("ambiguous forget deletes NOTHING and returns candidates", !ambiguous.forgotten && ambiguous.matches.length > 1);
+    const gone = await forgetDocument(junkDoc.id);
+    const [docLeft, embLeft, memLeft, sigLeft] = await Promise.all([
+      prisma.corpusDocument.findUnique({ where: { id: junkDoc.id } }),
+      prisma.vectorEmbedding.count({ where: { sourceId: junkDoc.id } }),
+      prisma.memory.count({ where: { metadata: { path: ["corpusDocId"], equals: junkDoc.id } } }),
+      prisma.bridgeSignal.count({ where: { sourceId: junkDoc.id } }),
+    ]);
+    check(
+      "forget removes all four writes (doc, embeddings, memory, signal)",
+      gone.forgotten && !docLeft && embLeft === 0 && memLeft === 0 && sigLeft === 0
+    );
+  }
+
   console.log("── capability gaps: repeated failures file one deduped signal ──");
   {
     const { saveMemory } = await import("../memory/memoryService.ts");

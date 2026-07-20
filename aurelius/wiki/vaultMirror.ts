@@ -71,6 +71,12 @@ export async function mirrorCorpusDoc(doc: {
   );
 }
 
+/** Remove a forgotten document's mirror file (fire-and-forget, like writes). */
+export async function unmirrorCorpusDoc(doc: { domain: string; title: string }) {
+  const full = path.join(VAULT_DIR, `corpus/${safeName(doc.domain)}/${safeName(doc.title)}.md`);
+  await fs.rm(full, { force: true });
+}
+
 /** Regenerate the vault index with wikilinks — the brain's front door. */
 export async function mirrorIndex() {
   const [pages, docs] = await Promise.all([
