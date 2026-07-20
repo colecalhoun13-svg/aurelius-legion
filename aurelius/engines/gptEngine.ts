@@ -22,6 +22,7 @@ export const gptAdapter: EngineAdapter = {
       const completion = await client.chat.completions.create({
         model: req.model || "gpt-5.4-mini",
         messages,
+        ...(req.tools?.length ? { tools: req.tools as any } : {}),
       });
 
       const choice = completion.choices[0];

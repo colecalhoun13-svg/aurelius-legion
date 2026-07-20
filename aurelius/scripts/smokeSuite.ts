@@ -1483,6 +1483,68 @@ async function main() {
     await prisma.memory.deleteMany({ where: { value: { contains: gapTool } } });
   }
 
+  console.log("── native tool calling: provider parsers + merge (offline fixtures) ──");
+  {
+    const { nativeToolsFor, parseNativeToolCalls, mergeToolDirectives } = await import("../llm/nativeTools.ts");
+
+    const specA = nativeToolsFor("anthropic");
+    const specO = nativeToolsFor("openai");
+    const specG = nativeToolsFor("gemini");
+    check(
+      "tool specs shaped per provider dialect (and none for prose-only tiers)",
+      specA?.[0]?.input_schema?.type === "object" &&
+        specO?.[0]?.function?.parameters?.required?.includes("tool") &&
+        specG?.[0]?.functionDeclarations?.[0]?.parameters?.type === "OBJECT" &&
+        nativeToolsFor("groq") === null
+    );
+
+    const fromAnthropic = parseNativeToolCalls("anthropic", {
+      content: [
+        { type: "text", text: "On it." },
+        { type: "tool_use", name: "invoke_tool", input: { tool: "Web", action: "SEARCH", data: { query: "x" } } },
+      ],
+    });
+    const fromOpenAI = parseNativeToolCalls("openai", {
+      choices: [
+        {
+          message: {
+            tool_calls: [
+              { function: { name: "invoke_tool", arguments: '{"tool":"corpus","action":"list_recent","data":{"limit":5}}' } },
+              { function: { name: "invoke_tool", arguments: "{not json" } },
+            ],
+          },
+        },
+      ],
+    });
+    const fromGemini = parseNativeToolCalls("gemini", {
+      candidates: [
+        { content: { parts: [{ functionCall: { name: "invoke_tool", args: { tool: "web", action: "fetch", data: { url: "https://a.b" } } } }] } },
+      ],
+    });
+    check(
+      "anthropic tool_use parses + names normalize to lowercase",
+      fromAnthropic.length === 1 && fromAnthropic[0].tool === "web" && fromAnthropic[0].action === "search"
+    );
+    check(
+      "openai tool_calls parse; malformed JSON args drop that call, keep the rest",
+      fromOpenAI.length === 1 && fromOpenAI[0].tool === "corpus" && fromOpenAI[0].data.limit === 5
+    );
+    check("gemini functionCall parses", fromGemini.length === 1 && fromGemini[0].action === "fetch");
+    check(
+      "junk shapes degrade to [] (never throw)",
+      parseNativeToolCalls("anthropic", null).length === 0 &&
+        parseNativeToolCalls("openai", { choices: [] }).length === 0 &&
+        parseNativeToolCalls("gemini", { candidates: [{ content: {} }] }).length === 0
+    );
+
+    const textSide = [{ tool: "web", action: "search", data: { query: "x" } }];
+    const merged = mergeToolDirectives(textSide, [
+      { tool: "web", action: "search", data: { query: "x" } }, // exact dupe — model said it both ways
+      { tool: "corpus", action: "list_recent", data: {} },
+    ]);
+    check("merge dedupes native+text repeats (fires once, not twice)", merged.length === 2);
+  }
+
   console.log("── content sources: youtube reference parsing ──");
   {
     const { parseYouTubeId } = await import("../research/youtubeTranscript.ts");

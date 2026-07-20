@@ -750,6 +750,10 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       // Real decision → run the frameworks through the application harness.
       // A council ask that couldn't seat two lenses is by definition a decision.
       decisionMode: wasDecision,
+      // Structured tool calling: capable providers get the native invoke_tool
+      // function, so tool calls arrive as API objects instead of regex-parsed
+      // prose. The [TOOL:] text path below still works as the fallback.
+      nativeTools: true,
       knowledgeContext: primaryOperatorId
         ? { operatorId: primaryOperatorId, operatorName: primary }
         : undefined,
@@ -768,6 +772,18 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
     // ── Pattern 2: extract directives (SAVE + TOOL), persist saves, execute tools ──
     const parsed = extractDirectives(response.text);
     let cleanedText = parsed.cleanedText;
+
+    // Native invoke_tool calls join the same execution path as text directives
+    // (identical tracing, gating, synthesis). Deduped: a model that calls
+    // natively AND writes the bracket form fires once, not twice.
+    if (response.toolCalls?.length) {
+      try {
+        const { mergeToolDirectives } = await import("./llm/nativeTools.ts");
+        parsed.tools = mergeToolDirectives(parsed.tools, response.toolCalls);
+      } catch (err) {
+        console.warn("[aurelius] native tool merge failed (non-fatal):", err);
+      }
+    }
 
     // Directive integrity (council fix): near-misses page instead of vanishing,
     // and only format-reliable engines get their directives EXECUTED.
