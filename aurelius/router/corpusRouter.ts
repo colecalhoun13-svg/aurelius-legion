@@ -1,7 +1,7 @@
 // aurelius/router/corpusRouter.ts — second-brain surface. Mounted at /api/corpus.
 
 import { Router, type Request, type Response } from "express";
-import { ingestDocument, ingestUrl, listCorpus } from "../corpus/ingest.ts";
+import { ingestDocument, ingestUrl, listCorpus, forgetDocument } from "../corpus/ingest.ts";
 import { ask } from "../corpus/ask.ts";
 
 export const corpusRouter = Router();
@@ -60,6 +60,18 @@ corpusRouter.post("/ask", async (req: Request, res: Response) => {
   try {
     if (!req.body?.question) return res.status(400).json({ error: "question required" });
     res.json(await ask(req.body.question));
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+// DELETE /api/corpus/:id — the forget path (last: /:param registers after
+// every static route, per the Express ordering gotcha).
+corpusRouter.delete("/:id", async (req: Request, res: Response) => {
+  try {
+    const r = await forgetDocument(String(req.params.id ?? ""));
+    if (!r.forgotten) return res.status(r.matches.length > 0 ? 409 : 404).json(r);
+    res.json(r);
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? String(err) });
   }

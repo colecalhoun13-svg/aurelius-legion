@@ -164,6 +164,59 @@ export async function ingestUrl(url: string, opts: Partial<IngestInput> = {}) {
   return ingestDocument({ ...opts, title, content: text, sourceType: "url", sourceUrl: url });
 }
 
+/**
+ * FORGET a document — the purge path the ingest pipeline requires (council
+ * red team, 2026-07-19): a poisoned or junk ingest must be fully removable,
+ * because recall reinjects corpus content forever with no per-call gate.
+ * Removes every trace of the FOUR writes: embeddings, the ingestion memory,
+ * the bridge signal, the document row — plus the vault mirror file.
+ *
+ * Accepts an id or a title fragment. An ambiguous fragment deletes NOTHING
+ * and returns the candidates — Cole names the one he means.
+ */
+export type ForgetResult = {
+  forgotten: boolean;
+  doc?: { id: string; title: string; domain: string };
+  reason?: string;
+  matches: { id: string; title: string; domain: string }[];
+};
+
+export async function forgetDocument(idOrTitle: string): Promise<ForgetResult> {
+  const ref = idOrTitle.trim();
+  if (!ref) return { forgotten: false, reason: "empty reference", matches: [] };
+
+  let doc = await prisma.corpusDocument.findUnique({ where: { id: ref } });
+  if (!doc) {
+    const matches = await prisma.corpusDocument.findMany({
+      where: { title: { contains: ref, mode: "insensitive" } },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+    });
+    if (matches.length === 0) return { forgotten: false, reason: "no document matches", matches: [] };
+    if (matches.length > 1) {
+      return {
+        forgotten: false,
+        reason: "ambiguous — name one of these",
+        matches: matches.map((m) => ({ id: m.id, title: m.title, domain: m.domain })),
+      };
+    }
+    doc = matches[0];
+  }
+
+  await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });
+  await prisma.memory.deleteMany({ where: { metadata: { path: ["corpusDocId"], equals: doc.id } } });
+  await prisma.bridgeSignal.deleteMany({ where: { sourceId: doc.id } });
+  await prisma.corpusDocument.delete({ where: { id: doc.id } });
+
+  // Vault mirror + index catch up — fire-and-forget, like the writes.
+  import("../wiki/vaultMirror.ts")
+    .then(async (m) => { await m.unmirrorCorpusDoc(doc); await m.mirrorIndex(); })
+    .catch((err) => console.warn("[corpus] vault unmirror failed (non-fatal):", err));
+
+  console.log(`[corpus] forgot "${doc.title}" (${doc.id}) — embeddings, memory, signal, mirror removed`);
+  return { forgotten: true, doc: { id: doc.id, title: doc.title, domain: doc.domain }, matches: [] };
+}
+
 export async function listCorpus(limit = 50) {
   return prisma.corpusDocument.findMany({
     orderBy: { createdAt: "desc" },

@@ -19,6 +19,13 @@ export const corpusAdapter: ToolAdapter = {
       dataSchema: '{ "limit"?: number (default 10, max 30) }',
       example: '[TOOL: tool=corpus action=list_recent data={"limit": 10}]',
     },
+    {
+      name: "forget",
+      description:
+        "Remove a document from the second brain entirely (embeddings, memory, mirror) — ONLY when Cole explicitly asks to forget/delete it. Ambiguous titles delete nothing and return candidates.",
+      dataSchema: '{ "document": string (id or title fragment) }',
+      example: '[TOOL: tool=corpus action=forget data={"document": "old speed manual"}]',
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     if (action === "list_recent") {
@@ -41,6 +48,30 @@ export const corpusAdapter: ToolAdapter = {
         };
       } catch (e: any) {
         return { ok: false, output: null, error: e?.message ?? "corpus listing failed" };
+      }
+    }
+    if (action === "forget") {
+      const ref = (data?.document ?? "").toString().trim();
+      if (!ref) return { ok: false, output: null, error: "corpus.forget needs a document id or title" };
+      try {
+        const { forgetDocument } = await import("../../corpus/ingest.ts");
+        const r = await forgetDocument(ref);
+        if (!r.forgotten || !r.doc) {
+          return {
+            ok: false,
+            output: { matches: r.matches },
+            error:
+              r.matches.length > 0
+                ? `${r.reason}: ${r.matches.map((m) => `"${m.title}" (${m.domain})`).join(", ")}`
+                : r.reason ?? "forget failed",
+          };
+        }
+        return {
+          ok: true,
+          output: { forgotten: r.doc, summary: `Forgot "${r.doc.title}" — removed from recall, memory, and the vault.` },
+        };
+      } catch (e: any) {
+        return { ok: false, output: null, error: e?.message ?? "forget failed" };
       }
     }
     return { ok: false, output: null, error: `unknown corpus action: ${action}` };
