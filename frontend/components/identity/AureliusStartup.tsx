@@ -85,15 +85,20 @@ export default function AureliusStartup({ children }: { children: React.ReactNod
       <div
         className="absolute animate-crestGlow"
         style={{
-          width: "96vmin",
-          height: "96vmin",
+          width: "100vmin",
+          height: "100vmin",
           borderRadius: "50%",
           background: "radial-gradient(circle, rgba(212,175,55,0.28) 0%, rgba(212,175,55,0.08) 45%, rgba(0,0,0,0) 70%)",
         }}
       />
       {/* the crest stack: leaf windows open in sequence; the wrapper's brightness
-          RISES with the assembly, then flares gold before the fade */}
-      <div className="relative animate-crestWarm" style={{ width: "min(92vmin, 920px)", height: "min(92vmin, 920px)" }}>
+          RISES with the assembly, then flares gold before the fade.
+          translateX compensates for the artwork's ring center sitting at 48.8%
+          of the image (not 50%) — without it the crest lands left of page center. */}
+      <div
+        className="relative animate-crestWarm"
+        style={{ width: "min(97vmin, 970px)", height: "min(97vmin, 970px)", transform: "translateX(1.2%)" }}
+      >
         {PATCHES.map((p, i) => (
           <div key={i} className="crest-leafwin" style={layerStyle(p.x, p.y, 6.5, 10, p.k * STEP_MS)} />
         ))}
