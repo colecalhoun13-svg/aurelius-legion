@@ -59,14 +59,9 @@ const handled = new Set<string>();
 const fileAttempts = new Map<string, number>();
 
 async function extractText(filePath: string, ext: string): Promise<string> {
-  if (ext === ".pdf") {
-    // pdf-parse's package entry runs debug code when imported without a parent
-    // module — import the library file directly (known ESM quirk, pinned 1.1.1).
-    const { default: pdfParse } = await import("pdf-parse/lib/pdf-parse.js" as any);
-    const parsed = await pdfParse(await fs.readFile(filePath));
-    return (parsed?.text ?? "").trim();
-  }
-  return (await fs.readFile(filePath, "utf8")).trim();
+  // One extractor for both entrances (folder + Research Drop upload).
+  const { extractTextFromBuffer } = await import("./upload.ts");
+  return extractTextFromBuffer(await fs.readFile(filePath), ext);
 }
 
 export async function pollInboxOnce(): Promise<

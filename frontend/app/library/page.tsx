@@ -10,6 +10,104 @@ type Shelf = { domain: string; label: string; read: number; total: number; disco
 type Recent = { id: string; title: string; domain: string; createdAt: string };
 type Library = { progress: Shelf[]; recent: Recent[] };
 
+type DropStatus = { name: string; state: "uploading" | "ingested" | "duplicate" | "error"; detail?: string };
+
+// RESEARCH DROP — drag a PDF/note here and it enters the second brain:
+// indexed for recall, remembered, and on the Bridge. Same hardened pipeline
+// as the inbox folder, no filesystem required.
+function ResearchDrop({ onIngested }: { onIngested: () => void }) {
+  const [over, setOver] = useState(false);
+  const [drops, setDrops] = useState<DropStatus[]>([]);
+
+  const upload = useCallback(
+    async (files: FileList | File[]) => {
+      for (const file of Array.from(files)) {
+        const name = file.name;
+        if (!/\.(md|txt|pdf)$/i.test(name)) {
+          setDrops((d) => [{ name, state: "error" as const, detail: "only .md / .txt / .pdf" }, ...d].slice(0, 6));
+          continue;
+        }
+        if (file.size > 20 * 1024 * 1024) {
+          setDrops((d) => [{ name, state: "error" as const, detail: "over the 20MB cap — split it" }, ...d].slice(0, 6));
+          continue;
+        }
+        setDrops((d) => [{ name, state: "uploading" as const }, ...d].slice(0, 6));
+        try {
+          const buf = await file.arrayBuffer();
+          let bin = "";
+          const bytes = new Uint8Array(buf);
+          for (let i = 0; i < bytes.length; i += 0x8000) {
+            bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+          }
+          const res = await fetch("/api/corpus/upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ filename: name, contentBase64: btoa(bin) }),
+          });
+          const j = await res.json().catch(() => ({}));
+          setDrops((d) =>
+            d.map((s) =>
+              s.name === name && s.state === "uploading"
+                ? j.ok
+                  ? { name, state: j.deduped ? "duplicate" : "ingested", detail: j.deduped ? "already in the brain" : `${j.chunkCount ?? 0} chunks indexed` }
+                  : { name, state: "error", detail: j.error ?? `HTTP ${res.status}` }
+                : s
+            )
+          );
+          if (j.ok && !j.deduped) onIngested();
+        } catch (e: any) {
+          setDrops((d) =>
+            d.map((s) => (s.name === name && s.state === "uploading" ? { name, state: "error", detail: e?.message ?? "upload failed" } : s))
+          );
+        }
+      }
+    },
+    [onIngested]
+  );
+
+  return (
+    <section
+      onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => { e.preventDefault(); setOver(false); if (e.dataTransfer.files.length) upload(e.dataTransfer.files); }}
+      className={`aurelius-panel-frame border rounded-lg p-5 text-center transition-colors ${
+        over ? "border-aurelius-gold bg-aurelius-gold/10" : "border-aurelius-gold/25"
+      }`}
+    >
+      <p className="text-sm text-aurelius-gold aurelius-heading tracking-widest">Research Drop</p>
+      <p className="mt-1 text-xs text-neutral-500">
+        Drop PDFs, notes, or books here (.pdf / .md / .txt, ≤20MB — split books by chapter) and they enter the second
+        brain: recall, memory, the Bridge. Scanned PDFs wait for the Mini&apos;s OCR.
+      </p>
+      <label className="mt-3 inline-block cursor-pointer text-xs border border-aurelius-gold/40 rounded-lg px-3 py-1.5 hover:bg-aurelius-gold/15 text-aurelius-gold">
+        or choose files
+        <input
+          type="file"
+          multiple
+          accept=".pdf,.md,.txt"
+          className="hidden"
+          onChange={(e) => { if (e.target.files?.length) upload(e.target.files); e.target.value = ""; }}
+        />
+      </label>
+      {drops.length > 0 && (
+        <ul className="mt-3 space-y-1 text-left">
+          {drops.map((s, i) => (
+            <li key={`${s.name}-${i}`} className="text-[11px] flex items-start gap-2">
+              <span className={s.state === "error" ? "text-red-400" : s.state === "uploading" ? "text-neutral-500" : "text-aurelius-gold/80"}>
+                {s.state === "uploading" ? "…" : s.state === "error" ? "✗" : "✦"}
+              </span>
+              <span className="text-neutral-400">
+                {s.name}
+                <span className="text-neutral-600"> · {s.state === "uploading" ? "reading" : s.detail ?? s.state}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export default function LibraryPage() {
   const [lib, setLib] = useState<Library | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -60,6 +158,9 @@ export default function LibraryPage() {
       </p>
 
       {err && <p className="text-red-400 text-sm">Couldn't load: {err}</p>}
+
+      {/* Research Drop — feed the brain from the browser */}
+      <ResearchDrop onIngested={load} />
 
       {/* The shelves */}
       <section className="space-y-3">
