@@ -70,9 +70,25 @@ export async function searchDriveForSheet(
 
 /** All Drive matches for a name — for find_sheet and for honest ambiguity
  *  answers ("which of these did you mean?") instead of a null shrug. */
+// When Drive search FAILS (not "no matches" — actually errors), remember why,
+// so "0 results" can be reported honestly. The classic: Cole's stored Google
+// token predates the drive.readonly scope → every search 403s and looks empty.
+let lastDriveSearchError: string | null = null;
+
+export function driveSearchProblem(): string | null {
+  if (!lastDriveSearchError) return null;
+  return /insufficient|permission|403|scope/i.test(lastDriveSearchError)
+    ? "Google authorization predates Drive/Sheets access — re-authorize once at /api/calendar/auth (the consent screen must list Drive and Sheets), then retry"
+    : `Drive search errored: ${lastDriveSearchError.slice(0, 200)}`;
+}
+
 export async function listDriveSheets(name: string, limit = 8): Promise<Array<{ sheetId: string; title: string }>> {
   const drive = await getDriveClient();
-  if (!drive || !name?.trim()) return [];
+  if (!name?.trim()) return [];
+  if (!drive) {
+    lastDriveSearchError = "no Google client — authorize at /api/calendar/auth";
+    return [];
+  }
   const q = name.trim().replace(/'/g, "\\'");
   try {
     const res = await drive.files.list({
@@ -80,11 +96,13 @@ export async function listDriveSheets(name: string, limit = 8): Promise<Array<{ 
       fields: "files(id, name)",
       pageSize: limit,
     });
+    lastDriveSearchError = null;
     return ((res.data.files ?? []) as Array<{ id?: string; name?: string }>)
       .filter((f) => f.id && f.name)
       .map((f) => ({ sheetId: f.id!, title: f.name! }));
   } catch (err) {
-    console.warn("[googleSheets] drive list search failed:", (err as any)?.message ?? err);
+    lastDriveSearchError = (err as any)?.message ?? String(err);
+    console.warn("[googleSheets] drive list search failed:", lastDriveSearchError);
     return [];
   }
 }
@@ -109,7 +127,7 @@ async function resolveSheetRef(ref: string): Promise<SheetRef> {
     ok: false,
     error:
       candidates.length === 0
-        ? `no spreadsheet named anything like "${r}" in Cole's Drive (is Google authorized with Sheets access?)`
+        ? driveSearchProblem() ?? `no spreadsheet named anything like "${r}" in Cole's Drive — try a shorter name fragment`
         : `"${r}" is ambiguous — candidates: ${candidates.map((c) => c.title).join(" · ")}`,
     candidates,
   };
@@ -1028,10 +1046,11 @@ async function findSheet(data: any): Promise<ToolAdapterResult> {
   if (!name) return { ok: false, output: null, error: "find_sheet needs a name" };
   const matches = await listDriveSheets(name);
   if (matches.length === 0) {
+    const problem = driveSearchProblem();
     return {
       ok: false,
       output: null,
-      error: `no spreadsheet named anything like "${name}" — check the name, or re-authorize Google at /api/calendar/auth if Sheets access was never granted`,
+      error: problem ?? `no spreadsheet named anything like "${name}" — try a shorter fragment of the name (e.g. just "Devo")`,
     };
   }
   return {
