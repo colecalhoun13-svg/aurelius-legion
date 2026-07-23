@@ -17,6 +17,27 @@ type Message = {
   attachments?: { name: string; kind: "image" | "video" }[];
 };
 
+// A reply in flight survives leaving the page: the backend finishes the work
+// and persists both turns regardless, so the screen marks the send in
+// sessionStorage and, on return, polls history until the answer lands.
+const PENDING_KEY = "aurelius_pending_turn";
+const PENDING_TTL_MS = 15 * 60_000;
+
+function readPending(): { text: string; ts: number } | null {
+  try {
+    const raw = sessionStorage.getItem(PENDING_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (!p?.ts || Date.now() - p.ts > PENDING_TTL_MS) {
+      sessionStorage.removeItem(PENDING_KEY);
+      return null;
+    }
+    return p;
+  } catch {
+    return null;
+  }
+}
+
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -52,6 +73,58 @@ export function AureliusChat() {
       .catch(() => {}); // history is a nicety — a failed load never blocks chat
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // Resume a reply that was in flight when Cole navigated away: show his
+  // message + the thinking state, and poll history until the backend's
+  // persisted answer appears (any aurelius turn newer than the send).
+  useEffect(() => {
+    const pending = readPending();
+    if (!pending) return;
+    setLoading(true);
+    let stopped = false;
+
+    const poll = async () => {
+      if (stopped) return;
+      if (Date.now() - pending.ts > PENDING_TTL_MS) {
+        sessionStorage.removeItem(PENDING_KEY);
+        setLoading(false);
+        setError("That reply is taking unusually long — it may still land in history; re-ask if it doesn't.");
+        return;
+      }
+      try {
+        const r = await fetch("/api/chat/history");
+        const data = r.ok ? await r.json() : null;
+        const msgs: any[] = data?.messages ?? [];
+        const answered = msgs.some((m) => m.role !== "user" && new Date(m.at).getTime() > pending.ts);
+        if (answered) {
+          sessionStorage.removeItem(PENDING_KEY);
+          if (!stopped) {
+            setMessages(msgs.map((m) => ({ role: m.role === "user" ? "user" : "aurelius", content: String(m.content ?? "") })));
+            setLoading(false);
+          }
+          return;
+        }
+        // Not yet — make sure the pending question is at least visible.
+        if (!stopped) {
+          setMessages((prev) =>
+            prev.length && prev[prev.length - 1].role === "user" && prev[prev.length - 1].content === pending.text
+              ? prev
+              : [
+                  ...msgs.map((m) => ({ role: m.role === "user" ? ("user" as const) : ("aurelius" as const), content: String(m.content ?? "") })),
+                  { role: "user" as const, content: pending.text },
+                ]
+          );
+        }
+      } catch {
+        /* transient — next tick retries */
+      }
+      if (!stopped) setTimeout(poll, 4000);
+    };
+    poll();
+    return () => {
+      stopped = true;
     };
   }, []);
 
@@ -106,6 +179,11 @@ export function AureliusChat() {
     if (fileRef.current) fileRef.current.value = "";
     setLoading(true);
     setError(null);
+    // Mark the send so a page change doesn't orphan the reply — the backend
+    // persists it either way; this lets the screen pick it back up on return.
+    try {
+      sessionStorage.setItem(PENDING_KEY, JSON.stringify({ text: userMessage.content, ts: Date.now() }));
+    } catch { /* private mode etc. — nicety only */ }
 
     try {
       const res = await fetch("/api/aurelius", {
@@ -121,9 +199,11 @@ export function AureliusChat() {
 
       const data = await res.json();
       setMessages((prev) => [...prev, { role: "aurelius", content: data.reply ?? "[No reply received]" }]);
+      try { sessionStorage.removeItem(PENDING_KEY); } catch { /* nicety */ }
     } catch (err: any) {
       console.error(err);
       setError(err?.message ?? "Aurelius encountered an issue reaching the backend.");
+      try { sessionStorage.removeItem(PENDING_KEY); } catch { /* nicety */ }
     } finally {
       setLoading(false);
     }
