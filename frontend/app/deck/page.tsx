@@ -196,8 +196,11 @@ export default function DeckPage() {
 
   const h = deck?.hero;
 
+  // min-h-full (not h-full): with a fixed height, justify-center CLIPS the
+  // top unreachably once content outgrows the frame — min-h lets the page
+  // grow and scroll while still centering when short.
   return (
-    <main className="h-full flex flex-col items-center justify-center text-aurelius-text -mt-6 aurelius-stagger">
+    <main className="min-h-full flex flex-col items-center justify-center text-aurelius-text aurelius-stagger py-4">
       {/* The greeting */}
       <h1 className="aurelius-heading text-5xl md:text-6xl text-center">
         {greeting()}, Operator

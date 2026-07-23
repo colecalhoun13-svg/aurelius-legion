@@ -1266,6 +1266,14 @@ import { startTelegramBridge, sendToCole } from "./telegram/bot.ts";
   await warmupDb();
   const { reapStaleActing } = await import("./autonomy/executor.ts");
   await reapStaleActing();
+  // Seeds run AFTER warmup (they used to race it and lose to a cold Neon —
+  // "[rituals] seed failed ... Can't reach database server" at every cold
+  // boot). Both are idempotent upserts, so post-warmup is the honest slot.
+  await ensureRituals().catch((err) => console.error("[rituals] seed failed:", err));
+  // The five living documents exist from first boot (founding editions).
+  await import("./wiki/livingDocs.ts")
+    .then((m) => m.ensureLivingDocuments())
+    .catch((err) => console.error("[livingDocs] seed failed:", err));
   // Backfill the compiled-lens index so heuristics compiled before semantic
   // retrieval existed become findable by situation. Idempotent (upsert); honest
   // no-op without an embedding engine. Fire-and-forget — never blocks boot.
@@ -1274,12 +1282,6 @@ import { startTelegramBridge, sendToCole } from "./telegram/bot.ts";
     .then((n) => n > 0 && console.log(`[patternIndex] backfilled ${n} compiled patterns`))
     .catch((err) => console.warn("[patternIndex] boot backfill skipped:", err?.message ?? err));
 })().catch((err) => console.error("[boot] db-dependent init failed:", err));
-
-ensureRituals().catch((err) => console.error("[rituals] seed failed:", err));
-// The five living documents exist from first boot (founding editions).
-import("./wiki/livingDocs.ts")
-  .then((m) => m.ensureLivingDocuments())
-  .catch((err) => console.error("[livingDocs] seed failed:", err));
 // Wire every acting workflow's commit function into the action registry, so
 // both the act-now and confirm-later paths can find a finalizer.
 import("./autonomy/registerActions.ts")
