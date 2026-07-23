@@ -68,11 +68,79 @@ export async function searchDriveForSheet(
   }
 }
 
+/** All Drive matches for a name — for find_sheet and for honest ambiguity
+ *  answers ("which of these did you mean?") instead of a null shrug. */
+export async function listDriveSheets(name: string, limit = 8): Promise<Array<{ sheetId: string; title: string }>> {
+  const drive = await getDriveClient();
+  if (!drive || !name?.trim()) return [];
+  const q = name.trim().replace(/'/g, "\\'");
+  try {
+    const res = await drive.files.list({
+      q: `mimeType='application/vnd.google-apps.spreadsheet' and trashed=false and name contains '${q}'`,
+      fields: "files(id, name)",
+      pageSize: limit,
+    });
+    return ((res.data.files ?? []) as Array<{ id?: string; name?: string }>)
+      .filter((f) => f.id && f.name)
+      .map((f) => ({ sheetId: f.id!, title: f.name! }));
+  } catch (err) {
+    console.warn("[googleSheets] drive list search failed:", (err as any)?.message ?? err);
+    return [];
+  }
+}
+
+function looksLikeSheetId(s: string): boolean {
+  return /^[A-Za-z0-9_-]{25,}$/.test(s.trim());
+}
+
+/** Name-or-id → concrete sheet. Ambiguity returns the candidates so the
+ *  model can ask Cole instead of guessing. (Flat shape — this tsconfig
+ *  doesn't narrow discriminated unions.) */
+type SheetRef = { ok: boolean; sheetId?: string; title?: string; error?: string; candidates: Array<{ sheetId: string; title: string }> };
+
+async function resolveSheetRef(ref: string): Promise<SheetRef> {
+  const r = (ref ?? "").trim();
+  if (!r) return { ok: false, error: "empty sheet reference", candidates: [] };
+  if (looksLikeSheetId(r)) return { ok: true, sheetId: r, title: r, candidates: [] };
+  const hit = await searchDriveForSheet(r);
+  if (hit) return { ok: true, ...hit, candidates: [] };
+  const candidates = await listDriveSheets(r);
+  return {
+    ok: false,
+    error:
+      candidates.length === 0
+        ? `no spreadsheet named anything like "${r}" in Cole's Drive (is Google authorized with Sheets access?)`
+        : `"${r}" is ambiguous — candidates: ${candidates.map((c) => c.title).join(" · ")}`,
+    candidates,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // ACTION DEFINITIONS (for the tool catalog injected into LLM prompt)
 // ═══════════════════════════════════════════════════════════════════
 
 const ACTIONS = [
+  {
+    name: "find_sheet",
+    description:
+      "Search Cole's Drive for ANY spreadsheet by (partial) name — not just athlete sheets. Use when Cole names a sheet ('go into my Devo/Prep Cycle sheet') to locate it before reading.",
+    dataSchema: '{ "name": string (partial name is fine) }',
+    example: '[TOOL: tool=google_sheets action=find_sheet data={"name":"Devo/Prep Cycle"}]',
+  },
+  {
+    name: "list_tabs",
+    description:
+      "List the tab names inside any spreadsheet, so exact tab names can be read next. Use after find_sheet, or directly when Cole names the sheet.",
+    dataSchema: '{ "sheet": string (spreadsheet name or id) }',
+    example: '[TOOL: tool=google_sheets action=list_tabs data={"sheet":"Devo/Prep Cycle 1/12/26"}]',
+  },
+  {
+    name: "read_tabs",
+    description:
+      "Read the contents of one or more tabs from ANY spreadsheet Cole names — his own programs, planning docs, anything (not just athlete sheets). Returns the cell data as text. Use list_tabs first if tab names are uncertain. Set ingest:true only when Cole says to remember/learn it.",
+    dataSchema: '{ "sheet": string (name or id), "tabs": string[] (exact tab names, up to 8), "ingest"?: boolean (store into the second brain) }',
+    example: '[TOOL: tool=google_sheets action=read_tabs data={"sheet":"Devo/Prep Cycle 1/12/26","tabs":["WEEK 2 11/24/25","WEEK 3 12/1/25"]}]',
+  },
   {
     name: "log_session",
     description: "Append a training session to an athlete's program tab. Use when Cole logs what an athlete did in a session. Reference the athlete by name only — sheet IDs are resolved automatically.",
@@ -952,16 +1020,141 @@ async function reviewRecent(data: Record<string, any>): Promise<ToolAdapterResul
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// GENERIC SHEET ACCESS — any spreadsheet Cole names, not just athletes
+// ═══════════════════════════════════════════════════════════════════
+
+async function findSheet(data: any): Promise<ToolAdapterResult> {
+  const name = (data?.name ?? "").toString().trim();
+  if (!name) return { ok: false, output: null, error: "find_sheet needs a name" };
+  const matches = await listDriveSheets(name);
+  if (matches.length === 0) {
+    return {
+      ok: false,
+      output: null,
+      error: `no spreadsheet named anything like "${name}" — check the name, or re-authorize Google at /api/calendar/auth if Sheets access was never granted`,
+    };
+  }
+  return {
+    ok: true,
+    output: {
+      matches: matches.map((m) => ({ title: m.title, sheetId: m.sheetId })),
+      summary: `${matches.length} match(es): ${matches.map((m) => m.title).join(" · ")}`,
+    },
+  };
+}
+
+async function listTabs(data: any): Promise<ToolAdapterResult> {
+  const resolved = await resolveSheetRef((data?.sheet ?? "").toString());
+  if (!resolved.ok) return { ok: false, output: { candidates: resolved.candidates }, error: resolved.error };
+  const sheets = await getSheetsClient();
+  if (!sheets) return { ok: false, output: null, error: "Sheets client unavailable — authorize Google at /api/calendar/auth" };
+  try {
+    const meta = await sheets.spreadsheets.get({
+      spreadsheetId: resolved.sheetId,
+      fields: "properties(title),sheets(properties(title,gridProperties(rowCount)))",
+    });
+    const tabs = (meta.data.sheets ?? []).map((s: any) => s?.properties?.title).filter(Boolean);
+    return {
+      ok: true,
+      output: {
+        sheet: meta.data.properties?.title ?? resolved.title,
+        tabs,
+        summary: `"${meta.data.properties?.title ?? resolved.title}" has ${tabs.length} tabs: ${tabs.join(" · ")}`,
+      },
+    };
+  } catch (err: any) {
+    return { ok: false, output: null, error: `list_tabs failed: ${err?.message ?? String(err)}` };
+  }
+}
+
+const MAX_TABS_PER_READ = 8;
+const MAX_CHARS_PER_TAB = 6000;
+
+async function readTabs(data: any): Promise<ToolAdapterResult> {
+  const resolved = await resolveSheetRef((data?.sheet ?? "").toString());
+  if (!resolved.ok) return { ok: false, output: { candidates: resolved.candidates }, error: resolved.error };
+  const rawTabs: string[] = Array.isArray(data?.tabs) ? data.tabs.map((t: any) => String(t).trim()).filter(Boolean) : [];
+  if (rawTabs.length === 0) return { ok: false, output: null, error: "read_tabs needs tabs: [\"exact tab name\", ...] — use list_tabs to see them" };
+  const tabs = rawTabs.slice(0, MAX_TABS_PER_READ);
+
+  const sheets = await getSheetsClient();
+  if (!sheets) return { ok: false, output: null, error: "Sheets client unavailable — authorize Google at /api/calendar/auth" };
+  try {
+    const res = await sheets.spreadsheets.values.batchGet({
+      spreadsheetId: resolved.sheetId,
+      ranges: tabs.map((t) => `'${t.replace(/'/g, "''")}'`),
+      valueRenderOption: "FORMATTED_VALUE",
+    });
+    const { defuseDirectives } = await import("../../llm/directiveParser.ts");
+    const read = (res.data.valueRanges ?? []).map((vr: any, i: number) => {
+      const rows: any[][] = vr?.values ?? [];
+      const text = rows
+        .map((r) => r.map((c) => String(c ?? "").trim()).join(" | "))
+        .filter((line) => line.replace(/[|\s]/g, "").length > 0)
+        .join("\n");
+      return { tab: tabs[i], rows: rows.length, text: defuseDirectives(text.slice(0, MAX_CHARS_PER_TAB)) };
+    });
+
+    // Persist only on Cole's say-so — reading is a glance, ingesting is memory.
+    let ingested = 0;
+    if (data?.ingest === true) {
+      const { ingestDocument } = await import("../../corpus/ingest.ts");
+      const crypto = await import("node:crypto");
+      for (const r of read) {
+        if (r.text.length < 100) continue;
+        const hash = crypto.createHash("sha256").update(r.text).digest("hex").slice(0, 12);
+        await ingestDocument({
+          title: `${resolved.title} · ${r.tab}`,
+          content: r.text,
+          sourceType: "upload",
+          domain: "training",
+          triggeredBy: "cole",
+          dedupKey: `sheet:${resolved.sheetId}:${r.tab}#${hash}`,
+        });
+        ingested++;
+      }
+    }
+
+    const truncated = rawTabs.length > tabs.length ? ` (capped at ${MAX_TABS_PER_READ} tabs — ask again for the rest)` : "";
+    return {
+      ok: true,
+      output: {
+        sheet: resolved.title,
+        tabsRead: read.map((r) => ({ tab: r.tab, rows: r.rows })),
+        content: read.map((r) => `═══ ${r.tab} ═══\n${r.text || "(empty tab)"}`).join("\n\n"),
+        ingested: data?.ingest === true ? ingested : undefined,
+        summary: `Read ${read.length} tab(s) from "${resolved.title}"${ingested ? `, ingested ${ingested} into the corpus` : ""}${truncated}`,
+      },
+    };
+  } catch (err: any) {
+    const msg = err?.message ?? String(err);
+    return {
+      ok: false,
+      output: null,
+      error: /Unable to parse range/i.test(msg)
+        ? `a tab name didn't match exactly — run list_tabs on "${resolved.title}" and use the exact names`
+        : `read_tabs failed: ${msg}`,
+    };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // ADAPTER EXPORT
 // ═══════════════════════════════════════════════════════════════════
 
 export const googleSheetsAdapter: ToolAdapter = {
   name: "google_sheets",
-  description: "Read and write to athlete training sheets in Google Sheets. Each athlete has their own sheet with Dashboard, Day program, Maxes, and Aurelius Feedback tabs. Always reference athletes by name (e.g. \"Mike\") — sheet IDs are resolved automatically from memory. Supports logging, reading, athlete lookup, block-level analysis, feedback writing, PR tracking, and batch session review.",
+  description: "Google Sheets — TWO modes. (1) ANY spreadsheet Cole names: find_sheet / list_tabs / read_tabs work on every sheet in his Drive (personal programs, planning docs, anything) — when Cole says 'go into <some sheet>', use find_sheet → list_tabs → read_tabs; never claim a sheet doesn't fit a structure without searching first. (2) Athlete training sheets (Dashboard/Day/Maxes/Feedback structure): reference athletes by name (e.g. \"Mike\") for logging, session reads, block analysis, feedback writing, PR tracking, batch review.",
   actions: ACTIONS,
 
   async run(action, data, _context) {
     switch (action) {
+      case "find_sheet":
+        return findSheet(data);
+      case "list_tabs":
+        return listTabs(data);
+      case "read_tabs":
+        return readTabs(data);
       case "log_session":
         return logSession(data);
       case "read_sessions":
