@@ -38,7 +38,10 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex flex-col p-3 pt-4 space-y-1">
+      {/* Scrollable: 17 destinations outgrow short windows — without this,
+          everything below the fold (Library, Engines, Traces, Settings)
+          silently doesn't exist. */}
+      <nav className="flex flex-col p-3 pt-4 space-y-1 flex-1 min-h-0 overflow-y-auto">
         {navItems.map((item) => {
           const active = pathname === item.path;
 

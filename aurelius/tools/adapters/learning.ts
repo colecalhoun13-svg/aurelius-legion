@@ -11,6 +11,11 @@ const KNOWN_DOMAINS = new Set(CURRICULUM.map((t) => t.domain));
 
 export const learningAdapter: ToolAdapter = {
   name: "learning",
+  // A real study session (research → ingest → wiki refresh) legitimately runs
+  // for minutes — the engine's default 2-min timeout killed mid-flight runs.
+  // And never auto-retry: a re-fired study double-spends research + ingestion.
+  maxRetries: 0,
+  timeoutMs: 10 * 60_000,
   description:
     "Aurelius's self-education across every field's canon (strategy → Sun Tzu, Musashi; wealth → Buffett, Taleb; identity → the Stoics; etc.). Study the next unit now, or report how far it has read. Runs weekly on its own; this is the on-demand handle.",
   actions: [
@@ -59,16 +64,31 @@ export const learningAdapter: ToolAdapter = {
         if (domain && !KNOWN_DOMAINS.has(domain)) {
           return { ok: false, output: null, error: `unknown field "${domain}". Known: ${[...KNOWN_DOMAINS].join(", ")}` };
         }
-        const res = await runCurriculumIngest({ onlyDomain: domain, maxUnits });
-        if (!res.ok) return { ok: false, output: null, error: res.error ?? "curriculum run failed" };
+        // BACKGROUND, always. A real study session (research → ingest → wiki)
+        // runs for minutes; holding a chat request open that long 504s at the
+        // HTTP gateway before the work finishes (bit Cole 2026-07-22). Kick it
+        // off, answer immediately, and let each ingested unit surface on the
+        // Bridge as it lands (ingestDocument already files those signals).
+        const scope = domain ? `the ${domain} canon` : "every field's next unit";
+        void runCurriculumIngest({ onlyDomain: domain, maxUnits })
+          .then(async (res) => {
+            if (!res.ok) {
+              console.error("[learning] background study failed:", res.error);
+              return;
+            }
+            if (res.studied.length === 0 && res.skipped.length > 0) {
+              console.warn("[learning] background study skipped everything:", res.skipped[0]?.reason);
+            }
+            console.log(
+              `[learning] background study done — ${res.studied.length} unit(s)${res.studied.length ? `: ${res.studied.map((s) => s.title).join("; ")}` : ""}`
+            );
+          })
+          .catch((err) => console.error("[learning] background study crashed:", err?.message ?? err));
         return {
           ok: true,
           output: {
-            summary: res.studied.length
-              ? `Studied ${res.studied.length}: ${res.studied.map((s) => s.title).join("; ")}`
-              : `Nothing studied${res.skipped.length ? ` — ${res.skipped[0].reason}` : ""}.`,
-            studied: res.studied,
-            skipped: res.skipped,
+            summary: `Study session started on ${scope} (up to ${maxUnits ?? 8} units) — running in the background. Each unit lands on the Bridge as it's ingested; check reading_progress in a few minutes.`,
+            background: true,
           },
         };
       }

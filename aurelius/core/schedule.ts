@@ -194,8 +194,10 @@ async function readOverrides(): Promise<Record<string, string>> {
   const { prisma, withDb } = await import("./db/prisma.ts");
   // withDb: this runs at boot, possibly racing a cold Neon — retry instead of
   // throwing, or a paused/re-timed ritual silently reverts to its default.
-  const row = await withDb(() =>
-    prisma.knowledgeEntry.findFirst({ where: { scope: OVERRIDES_SCOPE, key: OVERRIDES_KEY, active: true } })
+  // 5 attempts (same depth as warmupDb): 3 wasn't enough for a cold pooler.
+  const row = await withDb(
+    () => prisma.knowledgeEntry.findFirst({ where: { scope: OVERRIDES_SCOPE, key: OVERRIDES_KEY, active: true } }),
+    5
   );
   const v = row?.value as any;
   return v && typeof v === "object" && !Array.isArray(v) ? v : {};
@@ -240,8 +242,9 @@ async function writeOverride(name: string, cron: string): Promise<void> {
 
 async function readDisabled(): Promise<string[]> {
   const { prisma, withDb } = await import("./db/prisma.ts");
-  const row = await withDb(() =>
-    prisma.knowledgeEntry.findFirst({ where: { scope: OVERRIDES_SCOPE, key: DISABLED_KEY, active: true } })
+  const row = await withDb(
+    () => prisma.knowledgeEntry.findFirst({ where: { scope: OVERRIDES_SCOPE, key: DISABLED_KEY, active: true } }),
+    5
   );
   const v = row?.value as any;
   return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
