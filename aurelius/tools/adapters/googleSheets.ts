@@ -160,6 +160,20 @@ const ACTIONS = [
     example: '[TOOL: tool=google_sheets action=read_tabs data={"sheet":"Devo/Prep Cycle 1/12/26","tabs":["WEEK 2 11/24/25","WEEK 3 12/1/25"]}]',
   },
   {
+    name: "append_rows",
+    description:
+      "Append rows to the bottom of a tab in ANY spreadsheet Cole names — only when Cole explicitly asks for the change. Rows are arrays of cell values.",
+    dataSchema: '{ "sheet": string (name or id), "tab": string (exact tab name), "rows": string[][] (each inner array = one row of cells) }',
+    example: '[TOOL: tool=google_sheets action=append_rows data={"sheet":"Devo/Prep Cycle 1/12/26","tab":"WEEK 5 12/15/25","rows":[["Back Squat","4x3","315","RPE 8"]]}]',
+  },
+  {
+    name: "update_cells",
+    description:
+      "Overwrite a specific cell range in ANY spreadsheet Cole names — only when Cole explicitly asks for the change, and only the range he means. Sheets version history makes edits recoverable.",
+    dataSchema: '{ "sheet": string (name or id), "tab": string (exact tab name), "range": string (A1 notation within the tab, e.g. "B3:D10"), "values": string[][] (rows of cells matching the range shape) }',
+    example: '[TOOL: tool=google_sheets action=update_cells data={"sheet":"Devo/Prep Cycle 1/12/26","tab":"WEEK 5 12/15/25","range":"C4:C7","values":[["330"],["330"],["345"],["345"]]}]',
+  },
+  {
     name: "log_session",
     description: "Append a training session to an athlete's program tab. Use when Cole logs what an athlete did in a session. Reference the athlete by name only — sheet IDs are resolved automatically.",
     dataSchema: '{ client: string (athlete name as Cole says it), dayTab: string (e.g. "Day 1"), date: string (YYYY-MM-DD), exercises: [{ name: string, sets: string, reps: string, load: string, tempo?: string, rpe?: number, notes?: string }] }',
@@ -1157,6 +1171,104 @@ async function readTabs(data: any): Promise<ToolAdapterResult> {
   }
 }
 
+// Generic writes — Cole-directed edits to HIS sheets (inward: his data, his
+// explicit ask, recoverable via Sheets version history). Caps keep a garbled
+// model call from bulk-writing; the tab must already exist (no silent creates).
+const MAX_WRITE_ROWS = 200;
+const MAX_WRITE_CELLS = 2000;
+
+function normalizeRows(raw: any): string[][] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const rows = raw.map((r: any) => (Array.isArray(r) ? r.map((c: any) => String(c ?? "")) : null));
+  if (rows.some((r) => r === null)) return null;
+  const cells = rows.reduce((n, r) => n + (r as string[]).length, 0);
+  if (rows.length > MAX_WRITE_ROWS || cells > MAX_WRITE_CELLS) return null;
+  return rows as string[][];
+}
+
+async function appendRows(data: any): Promise<ToolAdapterResult> {
+  const resolved = await resolveSheetRef((data?.sheet ?? "").toString());
+  if (!resolved.ok) return { ok: false, output: { candidates: resolved.candidates }, error: resolved.error };
+  const tab = (data?.tab ?? "").toString().trim();
+  if (!tab) return { ok: false, output: null, error: "append_rows needs the exact tab name (use list_tabs)" };
+  const rows = normalizeRows(data?.rows);
+  if (!rows) return { ok: false, output: null, error: `append_rows needs rows: string[][] (max ${MAX_WRITE_ROWS} rows / ${MAX_WRITE_CELLS} cells)` };
+
+  const sheets = await getSheetsClient();
+  if (!sheets) return { ok: false, output: null, error: "Sheets client unavailable — authorize Google at /api/calendar/auth" };
+  try {
+    const res = await sheets.spreadsheets.values.append({
+      spreadsheetId: resolved.sheetId,
+      range: `'${tab.replace(/'/g, "''")}'`,
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: rows },
+    });
+    return {
+      ok: true,
+      output: {
+        sheet: resolved.title,
+        tab,
+        appended: rows.length,
+        updatedRange: res.data.updates?.updatedRange ?? null,
+        summary: `Appended ${rows.length} row(s) to "${resolved.title}" · ${tab}`,
+      },
+    };
+  } catch (err: any) {
+    const msg = err?.message ?? String(err);
+    return {
+      ok: false,
+      output: null,
+      error: /Unable to parse range/i.test(msg)
+        ? `tab "${tab}" doesn't exist on "${resolved.title}" — run list_tabs and use the exact name`
+        : `append_rows failed: ${msg}`,
+    };
+  }
+}
+
+async function updateCells(data: any): Promise<ToolAdapterResult> {
+  const resolved = await resolveSheetRef((data?.sheet ?? "").toString());
+  if (!resolved.ok) return { ok: false, output: { candidates: resolved.candidates }, error: resolved.error };
+  const tab = (data?.tab ?? "").toString().trim();
+  const range = (data?.range ?? "").toString().trim();
+  if (!tab || !range) return { ok: false, output: null, error: "update_cells needs tab + range (A1 notation, e.g. C4:C7)" };
+  if (!/^[A-Za-z]{1,3}[0-9]{1,7}(:[A-Za-z]{1,3}[0-9]{1,7})?$/.test(range)) {
+    return { ok: false, output: null, error: `"${range}" isn't A1 notation (like B3 or C4:D10)` };
+  }
+  const values = normalizeRows(data?.values);
+  if (!values) return { ok: false, output: null, error: `update_cells needs values: string[][] (max ${MAX_WRITE_ROWS} rows / ${MAX_WRITE_CELLS} cells)` };
+
+  const sheets = await getSheetsClient();
+  if (!sheets) return { ok: false, output: null, error: "Sheets client unavailable — authorize Google at /api/calendar/auth" };
+  try {
+    const res = await sheets.spreadsheets.values.update({
+      spreadsheetId: resolved.sheetId,
+      range: `'${tab.replace(/'/g, "''")}'!${range}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values },
+    });
+    return {
+      ok: true,
+      output: {
+        sheet: resolved.title,
+        tab,
+        range,
+        updatedCells: res.data.updatedCells ?? 0,
+        summary: `Updated ${res.data.updatedCells ?? 0} cell(s) in "${resolved.title}" · ${tab}!${range} (recoverable via File → Version history)`,
+      },
+    };
+  } catch (err: any) {
+    const msg = err?.message ?? String(err);
+    return {
+      ok: false,
+      output: null,
+      error: /Unable to parse range/i.test(msg)
+        ? `tab "${tab}" or range "${range}" didn't resolve — run list_tabs and double-check the A1 range`
+        : `update_cells failed: ${msg}`,
+    };
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // ADAPTER EXPORT
 // ═══════════════════════════════════════════════════════════════════
@@ -1174,6 +1286,10 @@ export const googleSheetsAdapter: ToolAdapter = {
         return listTabs(data);
       case "read_tabs":
         return readTabs(data);
+      case "append_rows":
+        return appendRows(data);
+      case "update_cells":
+        return updateCells(data);
       case "log_session":
         return logSession(data);
       case "read_sessions":
