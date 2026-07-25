@@ -8,7 +8,7 @@
 
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type Attachment = { file: File; mimeType: string; kind: "image" | "video"; dataUrl: string };
 type Message = {
@@ -76,17 +76,17 @@ export function AureliusChat() {
     };
   }, []);
 
-  // Resume a reply that was in flight when Cole navigated away: show his
-  // message + the thinking state, and poll history until the backend's
-  // persisted answer appears (any aurelius turn newer than the send).
-  useEffect(() => {
-    const pending = readPending();
-    if (!pending) return;
-    setLoading(true);
-    let stopped = false;
+  // Resume a reply the screen lost track of — after navigating away mid-turn
+  // OR after a gateway timeout (504) hung up on a long think. Either way the
+  // backend keeps working and persists the answer; poll history until an
+  // aurelius turn newer than the send appears.
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
 
+  const startPendingPoll = useCallback((pending: { text: string; ts: number }) => {
+    setLoading(true);
     const poll = async () => {
-      if (stopped) return;
+      if (!aliveRef.current) return;
       if (Date.now() - pending.ts > PENDING_TTL_MS) {
         sessionStorage.removeItem(PENDING_KEY);
         setLoading(false);
@@ -100,14 +100,15 @@ export function AureliusChat() {
         const answered = msgs.some((m) => m.role !== "user" && new Date(m.at).getTime() > pending.ts);
         if (answered) {
           sessionStorage.removeItem(PENDING_KEY);
-          if (!stopped) {
+          if (aliveRef.current) {
             setMessages(msgs.map((m) => ({ role: m.role === "user" ? "user" : "aurelius", content: String(m.content ?? "") })));
             setLoading(false);
+            setError(null);
           }
           return;
         }
         // Not yet — make sure the pending question is at least visible.
-        if (!stopped) {
+        if (aliveRef.current) {
           setMessages((prev) =>
             prev.length && prev[prev.length - 1].role === "user" && prev[prev.length - 1].content === pending.text
               ? prev
@@ -120,13 +121,15 @@ export function AureliusChat() {
       } catch {
         /* transient — next tick retries */
       }
-      if (!stopped) setTimeout(poll, 4000);
+      if (aliveRef.current) setTimeout(poll, 4000);
     };
     poll();
-    return () => {
-      stopped = true;
-    };
   }, []);
+
+  useEffect(() => {
+    const pending = readPending();
+    if (pending) startPendingPoll(pending);
+  }, [startPendingPoll]);
 
   // The backend accepts ≤25MB of JSON, and base64 inflates bytes ~33%. Cap the
   // COMBINED raw size of attached files at ~17MB so the encoded payload stays
@@ -200,12 +203,23 @@ export function AureliusChat() {
       const data = await res.json();
       setMessages((prev) => [...prev, { role: "aurelius", content: data.reply ?? "[No reply received]" }]);
       try { sessionStorage.removeItem(PENDING_KEY); } catch { /* nicety */ }
+      setLoading(false);
     } catch (err: any) {
       console.error(err);
-      setError(err?.message ?? "Aurelius encountered an issue reaching the backend.");
-      try { sessionStorage.removeItem(PENDING_KEY); } catch { /* nicety */ }
-    } finally {
-      setLoading(false);
+      const msg = String(err?.message ?? "");
+      // Gateway-class failures (504/502, dropped connection): the proxy hung
+      // up, not the kitchen — the backend keeps working and persists the
+      // reply. Switch to watching history instead of declaring failure.
+      const gatewayish = /\b(502|504|524)\b|gateway|timed?\s?out|failed to fetch|networkerror|load failed/i.test(msg);
+      const pending = readPending();
+      if (gatewayish && pending) {
+        setError("The connection timed out, but Aurelius is still working — the answer will drop in here when it's done.");
+        startPendingPoll(pending); // keeps loading on until the reply lands
+      } else {
+        setError(msg || "Aurelius encountered an issue reaching the backend.");
+        try { sessionStorage.removeItem(PENDING_KEY); } catch { /* nicety */ }
+        setLoading(false);
+      }
     }
   };
 
