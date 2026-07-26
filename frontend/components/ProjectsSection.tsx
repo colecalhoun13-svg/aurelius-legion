@@ -23,7 +23,7 @@ function GoldBar({ pct }: { pct: number }) {
   );
 }
 
-export default function ProjectsPage() {
+export default function ProjectsSection() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [name, setName] = useState("");
   const [target, setTarget] = useState("");
@@ -52,9 +52,9 @@ export default function ProjectsPage() {
   };
 
   return (
-    <main className="text-aurelius-text max-w-5xl mx-auto space-y-6 aurelius-stagger">
+    <section className="space-y-6">
       <header className="flex items-baseline justify-between aurelius-rule">
-        <h1 className="aurelius-heading text-4xl">Projects</h1>
+        <h2 className="aurelius-heading text-2xl">Projects</h2>
         <span className="text-sm text-neutral-500">{projects?.length ?? "…"} active</span>
       </header>
 
@@ -93,6 +93,6 @@ export default function ProjectsPage() {
           <button onClick={add} className="w-full py-2 bg-aurelius-gold text-black text-sm font-semibold rounded-lg">Add project</button>
         </div>
       </div>
-    </main>
+    </section>
   );
 }

@@ -1,6 +1,8 @@
 // ================================
-// AURELIUS OS 3.4 — OPERATOR REGISTRY
-// Defines all operators available in the OS.
+// AURELIUS OS — NAVIGATION REGISTRY
+// The council's five (+ two until the One Home lands): everything Cole
+// does daily is one tap; everything else lives under More. Seventeen flat
+// destinations shrank to this on the 2026-07 convergent ruling.
 // ================================
 
 export type OperatorDefinition = {
@@ -10,89 +12,41 @@ export type OperatorDefinition = {
 };
 
 export const operatorRegistry: Record<string, OperatorDefinition> = {
-  dashboard: {
-    name: "Dashboard",
-    path: "/",
-    description: "Primary operator overview",
-  },
-  deck: {
-    name: "Command Deck",
+  home: {
+    name: "Home",
     path: "/deck",
-    description: "The three-lane view — your day, the bridge, Aurelius's work",
+    description: "The day: greeting, biggest risk, what needs you",
   },
   today: {
+    // Folds into Home when the One Home ships (UX-PR5).
     name: "Today",
     path: "/today",
-    description: "Cole's lane — today's plan, tasks, habits, capture",
+    description: "Plan, tasks, habits, capture",
   },
-  inbox: {
-    name: "Inbox",
-    path: "/inbox",
-    description: "Triage — everything captured or proposed",
+  chat: {
+    // Becomes Home's spine when the One Box ships (UX-PR5/6).
+    name: "Chat",
+    path: "/",
+    description: "Talk to Aurelius",
+  },
+  decisions: {
+    name: "Decisions",
+    path: "/decisions",
+    description: "Everything awaiting your ruling — one queue, one badge",
   },
   calendar: {
     name: "Calendar",
     path: "/calendar",
     description: "The week as a resource",
   },
-  projects: {
-    name: "Projects",
-    path: "/projects",
-    description: "Progress, runway, and what each project needs",
+  brain: {
+    name: "Brain",
+    path: "/brain",
+    description: "The shelves, ask-anything, and the syntheses",
   },
-  goals: {
-    name: "Goals",
-    path: "/goals",
-    description: "Big and small, by horizon",
-  },
-  bridge: {
-    name: "Bridge",
-    path: "/bridge",
-    description: "Signals from Aurelius's background work",
-  },
-  autonomy: {
-    name: "Autonomy",
-    path: "/autonomy",
-    description: "The keyholes — grant, revoke, undo; the trust you've earned it",
-  },
-  aurelius: {
-    name: "Aurelius",
-    path: "/aurelius",
-    description: "What the system is doing in the background",
-  },
-  tools: {
-    name: "Tools",
-    path: "/tools",
-    description: "Aurelius's hands — live and planned integrations",
-  },
-  corpus: {
-    name: "Second Brain",
-    path: "/corpus",
-    description: "The library — ask it, feed it, it stays aware",
-  },
-  wiki: {
-    name: "Wiki",
-    path: "/wiki",
-    description: "Aurelius's own synthesis — one living page per domain",
-  },
-  library: {
-    name: "Library",
-    path: "/library",
-    description: "What each operator has studied — shelves filling week over week",
-  },
-  engines: {
-    name: "Engines",
-    path: "/engines",
-    description: "Model engines, routing, and intelligence modules",
-  },
-  traces: {
-    name: "Traces",
-    path: "/traces",
-    description: "One turn, end to end — every step of a decision in one thread",
-  },
-  settings: {
-    name: "Settings",
-    path: "/settings",
-    description: "System configuration and operator preferences",
+  more: {
+    name: "More",
+    path: "/more",
+    description: "Goals, Aurelius, autonomy, and the engine room",
   },
 };

@@ -3,6 +3,7 @@
 // GOALS — big and small, grouped by horizon, with progress logging.
 
 import { useCallback, useEffect, useState } from "react";
+import ProjectsSection from "../../../components/ProjectsSection";
 
 type Goal = { id: string; name: string; domain: string; horizon: string; progressPct: number; measure: any };
 
@@ -91,6 +92,7 @@ export default function GoalsPage() {
             className="px-4 py-2 bg-aurelius-gold text-black text-sm font-semibold rounded-lg">Add</button>
         </div>
       </section>
+      <ProjectsSection />
     </main>
   );
 }

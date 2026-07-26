@@ -27,7 +27,7 @@ export default function TopBar() {
     if (!q) return;
     setQuery("");
     inputRef.current?.blur();
-    router.push(`/corpus?ask=${encodeURIComponent(q)}`);
+    router.push(`/brain?ask=${encodeURIComponent(q)}`);
   };
 
   return (
@@ -50,9 +50,9 @@ export default function TopBar() {
 
       {/* The bell is live: what awaits Cole's ruling, counted. */}
       <button
-        onClick={() => router.push("/bridge")}
+        onClick={() => router.push("/decisions")}
         className="relative text-aurelius-gold text-lg leading-none hover:drop-shadow-[0_0_6px_rgba(212,175,55,0.6)] min-w-[44px] min-h-[44px] -my-2"
-        title="What needs you — the Bridge"
+        title="What needs you — Decisions"
       >
         🔔
         {needsYou > 0 && (
