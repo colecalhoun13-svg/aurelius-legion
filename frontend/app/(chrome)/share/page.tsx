@@ -78,7 +78,7 @@ function ShareInner() {
         <Link href="/deck" className="text-aurelius-gold border border-aurelius-gold/40 rounded-lg px-4 py-2 hover:bg-aurelius-gold/15">
           Home
         </Link>
-        <Link href="/corpus" className="text-aurelius-gold border border-aurelius-gold/40 rounded-lg px-4 py-2 hover:bg-aurelius-gold/15">
+        <Link href="/brain" className="text-aurelius-gold border border-aurelius-gold/40 rounded-lg px-4 py-2 hover:bg-aurelius-gold/15">
           The Brain
         </Link>
       </div>

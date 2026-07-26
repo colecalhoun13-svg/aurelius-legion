@@ -12,9 +12,9 @@ import { useNeedsYou } from "../../lib/useNeedsYou";
 const TABS: Array<{ label: string; path: string; glyph: string; also?: string[] }> = [
   { label: "Home", path: "/deck", glyph: "❂" },
   { label: "Today", path: "/today", glyph: "☀" },
-  { label: "Bridge", path: "/bridge", glyph: "⇄", also: ["/inbox"] },
-  { label: "Chat", path: "/", glyph: "♛" },
-  { label: "Brain", path: "/corpus", glyph: "❈", also: ["/library", "/wiki"] },
+  { label: "Decisions", path: "/decisions", glyph: "⇄" },
+  { label: "Brain", path: "/brain", glyph: "❈" },
+  { label: "More", path: "/more", glyph: "⋯", also: ["/goals", "/aurelius", "/autonomy", "/tools", "/engines", "/traces", "/settings", "/calendar"] },
 ];
 
 export default function MobileTabBar() {
@@ -37,7 +37,7 @@ export default function MobileTabBar() {
           >
             <span className={`relative text-lg leading-none ${active ? "drop-shadow-[0_0_8px_rgba(212,175,55,0.5)]" : ""}`}>
               {t.glyph}
-              {t.path === "/bridge" && needsYou > 0 && (
+              {t.path === "/decisions" && needsYou > 0 && (
                 <span className="absolute -top-1.5 -right-3 min-w-[16px] h-[16px] px-1 rounded-full bg-aurelius-gold text-black text-[10px] font-bold leading-[16px] text-center">
                   {needsYou > 9 ? "9+" : needsYou}
                 </span>

@@ -14,8 +14,8 @@ export default function manifest(): MetadataRoute.Manifest {
     // Long-press the icon → straight to the daily verbs.
     shortcuts: [
       { name: "Capture a thought", url: "/deck?capture=1" },
-      { name: "The Bridge", url: "/bridge" },
-      { name: "Ask the brain", url: "/corpus" },
+      { name: "Decisions", url: "/decisions" },
+      { name: "Ask the brain", url: "/brain?tab=ask" },
     ],
     // Share an article/link from ANY app → it lands in the second brain.
     // (share_target is a valid manifest member; Next's Manifest type lags it.)

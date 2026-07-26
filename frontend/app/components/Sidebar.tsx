@@ -6,23 +6,13 @@ import AureliusCrest from "../../components/identity/AureliusCrest";
 import { operatorRegistry, OperatorDefinition } from "../../lib/operators/operatorRegistry";
 
 const NAV_GLYPHS: Record<string, string> = {
-  Dashboard: "◈",
-  "Command Deck": "❂",
+  Home: "❂",
   Today: "☀",
-  Inbox: "▤",
+  Chat: "❯",
+  Decisions: "⇄",
   Calendar: "◷",
-  Tools: "⚒",
-  Projects: "❖",
-  Goals: "◎",
-  Bridge: "⇄",
-  Autonomy: "🜍",
-  Aurelius: "♛",
-  "Second Brain": "❈",
-  Wiki: "✍",
-  Library: "📖",
-  Engines: "⚙",
-  Traces: "🜸",
-  Settings: "✦",
+  Brain: "❈",
+  More: "⋯",
 };
 
 export default function Sidebar() {
