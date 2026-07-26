@@ -63,16 +63,33 @@ function layerStyle(x: number, y: number, inner: number, outer: number, delayMs:
 
 type Phase = "assemble" | "dissolve" | "done";
 
+const BOOTED_KEY = "aurelius_booted";
+
 export default function AureliusStartup({ children }: { children: React.ReactNode }) {
-  const [phase, setPhase] = useState<Phase>("assemble");
+  // The full ceremony plays on the COLD open only. Within a session (page
+  // navigations, refreshes) the app opens straight to the day — daily use is
+  // about the day, not a title sequence. Reduced-motion users skip entirely:
+  // the CSS already zeroed the animations, but the JS phase timers used to
+  // gate rendering behind ~3s of black regardless.
+  const [phase, setPhase] = useState<Phase>(() => {
+    if (typeof window === "undefined") return "assemble";
+    try {
+      if (sessionStorage.getItem(BOOTED_KEY)) return "done";
+      if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return "done";
+    } catch { /* private mode — play it */ }
+    return "assemble";
+  });
 
   useEffect(() => {
+    if (phase === "done") return;
+    try { sessionStorage.setItem(BOOTED_KEY, "1"); } catch { /* nicety */ }
     const t1 = setTimeout(() => setPhase("dissolve"), ASSEMBLE_MS + HOLD_MS);
     const t2 = setTimeout(() => setPhase("done"), ASSEMBLE_MS + HOLD_MS + FADE_MS);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const overlay = phase !== "done" && (

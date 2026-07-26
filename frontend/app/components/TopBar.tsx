@@ -46,11 +46,14 @@ export default function TopBar() {
         </span>
       </div>
 
-      <button className="text-aurelius-gold text-lg leading-none hover:drop-shadow-[0_0_6px_rgba(212,175,55,0.6)]" title="Notifications">
+      {/* The bell is real: it goes to the Bridge (live count arrives in the
+          signals PR). The gear returns when Settings does something. */}
+      <button
+        onClick={() => router.push("/bridge")}
+        className="text-aurelius-gold text-lg leading-none hover:drop-shadow-[0_0_6px_rgba(212,175,55,0.6)]"
+        title="What needs you — the Bridge"
+      >
         🔔
-      </button>
-      <button className="text-aurelius-gold text-lg leading-none hover:drop-shadow-[0_0_6px_rgba(212,175,55,0.6)]" title="Settings">
-        ⚙
       </button>
     </header>
   );
