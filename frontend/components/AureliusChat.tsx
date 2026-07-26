@@ -197,7 +197,7 @@ export function AureliusChat() {
 
       if (!res.ok) {
         const b = await res.json().catch(() => ({}));
-        throw new Error(b.error ?? `Aurelius error: ${res.status}`);
+        throw new Error(b.error ?? "Aurelius hit a snag answering that — try again in a moment.");
       }
 
       const data = await res.json();
