@@ -41,7 +41,7 @@ export default function TopBar() {
           className="flex-1 bg-transparent outline-none text-sm text-aurelius-text placeholder:text-neutral-600"
           placeholder="Ask the second brain…"
         />
-        <span className="text-[11px] text-aurelius-gold/70 border border-aurelius-gold/30 rounded px-1.5 py-0.5 tracking-wide">
+        <span className="hidden md:inline text-[11px] text-aurelius-gold/70 border border-aurelius-gold/30 rounded px-1.5 py-0.5 tracking-wide">
           CMD ⌘ K
         </span>
       </div>

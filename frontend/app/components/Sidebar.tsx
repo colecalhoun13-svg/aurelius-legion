@@ -30,7 +30,7 @@ export default function Sidebar() {
   const navItems: OperatorDefinition[] = Object.values(operatorRegistry);
 
   return (
-    <aside className="w-64 h-full border-r border-aurelius-gold/40 bg-black/70 flex flex-col shrink-0">
+    <aside className="hidden md:flex w-64 h-full border-r border-aurelius-gold/40 bg-black/70 flex-col shrink-0">
       {/* Crest header — big and glowing, per the mockup */}
       <div className="flex items-center justify-center py-7 border-b border-aurelius-gold/40">
         <div className="drop-shadow-[0_0_18px_rgba(212,175,55,0.35)]">
