@@ -248,11 +248,11 @@ export default function DeckPage() {
             onChange={(e) => setCmd(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") submit(e.shiftKey); }}
             placeholder="What needs doing?"
-            className="flex-1 bg-transparent outline-none placeholder:text-neutral-600"
+            className="flex-1 bg-transparent outline-none placeholder:text-neutral-500"
             autoFocus
           />
         </div>
-        <div className="flex items-center justify-between mt-2 px-1 text-xs text-neutral-600">
+        <div className="flex items-center justify-between mt-2 px-1 text-xs text-neutral-500">
           <span>Enter → task for today · Shift+Enter → capture a thought</span>
           {flash && <span className="text-aurelius-gold">{flash}</span>}
         </div>
@@ -270,7 +270,7 @@ export default function DeckPage() {
           ].map((t) => (
             <div key={t.label}>
               <div className={`text-xl font-semibold ${t.alarm ? "text-red-400" : "text-aurelius-gold"}`}>{t.value}</div>
-              <div className="text-[10px] uppercase tracking-widest text-neutral-600 mt-0.5">{t.label}</div>
+              <div className="text-[10px] uppercase tracking-widest text-neutral-500 mt-0.5">{t.label}</div>
             </div>
           ))}
         </div>
@@ -282,7 +282,7 @@ export default function DeckPage() {
         <div className="mt-10 w-full max-w-xl px-6 space-y-3">
           <div className="flex items-baseline justify-between px-1">
             <span className="aurelius-heading text-sm text-aurelius-gold/70">The Bridge</span>
-            <a href="/bridge" className="text-[11px] text-neutral-600 no-underline hover:text-neutral-400">
+            <a href="/bridge" className="text-[11px] text-neutral-500 no-underline hover:text-neutral-400">
               {deck.bridge.length} pending →
             </a>
           </div>
@@ -290,7 +290,7 @@ export default function DeckPage() {
             <div key={s.id} className={`aurelius-panel-frame p-4 border ${SEV[s.severity] ?? SEV.info} text-left`}>
               <div className="flex items-start justify-between gap-3">
                 <span className="font-medium text-sm">{s.title}</span>
-                <span className="text-[10px] uppercase tracking-wider text-neutral-600 shrink-0">
+                <span className="text-[10px] uppercase tracking-wider text-neutral-500 shrink-0">
                   {s.kind.replace(/_/g, " ")}
                 </span>
               </div>
@@ -326,7 +326,7 @@ export default function DeckPage() {
               <li key={s.id} className="text-xs text-neutral-500 flex items-start gap-2 px-1">
                 <span className="text-emerald-500/70 mt-px">✓</span>
                 <span className="flex-1"><span className="text-neutral-400">{s.title}</span>
-                  <span className="text-neutral-600"> · {s.kind.replace(/_/g, " ")}</span>
+                  <span className="text-neutral-500"> · {s.kind.replace(/_/g, " ")}</span>
                 </span>
                 {undoableAction(s) && s.status !== "undone" && (
                   <button onClick={() => undo(s.id)} disabled={busy === s.id}
@@ -348,7 +348,7 @@ export default function DeckPage() {
             <span className="text-aurelius-gold text-lg">{l.glyph}</span>
             <span>
               <span className="block text-sm text-aurelius-text">{l.name}</span>
-              <span className="block text-[10px] uppercase tracking-wider text-neutral-600">{l.desc}</span>
+              <span className="block text-[10px] uppercase tracking-wider text-neutral-500">{l.desc}</span>
             </span>
           </a>
         ))}

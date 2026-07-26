@@ -199,13 +199,13 @@ export default function TodayPage() {
             <>
               <p className="aurelius-voice aurelius-resolve text-[15px] whitespace-pre-wrap text-neutral-200">{briefing}</p>
               {briefingAt && (
-                <p className="text-[11px] text-neutral-600 mt-2">
+                <p className="text-[11px] text-neutral-500 mt-2">
                   {new Date(briefingAt).toLocaleString()}
                 </p>
               )}
             </>
           ) : (
-            <p className="text-neutral-600 italic text-sm">
+            <p className="text-neutral-500 italic text-sm">
               The morning briefing fires at 07:00 — or ask for one now.
             </p>
           )}
@@ -235,7 +235,7 @@ export default function TodayPage() {
             <p
               onClick={() => setEditingFocus(true)}
               className={`cursor-pointer text-lg ${
-                data.plan?.focus ? "text-aurelius-text" : "text-neutral-600 italic"
+                data.plan?.focus ? "text-aurelius-text" : "text-neutral-500 italic"
               }`}
             >
               {data.plan?.focus || "Click to set today's focus."}
@@ -270,7 +270,7 @@ export default function TodayPage() {
                 <li key={t.id} className="flex items-center gap-3 text-sm">
                   <button
                     onClick={() => act({ action: "completeTask", id: t.id })}
-                    className="w-4 h-4 border border-red-400 rounded-sm hover:bg-red-400/30 shrink-0"
+                    className="relative after:absolute after:-inset-3 after:content-[''] w-4 h-4 border border-red-400 rounded-sm hover:bg-red-400/30 shrink-0"
                     title="Complete"
                   />
                   <span>{t.title}</span>
@@ -290,13 +290,13 @@ export default function TodayPage() {
           </h2>
           <ul className="divide-y divide-aurelius-gold/10 mb-4">
             {data.tasks.length === 0 && (
-              <li className="text-neutral-600 italic text-sm">Nothing on deck. Add something.</li>
+              <li className="text-neutral-500 italic text-sm">Nothing on deck. Add something.</li>
             )}
             {data.tasks.map((t) => (
               <li key={t.id} className="flex items-center gap-3 py-2.5">
                 <button
                   onClick={() => act({ action: "completeTask", id: t.id })}
-                  className="w-4 h-4 border border-aurelius-gold rounded-sm hover:bg-aurelius-gold/40 shrink-0"
+                  className="relative after:absolute after:-inset-3 after:content-[''] w-4 h-4 border border-aurelius-gold rounded-sm hover:bg-aurelius-gold/40 shrink-0"
                   title="Complete"
                 />
                 <span className={PRIORITY_COLOR[t.priority] ?? "text-aurelius-text"}>
@@ -307,7 +307,7 @@ export default function TodayPage() {
                     proposed
                   </span>
                 )}
-                <span className="text-xs text-neutral-600 ml-auto shrink-0">{t.domain}</span>
+                <span className="text-xs text-neutral-500 ml-auto shrink-0">{t.domain}</span>
               </li>
             ))}
           </ul>
@@ -332,7 +332,7 @@ export default function TodayPage() {
         <section className="aurelius-panel-frame p-5">
           <h2 className="aurelius-heading text-base mb-3">Habits</h2>
           {data.habits.length === 0 ? (
-            <p className="text-neutral-600 italic text-sm">No habits yet.</p>
+            <p className="text-neutral-500 italic text-sm">No habits yet.</p>
           ) : (
             <div className="flex flex-wrap gap-2">
               {data.habits.map((h) => (
