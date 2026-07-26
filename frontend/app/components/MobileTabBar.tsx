@@ -7,6 +7,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useNeedsYou } from "../../lib/useNeedsYou";
 
 const TABS: Array<{ label: string; path: string; glyph: string; also?: string[] }> = [
   { label: "Home", path: "/deck", glyph: "❂" },
@@ -18,6 +19,7 @@ const TABS: Array<{ label: string; path: string; glyph: string; also?: string[] 
 
 export default function MobileTabBar() {
   const pathname = usePathname();
+  const needsYou = useNeedsYou();
   return (
     <nav
       className="md:hidden fixed bottom-0 left-0 right-0 z-40 border-t border-aurelius-gold/40 bg-black/95 backdrop-blur flex"
@@ -33,8 +35,13 @@ export default function MobileTabBar() {
               active ? "text-aurelius-gold" : "text-neutral-500"
             }`}
           >
-            <span className={`text-lg leading-none ${active ? "drop-shadow-[0_0_8px_rgba(212,175,55,0.5)]" : ""}`}>
+            <span className={`relative text-lg leading-none ${active ? "drop-shadow-[0_0_8px_rgba(212,175,55,0.5)]" : ""}`}>
               {t.glyph}
+              {t.path === "/bridge" && needsYou > 0 && (
+                <span className="absolute -top-1.5 -right-3 min-w-[16px] h-[16px] px-1 rounded-full bg-aurelius-gold text-black text-[10px] font-bold leading-[16px] text-center">
+                  {needsYou > 9 ? "9+" : needsYou}
+                </span>
+              )}
             </span>
             {t.label}
           </Link>

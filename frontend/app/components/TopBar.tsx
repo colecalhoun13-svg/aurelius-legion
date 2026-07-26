@@ -2,11 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useNeedsYou } from "../../lib/useNeedsYou";
 
 export default function TopBar() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
+  const needsYou = useNeedsYou();
 
   // ⌘K / Ctrl+K focuses the ask bar from anywhere
   useEffect(() => {
@@ -46,14 +48,18 @@ export default function TopBar() {
         </span>
       </div>
 
-      {/* The bell is real: it goes to the Bridge (live count arrives in the
-          signals PR). The gear returns when Settings does something. */}
+      {/* The bell is live: what awaits Cole's ruling, counted. */}
       <button
         onClick={() => router.push("/bridge")}
-        className="text-aurelius-gold text-lg leading-none hover:drop-shadow-[0_0_6px_rgba(212,175,55,0.6)]"
+        className="relative text-aurelius-gold text-lg leading-none hover:drop-shadow-[0_0_6px_rgba(212,175,55,0.6)] min-w-[44px] min-h-[44px] -my-2"
         title="What needs you — the Bridge"
       >
         🔔
+        {needsYou > 0 && (
+          <span className="absolute top-1 right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-aurelius-gold text-black text-[11px] font-bold leading-[18px] text-center">
+            {needsYou > 9 ? "9+" : needsYou}
+          </span>
+        )}
       </button>
     </header>
   );
