@@ -75,3 +75,52 @@ export async function suggestNextGrant(): Promise<GrantSuggestion[]> {
   }
   return out;
 }
+
+// ── THE FLYWHEEL PUSH (check-in council PR4) ────────────────────────────
+// suggestNextGrant was pull-only: it computed, but nothing ever carried a
+// suggestion to Cole, so grants plateaued at whatever he remembered to flip.
+// These two helpers let the morning briefing and the Sunday scoreboard PUSH
+// suggestions — with a cooldown ledger so the same suggestion surfaces at
+// most once per window across every channel. Suggestion only, never a nag:
+// the switch stays Cole's hand on the Autonomy tab.
+
+const SUGGESTION_COOLDOWN_DAYS = 14;
+
+/** Suggestions not surfaced anywhere in the last cooldown window. */
+export async function freshGrantSuggestions(
+  cooldownDays = SUGGESTION_COOLDOWN_DAYS
+): Promise<GrantSuggestion[]> {
+  const all = await suggestNextGrant();
+  if (all.length === 0) return [];
+  const since = new Date(Date.now() - cooldownDays * 86400_000);
+  const fresh: GrantSuggestion[] = [];
+  for (const s of all) {
+    const recent = await prisma.logEntry.findFirst({
+      where: { type: "trace", message: `grant_suggestion:${s.actionClass}`, createdAt: { gte: since } },
+      select: { id: true },
+    });
+    if (!recent) fresh.push(s);
+  }
+  return fresh;
+}
+
+/** Start the cooldown clock for suggestions a channel just carried. */
+export async function markSuggestionsSurfaced(suggestions: GrantSuggestion[]): Promise<void> {
+  if (suggestions.length === 0) return;
+  try {
+    const { resolveOperatorId } = await import("../knowledge/store.ts");
+    const opId = await resolveOperatorId("global");
+    if (!opId) return;
+    await prisma.logEntry.createMany({
+      data: suggestions.map((s) => ({
+        operatorId: opId,
+        type: "trace",
+        level: "info",
+        message: `grant_suggestion:${s.actionClass}`,
+        context: { surfaced: true } as any,
+      })),
+    });
+  } catch (err) {
+    console.warn("[trustLedger] cooldown mark failed (suggestion may resurface early):", (err as any)?.message ?? err);
+  }
+}

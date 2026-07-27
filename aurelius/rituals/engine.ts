@@ -124,6 +124,20 @@ export async function generateMorningBriefing(dateStr?: string) {
     lines.push("Signals worth a look:");
     for (const s of attention.slice(0, 3)) lines.push(`  ⇄ ${s.title}`);
   }
+  // Earned-trust nudge (council PR4): when Cole has confirmed a class 3×
+  // with no undos, the briefing offers the grant — once per cooldown window,
+  // max two lines, never a recurring nag. The switch stays his hand.
+  try {
+    const { freshGrantSuggestions, markSuggestionsSurfaced } = await import("../autonomy/trustLedger.ts");
+    const sugg = (await freshGrantSuggestions()).slice(0, 2);
+    if (sugg.length > 0) {
+      lines.push("Worth handing over (Aurelius → Autonomy):");
+      for (const s of sugg) lines.push(`  ♛ ${s.reason}`);
+      await markSuggestionsSurfaced(sugg);
+    }
+  } catch {
+    // suggestions are a bonus, never a briefing blocker
+  }
   if (today.stats?.followThrough !== null && today.stats?.followThrough !== undefined) {
     lines.push(`Follow-through last 7 days: ${today.stats.followThrough}%`);
   }
