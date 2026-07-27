@@ -7,17 +7,27 @@ import { operatorRegistry, OperatorDefinition } from "../../lib/operators/operat
 
 const NAV_GLYPHS: Record<string, string> = {
   Home: "❂",
-  Today: "☀",
-  Chat: "❯",
   Decisions: "⇄",
   Calendar: "◷",
+  "Goals & Projects": "◎",
   Brain: "❈",
-  More: "⋯",
+  Aurelius: "♛",
+  Tools: "⚒",
+  Engines: "⚙",
+  Settings: "✦",
 };
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const navItems: OperatorDefinition[] = Object.values(operatorRegistry);
+
+  // Group in registry order — grouping is the streamlining: nine rows read
+  // as four ideas, and nothing essential hides behind a fold on desktop.
+  const groups: Array<{ title: string; items: OperatorDefinition[] }> = [];
+  for (const item of Object.values(operatorRegistry)) {
+    const g = groups.find((x) => x.title === item.group);
+    if (g) g.items.push(item);
+    else groups.push({ title: item.group, items: [item] });
+  }
 
   return (
     <aside className="hidden md:flex w-64 h-full border-r border-aurelius-gold/40 bg-black/70 flex-col shrink-0">
@@ -28,30 +38,37 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {/* Scrollable: 17 destinations outgrow short windows — without this,
-          everything below the fold (Library, Engines, Traces, Settings)
-          silently doesn't exist. */}
-      <nav className="flex flex-col p-3 pt-4 space-y-1 flex-1 min-h-0 overflow-y-auto">
-        {navItems.map((item) => {
-          const active = pathname === item.path;
-
-          return (
-            <Link
-              key={item.name}
-              href={item.path}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded transition-colors ${
-                active
-                  ? "bg-gradient-to-r from-aurelius-gold/25 to-transparent text-aurelius-gold font-semibold border-l-2 border-aurelius-gold"
-                  : "text-aurelius-text/90 hover:text-aurelius-gold hover:bg-aurelius-gold/5"
-              }`}
-            >
-              <span className={active ? "text-aurelius-gold" : "text-aurelius-gold/50"}>
-                {NAV_GLYPHS[item.name] ?? "•"}
-              </span>
-              {item.name}
-            </Link>
-          );
-        })}
+      {/* Scrollable so short laptop windows never silently hide Setup. */}
+      <nav className="flex flex-col p-3 pt-4 flex-1 min-h-0 overflow-y-auto">
+        {groups.map((g, gi) => (
+          <div key={g.title} className={gi === 0 ? "" : "mt-4"}>
+            <div className="px-3 pb-1 text-[10px] uppercase tracking-[0.2em] text-aurelius-gold/50 aurelius-heading">
+              {g.title}
+            </div>
+            <div className="space-y-1">
+              {g.items.map((item) => {
+                const active = pathname === item.path;
+                return (
+                  <Link
+                    key={item.name}
+                    href={item.path}
+                    title={item.description}
+                    className={`flex items-center gap-3 px-3 py-2 rounded transition-colors ${
+                      active
+                        ? "bg-gradient-to-r from-aurelius-gold/25 to-transparent text-aurelius-gold font-semibold border-l-2 border-aurelius-gold"
+                        : "text-aurelius-text/90 hover:text-aurelius-gold hover:bg-aurelius-gold/5"
+                    }`}
+                  >
+                    <span className={active ? "text-aurelius-gold" : "text-aurelius-gold/50"}>
+                      {NAV_GLYPHS[item.name] ?? "•"}
+                    </span>
+                    {item.name}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
     </aside>
   );

@@ -1,27 +1,25 @@
 "use client";
 
-// MORE — the fold. Weekly visits and the engine room, one tap deep, so the
-// daily nav stays five items a thumb can reach. Nothing was deleted; it
-// just stopped pretending to be daily.
+// MORE — the phone's directory, mirroring the desktop sidebar's map: same
+// items, same order, same glyphs, so a thing lives in the same place on
+// both devices. Brain leads (it ceded tab 4 to Goals); Setup sits low.
+// Nothing lives ONLY here — this is a listing, never a burial.
 
 import Link from "next/link";
 
 const GROUPS: Array<{ title: string; items: Array<{ name: string; path: string; glyph: string; desc: string }> }> = [
   {
-    title: "Weekly",
+    title: "Direction",
     items: [
-      { name: "Goals & Projects", path: "/goals", glyph: "◎", desc: "Big and small, with runway" },
-      { name: "Aurelius", path: "/aurelius", glyph: "♛", desc: "Missions, patterns, background work" },
-      { name: "Autonomy", path: "/autonomy", glyph: "🜍", desc: "Keyholes, track records, undo" },
+      { name: "Brain", path: "/brain", glyph: "❈", desc: "The shelves, ask-anything, and the syntheses" },
+      { name: "Aurelius", path: "/aurelius", glyph: "♛", desc: "Missions, the autonomy dial, and traces" },
     ],
   },
   {
-    title: "The engine room",
+    title: "Setup",
     items: [
-      { name: "Chat console", path: "/console", glyph: "❯", desc: "The plain conversation view" },
       { name: "Tools", path: "/tools", glyph: "⚒", desc: "Integrations and what unlocks them" },
       { name: "Engines", path: "/engines", glyph: "⚙", desc: "Which minds answer which calls" },
-      { name: "Traces", path: "/traces", glyph: "🜸", desc: "Every decision, step by step" },
       { name: "Settings", path: "/settings", glyph: "✦", desc: "Connections and preferences" },
     ],
   },

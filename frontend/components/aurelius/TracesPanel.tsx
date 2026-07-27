@@ -61,7 +61,7 @@ function relDay(iso: string): string {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-export default function TracesPage() {
+export default function TracesPanel() {
   const [threads, setThreads] = useState<Thread[] | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);

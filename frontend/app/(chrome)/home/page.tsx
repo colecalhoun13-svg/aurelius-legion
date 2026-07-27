@@ -291,7 +291,7 @@ export default function HomePage() {
           </span>
         </div>
         <ul className="space-y-1.5">
-          {tasks.slice(0, 8).map((t) => (
+          {tasks.map((t) => (
             <li key={t.id} className="flex items-center gap-3 px-1">
               <button
                 onClick={() => act({ action: "completeTask", id: t.id })}
@@ -302,7 +302,11 @@ export default function HomePage() {
                 }`}
                 title="Done"
               />
-              <span className="text-sm text-neutral-200 flex-1 truncate">{t.title}</span>
+              <span className="text-sm text-neutral-200 flex-1 truncate">
+                {t.priority === "high" && <span className="text-aurelius-gold mr-1.5">!</span>}
+                {t.title}
+                {t.domain && <span className="text-[10px] text-neutral-600 ml-2">{t.domain}</span>}
+              </span>
             </li>
           ))}
           {tasks.length === 0 && <li className="text-neutral-500 italic text-sm px-1">Nothing on deck.</li>}
