@@ -117,6 +117,21 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
 
   const week = weekStart.toISOString().slice(0, 10);
   const missionsRun = Object.values(missionCounts).reduce((s: number, n: any) => s + n, 0);
+
+  // The flywheel push (council PR4): earned-trust suggestions ride the weekly
+  // scoreboard — deduped by the shared cooldown so this never becomes a nag.
+  let suggestionLines: string[] = [];
+  try {
+    const { freshGrantSuggestions, markSuggestionsSurfaced } = await import("../autonomy/trustLedger.ts");
+    const sugg = await freshGrantSuggestions();
+    if (sugg.length > 0) {
+      suggestionLines = ["", "Worth handing over (Aurelius → Autonomy, one tap):", ...sugg.map((s) => `♛ ${s.reason}`)];
+      await markSuggestionsSurfaced(sugg);
+    }
+  } catch (err) {
+    console.warn("[scoreboard] grant suggestions skipped:", (err as any)?.message ?? err);
+  }
+
   await prisma.bridgeSignal.create({
     data: {
       kind: "background_result",
@@ -134,6 +149,7 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
           : "",
         corrections > 0 ? `${corrections} corrections logged — the trust loop is working.` : "",
         staleKnowledge > 0 ? `${staleKnowledge} knowledge entries past their half-life — re-checks queue Sundays.` : "",
+        ...suggestionLines,
       ]
         .filter(Boolean)
         .join("\n"),

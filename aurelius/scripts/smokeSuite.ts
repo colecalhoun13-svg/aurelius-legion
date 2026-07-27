@@ -883,6 +883,35 @@ async function main() {
     await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
   }
 
+  console.log("── flywheel push: grant suggestions with cooldown (council PR4) ──");
+  {
+    const { freshGrantSuggestions, markSuggestionsSurfaced } = await import("../autonomy/trustLedger.ts");
+    const flyOp = await resolveOperatorId("global");
+    if (flyOp) {
+      // Fabricate an earned-trust record on a class with NO other history in
+      // this run (research.ingest carries a real undo from the executor block
+      // above, which rightly suppresses its suggestion).
+      const FLY_CLS = "inbox.triage_draft";
+      await prisma.autonomyGrant.deleteMany({ where: { actionClass: FLY_CLS } });
+      await prisma.logEntry.deleteMany({ where: { message: { contains: FLY_CLS } } });
+      await prisma.logEntry.createMany({
+        data: [1, 2, 3].map(() => ({
+          operatorId: flyOp, type: "trace", level: "info",
+          message: `action:confirm:${FLY_CLS}`, context: { status: "ok" } as any,
+        })),
+      });
+      const first = await freshGrantSuggestions();
+      check("earned trust (3 confirms, 0 undos) yields a fresh suggestion", first.some((s) => s.actionClass === FLY_CLS));
+      await markSuggestionsSurfaced(first.filter((s) => s.actionClass === FLY_CLS));
+      const second = await freshGrantSuggestions();
+      check("cooldown holds — a surfaced suggestion goes quiet", !second.some((s) => s.actionClass === FLY_CLS));
+      // cleanup
+      await prisma.logEntry.deleteMany({ where: { message: { contains: FLY_CLS } } });
+    } else {
+      check("flywheel push (skipped — no global operator)", true);
+    }
+  }
+
   console.log("── nightly backup: pg_dump the brain (council PR2) ──");
   {
     const { runDbBackup, warnIfBackupStale } = await import("../core/backup.ts");
