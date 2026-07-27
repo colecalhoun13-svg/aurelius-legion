@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AureliusChat } from "../../../components/AureliusChat";
+import { QUOTES } from "../../../lib/quotes";
 
 type SignalAction = { label: string; action: string; payload?: any };
 type Signal = {
@@ -52,6 +53,8 @@ const SEV: Record<string, string> = {
 
 export default function HomePage() {
   const [deck, setDeck] = useState<Deck | null>(null);
+  // The day's quote — fresh each load, same ritual as the old Deck.
+  const [quote] = useState(() => QUOTES[Math.floor(Math.random() * QUOTES.length)]!);
   const [today, setToday] = useState<TodayData | null>(null);
   const [briefing, setBriefing] = useState<{ text: string; at: string } | null>(null);
   const [briefingOpen, setBriefingOpen] = useState(false);
@@ -148,6 +151,11 @@ export default function HomePage() {
             {deck.plan.focus}
           </p>
         )}
+        {/* The day's quote — the ritual survives the merge */}
+        <blockquote className="mt-4 max-w-xl mx-auto">
+          <p className="text-sm italic text-neutral-400 leading-relaxed">“{quote[0]}”</p>
+          <footer className="aurelius-heading text-xs text-aurelius-gold/60 mt-1.5">— {quote[1]}</footer>
+        </blockquote>
       </header>
 
       {/* Briefing — open when fresh, one quiet line once read */}
