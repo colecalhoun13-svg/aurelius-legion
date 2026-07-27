@@ -92,9 +92,8 @@ once; **publishing the consent screen** is what stops the weekly token death.
    ```
    GOOGLE_CLIENT_ID=...
    GOOGLE_CLIENT_SECRET=...
-   # optional explicit overrides (defaults derive from localhost:3001):
+   # optional explicit override (default derives from localhost:3001):
    # GOOGLE_REDIRECT_URI=http://localhost:3001/api/calendar/callback
-   # GOOGLE_GMAIL_REDIRECT_URI=http://localhost:3001/api/gmail/callback
    ```
 6. Restart the backend.
 
@@ -224,11 +223,32 @@ or `/rss`.)
 
 - **Goals** page → add your real big (quarter/year) and small (week) goals with a
   measure. The Sunday planning session + 08:00 initiative pulse key off these.
-- **Grant one keyhole** to let Aurelius start *acting* (inward, reversible): in
-  chat say *"grant schedule protection"* → tap **Confirm** on the Bridge. Now it
-  defends your deep-work time on its own (and, if you grant `research.ingest`, it
-  runs its own proposed research missions). Revoke anytime: *"revoke schedule
-  protection."*
+- **Grant your keyholes** to let Aurelius start *acting* (inward, reversible).
+  The one-tap switches live on **Aurelius → Autonomy**; from chat, saying
+  *"grant schedule protection"* files a Bridge confirm instead. The three that
+  matter first:
+  - `calendar.schedule_protection` — defends deep-work time on its own.
+  - `research.ingest` — runs its own proposed research missions.
+  - `knowledge.apply_proposal` — files what it learns from research/ingestion
+    straight into Living Knowledge (receipts + one-tap undo; chat/persona/
+    freshness proposals still stop for your confirm).
+  Revoke anytime — same switch.
+
+## 11.5 The lock + the backups (before anything always-on)
+
+- **`AURELIUS_API_KEY`** — set the same random string in the backend env AND the
+  frontend env, and every backend API route demands it (OAuth callbacks stay
+  open). Unset = open, for private local dev only. **Mandatory before Railway/
+  Mini or making port 3001 public.**
+- **Backups** run nightly at 02:00 (`pg_dump` into `aurelius/backups/`, pruned
+  to `AURELIUS_BACKUP_KEEP`, default 14). Boot warns if the newest dump is >48h
+  old. On the Mini, set `AURELIUS_BACKUP_DIR` to the UGREEN NAS mount.
+- Other env the code reads that earlier drafts missed: `INGEST_WATCH_DIR`
+  (drop-folder ingest), `BACKEND_ORIGIN` (frontend→backend proxy target),
+  `NEXT_PUBLIC_BACKEND_URL` (phone-PWA Connect links; auto-derives on
+  Codespaces), `FRONTEND_ORIGIN` (pin CORS), `AURELIUS_TZ`,
+  `PAPERLESS_URL`/`PAPERLESS_TOKEN`, `HEALTHCHECKS_PING_URL`/
+  `HEALTHCHECKS_BRIEFING_URL`, `TAVILY_SEARCH_DEPTH`.
 
 ## Ongoing note — Codespaces secrets vs .env
 
@@ -318,16 +338,18 @@ Full runbook: `docs/DEPLOY_MAC_MINI.md`.
     restore test.
 12. Point Obsidian (desktop + mobile) at the NAS vault share.
 13. **MCP socket** — build per the frozen council spec (`docs/MCP_SPEC.md`),
-    first server Playwright, poison-probe smoke green. **This is a
-    definition-of-done line for the deploy itself** — the Mini isn't "done"
-    without it (or an explicit council re-vote deferring it again).
+    first server Playwright, poison-probe smoke green. *(2026-07-27 check-in
+    council reconciliation: this is **post-deploy optional**, matching
+    `DEPLOY_MAC_MINI.md` — the deploy's own DoD is the soak, not the socket.
+    Native tool calling shipped in its place; re-vote MCP when a concrete
+    server need appears.)*
 
 ## D. Post-launch — the watch
 Deploying starts the soak (the one DoD line real time must prove: "runs for days,
-survives restart"). First week: confirm launchd relaunches after a reboot and
+survives restart"). First week: confirm the process relaunches after a reboot and
 catch-up fires missed rituals; the Sunday full loop runs unattended; the
 scoreboard's `llmDependenceRate` falls as the cache fills. Anything odd is
-traced — read the cockpit and fix.
+traced — read the Traces tab (`/aurelius?tab=traces`) and fix.
 
 ## E. Layers on *after* the move (none block it)
 Local whisper.cpp (private voice), Ollama (local inference/embeddings),

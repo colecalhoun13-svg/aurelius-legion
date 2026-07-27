@@ -75,7 +75,7 @@ function ShareInner() {
         </div>
       )}
       <div className="flex justify-center gap-4 text-sm">
-        <Link href="/deck" className="text-aurelius-gold border border-aurelius-gold/40 rounded-lg px-4 py-2 hover:bg-aurelius-gold/15">
+        <Link href="/home" className="text-aurelius-gold border border-aurelius-gold/40 rounded-lg px-4 py-2 hover:bg-aurelius-gold/15">
           Home
         </Link>
         <Link href="/brain" className="text-aurelius-gold border border-aurelius-gold/40 rounded-lg px-4 py-2 hover:bg-aurelius-gold/15">

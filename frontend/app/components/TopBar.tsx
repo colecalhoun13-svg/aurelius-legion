@@ -24,7 +24,6 @@ const DESTINATIONS: Array<{ name: string; path: string; glyph: string; alias: st
   { name: "Tools", path: "/tools", glyph: "⚒", alias: "integrations" },
   { name: "Engines", path: "/engines", glyph: "⚙", alias: "models" },
   { name: "Settings", path: "/settings", glyph: "✦", alias: "connect google gmail instagram" },
-  { name: "Chat console", path: "/console", glyph: "❯", alias: "conversation" },
 ];
 
 export default function TopBar() {
