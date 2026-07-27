@@ -44,7 +44,14 @@ process, so it works from any host with no inbound config.
    - `EMBEDDINGS_PROVIDER` + its key (switch off `mock` — this is the moment)
    - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
    - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
-   - `AURELIUS_TZ` (e.g. `America/Chicago` — cron times follow it)
+   - `GOOGLE_REDIRECT_URI=https://<backend-domain>/api/calendar/callback` —
+     without it, future Connect taps redirect to localhost (existing tokens
+     are unaffected either way)
+   - `TZ=America/Chicago` **and** `AURELIUS_TZ=America/Chicago` — the
+     container runs UTC; TZ is what makes the 07:00 briefing fire at YOUR
+     7am, not 2am (pre-flight council finding)
+   - `PORT=3001` — pins the private-network URL so
+     `…railway.internal:3001` stays true for the app service
    - `AURELIUS_BACKUP_DIR=/data/backups`
    - optional: `FRED_API_KEY`, `TAVILY_API_KEY`, `FRONTEND_ORIGIN`
 3. **Volume**: service → Settings → Volumes → mount at **`/data`** (1 GB is
@@ -59,10 +66,20 @@ process, so it works from any host with no inbound config.
    equivalents you use) to the OAuth client's authorized redirects in Google
    Cloud Console. Existing tokens keep working — they refresh from any host;
    this matters only for FUTURE re-connects.
-6. **Deploy** fires on push to `main` from then on. Watch the boot log for:
+6. **STOP THE CODESPACE BACKEND FIRST.** Two backends polling the same
+   Telegram bot token fight over messages (random splits, 409s in logs).
+   From the moment Railway is live, the codespace backend stays off unless
+   you're actively developing — and then expect Telegram weirdness.
+7. **Deploy** fires on push to `main` from then on. Watch the boot log for:
+   - `[time] process TZ set…` (or no line if you set TZ directly)
    - `[auth]` — must NOT say DORMANT (the key is set)
    - `[backup]` — the staleness warning fires the first boot, then never again
    - the ENV CHECK block — every key you set shows `true`
+8. **The embeddings switch has a second step.** Flipping
+   `EMBEDDINGS_PROVIDER` off `mock` makes OLD mock-embedded knowledge
+   invisible to recall (retrieval matches on the embedding model). Re-embed
+   the existing brain once, from the codespace, against Neon:
+   `cd aurelius && DATABASE_URL=<neon-url> npx tsx scripts/backfillEmbeddings.ts --force`
 
 ## Service 2 — the app itself (~10 minutes)
 
@@ -78,7 +95,9 @@ process, so it works from any host with no inbound config.
      panel (e.g. `http://aurelius-backend.railway.internal:3001`) so chat
      rides the internal network
    - `NEXT_PUBLIC_BACKEND_URL` — the backend's **public** domain from step 4
-     above (baked into the build — it's where the phone's Connect buttons point)
+     above. **Set it BEFORE the first deploy** — it bakes into the build (the
+     phone's Connect buttons point there); adding it later needs a Redeploy,
+     not a restart
    - engine/embeddings keys the API routes use: `ANTHROPIC_API_KEY`,
      `EMBEDDINGS_PROVIDER` + its key
 4. **Settings → Networking → Generate Domain.** That domain is THE APP:

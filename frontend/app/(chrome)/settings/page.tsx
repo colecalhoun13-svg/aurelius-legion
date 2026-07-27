@@ -38,7 +38,16 @@ export default function SettingsPage() {
   // Resolved on the client so Connect works from the phone PWA too
   // (Codespaces forwarded domains derive the backend from the page's host).
   const [backend, setBackend] = useState("http://localhost:3001");
-  useEffect(() => setBackend(backendUrl()), []);
+  // The one honest light for "is the always-on backend actually up?" —
+  // /health is auth-exempt and instant (pre-flight: nothing showed this).
+  const [backendUp, setBackendUp] = useState<boolean | null>(null);
+  useEffect(() => {
+    const b = backendUrl();
+    setBackend(b);
+    fetch(`${b}/health`, { mode: "cors" })
+      .then((r) => setBackendUp(r.ok))
+      .catch(() => setBackendUp(false));
+  }, []);
 
   useEffect(() => {
     fetch("/api/tools")
@@ -54,8 +63,16 @@ export default function SettingsPage() {
 
   return (
     <main className="text-aurelius-text max-w-2xl mx-auto space-y-8 aurelius-stagger">
-      <header className="aurelius-rule">
+      <header className="aurelius-rule flex items-baseline justify-between">
         <h1 className="aurelius-heading text-4xl">Settings</h1>
+        <span className="flex items-center gap-2 text-xs text-neutral-500">
+          <span
+            className={`w-2 h-2 rounded-full ${
+              backendUp === null ? "bg-neutral-600" : backendUp ? "bg-emerald-400" : "bg-red-400"
+            }`}
+          />
+          {backendUp === null ? "checking backend…" : backendUp ? "backend connected" : "backend unreachable"}
+        </span>
       </header>
 
       <section className="space-y-2">

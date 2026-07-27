@@ -10,9 +10,11 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Install deps first for layer caching.
+# Install deps first for layer caching. Full install (not --omit=dev): tsx is
+# the runtime — omitting dev deps made npx re-download it on every container
+# start (pre-flight council blocker).
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 
 COPY . .
 
@@ -23,4 +25,7 @@ RUN npx prisma generate
 ENV NODE_ENV=production
 EXPOSE 3001
 
-CMD ["npx", "tsx", "index.ts"]
+# migrate deploy first: a no-op when Neon is current, and the reason future
+# schema changes can't drift the live DB (remember the DROP INDEX gotcha
+# belongs at migration-authoring time, not here).
+CMD ["sh", "-c", "npx prisma migrate deploy && npx tsx index.ts"]

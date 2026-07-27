@@ -13,6 +13,10 @@ WORKDIR /app
 # Deps first, both trees, for layer caching.
 COPY aurelius/package*.json aurelius/
 RUN cd aurelius && npm ci
+# frontend's postinstall runs `prisma generate --schema ../aurelius/prisma/...`
+# — the schema must exist BEFORE its npm ci or the layer dies (pre-flight
+# council finding).
+COPY aurelius/prisma aurelius/prisma
 COPY frontend/package*.json frontend/
 RUN cd frontend && npm ci
 

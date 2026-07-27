@@ -1,0 +1,8 @@
+# Never bake these into an image (pre-flight: COPY . . + a local .env = a
+# leaked token; Railway builds from git so this guards LOCAL docker builds).
+**/.env
+**/.env.*
+**/node_modules
+**/.next
+**/backups
+.git

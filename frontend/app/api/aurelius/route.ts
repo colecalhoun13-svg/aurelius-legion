@@ -35,16 +35,15 @@ export async function POST(request: Request) {
     const data = await res.json().catch(() => ({}));
     return NextResponse.json(data, { status: res.status });
   } catch (error: any) {
-    // The backend (port 3001) isn't reachable — almost always "it isn't
-    // running." Say so plainly instead of a generic 500.
+    // The backend isn't reachable. Say so plainly, with the fix that matches
+    // where this is running (pre-flight: the old message gave codespace
+    // advice — meaningless on Railway).
     console.error("[api/aurelius] backend unreachable:", error?.message ?? error);
+    const hint = process.env.RAILWAY_ENVIRONMENT
+      ? "check BACKEND_ORIGIN on the app service and that the backend service is up"
+      : "start it with `cd aurelius && npx tsx index.ts`";
     return NextResponse.json(
-      {
-        error:
-          "Backend not reachable on " +
-          BACKEND_ORIGIN +
-          " — start it with `cd aurelius && npx tsx index.ts`.",
-      },
+      { error: `Backend not reachable on ${BACKEND_ORIGIN} — ${hint}.` },
       { status: 502 }
     );
   }

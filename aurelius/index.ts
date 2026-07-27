@@ -5,6 +5,16 @@
 import dotenv from "dotenv";
 dotenv.config({ path: "./.env" });
 
+// PROCESS TIMEZONE — before anything touches Date. Cloud containers run UTC;
+// without this the whole spine fires at UTC times (the 07:00 briefing lands
+// at 2am Chicago — pre-flight council finding). AURELIUS_TZ doubles as the
+// process TZ unless TZ is set explicitly; catch-up's local-hour math and
+// node-schedule's cron both follow process TZ.
+if (!process.env.TZ && process.env.AURELIUS_TZ?.trim()) {
+  process.env.TZ = process.env.AURELIUS_TZ.trim();
+  console.log(`[time] process TZ set from AURELIUS_TZ → ${process.env.TZ}`);
+}
+
 import express, { type Request, type Response } from "express";
 import cors from "cors";
 
@@ -114,6 +124,10 @@ app.use((req, res, next) => {
   if (req.get("x-aurelius-key") === API_KEY) return next();
   return res.status(401).json({ error: "unauthorized — send x-aurelius-key (set AURELIUS_API_KEY on the caller)" });
 });
+
+// The healthcheck the exemption always promised (pre-flight: it 404'd).
+// Railway/Mini watchdogs point here; returns instantly, no DB touch.
+app.get("/health", (_req, res) => res.json({ ok: true, service: "aurelius-backend" }));
 
 app.use("/api", requestTracer("/api"));
 
