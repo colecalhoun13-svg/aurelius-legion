@@ -151,14 +151,26 @@ then the shape of the day (what matters, what's at risk, what to hit first),
 then close with a single directive sentence. Under 180 words. No headers, no bullets-for-the-sake-of-bullets.`
   );
 
-  const instance = await fileInstance("morning_briefing", briefing, {
+  // Pre-session recall rides as a deterministic footer — the voice pass's
+  // word budget can never compress away what the brain remembers about the
+  // people on today's calendar. Empty brain = empty footer = calm.
+  let prepFooter = "";
+  try {
+    const { sessionPrepForEvents, formatSessionPrep } = await import("../planning/sessionPrep.ts");
+    prepFooter = formatSessionPrep(await sessionPrepForEvents(today.calendarEvents ?? []));
+  } catch {
+    // prep is a bonus, never a briefing blocker
+  }
+
+  const fullBriefing = briefing + prepFooter;
+  const instance = await fileInstance("morning_briefing", fullBriefing, {
     date: today.date,
     taskCount: today.tasks.length,
     overdueCount: today.overdue.length,
   });
 
   console.log(`[rituals] morning briefing generated (${instance.id})`);
-  return { instance, briefing };
+  return { instance, briefing: fullBriefing };
 }
 
 // ── Nightly debrief ──────────────────────────────────────────────────

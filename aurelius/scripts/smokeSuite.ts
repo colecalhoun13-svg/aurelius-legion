@@ -883,6 +883,25 @@ async function main() {
     await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
   }
 
+  console.log("── pre-session recall: calendar × brain join ──");
+  {
+    const { prepCandidates, sessionPrepForEvents, formatSessionPrep } = await import("../planning/sessionPrep.ts");
+    const events = [
+      { title: "Deep Work (protected)", startAt: new Date() },
+      { title: "Morning briefing", startAt: new Date() },
+      { title: `Sarah — lower session ${TAG}`, startAt: new Date() },
+    ];
+    const candidates = prepCandidates(events);
+    check("system blocks are never sessions; people are", candidates.length === 1 && candidates[0]!.title.startsWith("Sarah"));
+    // Unknown athlete + mock/no adapter → silence, never noise or a throw.
+    const prep = await sessionPrepForEvents(events);
+    check("empty brain yields a silent footer (calm, no filler)", Array.isArray(prep) && formatSessionPrep([]) === "");
+    check(
+      "prep footer format carries time · title · note",
+      formatSessionPrep([{ time: "16:00", title: "Sarah", note: "knee felt better Tuesday" }]).includes("❈ 16:00 Sarah — knee felt better Tuesday")
+    );
+  }
+
   console.log("── flywheel push: grant suggestions with cooldown (council PR4) ──");
   {
     const { freshGrantSuggestions, markSuggestionsSurfaced } = await import("../autonomy/trustLedger.ts");
