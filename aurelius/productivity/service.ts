@@ -616,6 +616,7 @@ export async function getAureliusActivity() {
           planSummary: true,
           createdAt: true,
           finishedAt: true,
+          corpusDocId: true, // the report — Cole reads what he ordered
           steps: { orderBy: { idx: "asc" }, select: { kind: true, status: true } },
         },
       }),

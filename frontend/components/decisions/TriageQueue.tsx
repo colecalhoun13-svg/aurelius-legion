@@ -14,10 +14,17 @@ function localDate(): string {
 
 export default function InboxPage() {
   const [tasks, setTasks] = useState<Task[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const r2 = await fetch("/api/inbox");
-    if (r2.ok) setTasks(await r2.json());
+    try {
+      const r2 = await fetch("/api/inbox");
+      if (!r2.ok) throw new Error("Aurelius couldn't load the inbox right now — try again in a moment.");
+      setTasks(await r2.json());
+      setErr(null);
+    } catch (e: any) {
+      setErr(e?.message ?? "failed to load");
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -37,6 +44,7 @@ export default function InboxPage() {
         <h1 className="aurelius-heading text-4xl">Inbox</h1>
         <span className="text-sm text-neutral-500">{tasks?.length ?? "…"} to triage</span>
       </header>
+      {err && <p className="text-sm text-amber-300/90">{err}</p>}
 
       {tasks && tasks.length === 0 && (
         <p className="text-neutral-600 italic text-center py-16">Inbox zero. As it should be.</p>

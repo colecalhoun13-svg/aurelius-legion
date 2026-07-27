@@ -17,6 +17,7 @@ type Mission = {
   planSummary: string | null;
   createdAt: string;
   finishedAt: string | null;
+  corpusDocId?: string | null;
   steps: MissionStep[];
 };
 
@@ -147,6 +148,14 @@ export default function MissionsPanel() {
                   )}
                 </div>
                 {m.planSummary && <p className="text-xs text-neutral-500 mt-1">{m.planSummary}</p>}
+                {m.status === "completed" && m.corpusDocId && (
+                  <a
+                    href={`/brain?doc=${m.corpusDocId}`}
+                    className="inline-block text-xs text-aurelius-gold hover:underline underline-offset-2 mt-1.5"
+                  >
+                    Read the report →
+                  </a>
+                )}
                 {m.steps.length > 0 && (
                   <div className="flex gap-2 mt-2">
                     {m.steps.map((s) => (

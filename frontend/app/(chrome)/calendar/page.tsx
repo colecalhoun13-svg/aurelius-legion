@@ -21,6 +21,16 @@ function startOfWeek(d: Date): Date {
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:3001";
 
+// LOCAL day key + clock time. The API serializes Dates as UTC ISO strings;
+// slicing those puts evening events on tomorrow's column and shows UTC clock
+// time — Cole lives in his own timezone, so the grid must too.
+function localDayKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function localTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
 export default function CalendarPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [events, setEvents] = useState<CalEvent[]>([]);
@@ -53,10 +63,10 @@ export default function CalendarPage() {
 
   const days = Array.from({ length: 7 }, (_, i) => {
     const date = new Date(weekStart.getTime() + i * 86400000);
-    const key = date.toISOString().slice(0, 10);
-    const dayTasks = tasks.filter((t) => t.scheduledFor && t.scheduledFor.slice(0, 10) === key);
-    const dayEvents = events.filter((e) => e.startAt.slice(0, 10) === key);
-    const isToday = key === new Date().toISOString().slice(0, 10);
+    const key = localDayKey(date);
+    const dayTasks = tasks.filter((t) => t.scheduledFor && localDayKey(new Date(t.scheduledFor)) === key);
+    const dayEvents = events.filter((e) => localDayKey(new Date(e.startAt)) === key);
+    const isToday = key === localDayKey(new Date());
     return { date, key, dayTasks, dayEvents, isToday };
   });
 
@@ -74,7 +84,7 @@ export default function CalendarPage() {
             </span>
           )}
           <button onClick={() => shift(-1)} className="border border-aurelius-gold/40 rounded-lg px-3 py-1 hover:bg-aurelius-gold/15 text-aurelius-gold">←</button>
-          <span className="text-neutral-400">{weekStart.toISOString().slice(0, 10)} week</span>
+          <span className="text-neutral-400">{localDayKey(weekStart)} week</span>
           <button onClick={() => shift(1)} className="border border-aurelius-gold/40 rounded-lg px-3 py-1 hover:bg-aurelius-gold/15 text-aurelius-gold">→</button>
         </div>
       </header>
@@ -88,7 +98,7 @@ export default function CalendarPage() {
             <div className="space-y-1.5">
               {d.dayEvents.map((e) => (
                 <div key={e.id} className="text-xs border border-aurelius-gold/40 rounded px-2 py-1 bg-aurelius-gold/10 text-aurelius-gold">
-                  {e.raw?.allDay ? "all day" : e.startAt.slice(11, 16)} {e.title}
+                  {e.raw?.allDay ? "all day" : localTime(e.startAt)} {e.title}
                 </div>
               ))}
               {d.dayTasks.map((t) => (

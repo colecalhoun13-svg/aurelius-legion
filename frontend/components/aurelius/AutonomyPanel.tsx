@@ -113,11 +113,12 @@ export default function AutonomyPanel() {
             <div key={c.key} className={`aurelius-panel-frame p-4 border ${c.on ? "border-aurelius-gold/50" : "border-neutral-700/60"}`}>
               <div className="flex items-start justify-between gap-3">
                 <span className="min-w-0">
+                  {/* Human description leads; the class key is metadata. */}
                   <span className="font-medium text-sm">
-                    <span className="text-aurelius-gold">{c.key}</span>
+                    <span className="text-neutral-100">{c.description || c.key}</span>
                     {c.on && <span className="ml-2 text-[10px] uppercase tracking-wider text-emerald-400 border border-emerald-500/40 rounded px-1.5 py-0.5">on</span>}
                   </span>
-                  {c.description && <span className="block text-xs text-neutral-500 mt-1">{c.description}</span>}
+                  <span className="block text-[11px] text-aurelius-gold/60 mt-1">{c.key}</span>
                   {t && (t.acted + t.confirmed + t.undone + t.failed) > 0 && (
                     <span className="block text-[11px] text-neutral-600 mt-1.5">
                       acted {t.acted} · confirmed {t.confirmed}

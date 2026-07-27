@@ -277,6 +277,9 @@ export default function HomePage() {
                   )}
                 </div>
               ))}
+              <a href="/aurelius?tab=autonomy" className="block text-[11px] text-neutral-600 hover:text-aurelius-gold px-1 pt-1">
+                all autonomous actions →
+              </a>
             </div>
           )}
         </section>

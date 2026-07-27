@@ -55,6 +55,16 @@ export function AureliusChat() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // The conversation stays pinned to its newest turn — restored history and
+  // fresh replies land in view instead of below the fold of the 55vh box.
+  // Scroll the box itself (scrollIntoView would also scroll the page's main
+  // container and yank Home down to the chat on every load).
+  const scrollBoxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scrollBoxRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, loading]);
+
   // Restore the conversation on mount — the turns were always persisted
   // server-side (that's Aurelius's own continuity); the screen just never
   // asked. Only seeds an empty screen, so it can't clobber a live exchange.
@@ -275,7 +285,7 @@ export function AureliusChat() {
         <span className="text-[10px] text-neutral-500">one box — the whole mind</span>
       </div>
 
-      <div className="flex flex-col gap-2 mb-3 flex-1 min-h-[240px] max-h-[55vh] overflow-y-auto text-sm">
+      <div ref={scrollBoxRef} className="flex flex-col gap-2 mb-3 flex-1 min-h-[240px] max-h-[55vh] overflow-y-auto text-sm">
         {messages.length === 0 && (
           <div className="text-neutral-500">
             Ask anything, give an order, capture a thought, attach photos or video.
