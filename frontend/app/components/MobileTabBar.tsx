@@ -10,11 +10,11 @@ import { usePathname } from "next/navigation";
 import { useNeedsYou } from "../../lib/useNeedsYou";
 
 const TABS: Array<{ label: string; path: string; glyph: string; also?: string[] }> = [
-  { label: "Home", path: "/deck", glyph: "❂" },
-  { label: "Today", path: "/today", glyph: "☀" },
+  { label: "Home", path: "/home", glyph: "❂", also: ["/deck", "/today"] },
   { label: "Decisions", path: "/decisions", glyph: "⇄" },
+  { label: "Calendar", path: "/calendar", glyph: "◷" },
   { label: "Brain", path: "/brain", glyph: "❈" },
-  { label: "More", path: "/more", glyph: "⋯", also: ["/goals", "/aurelius", "/autonomy", "/tools", "/engines", "/traces", "/settings", "/calendar"] },
+  { label: "More", path: "/more", glyph: "⋯", also: ["/goals", "/aurelius", "/autonomy", "/tools", "/engines", "/traces", "/settings", "/console"] },
 ];
 
 export default function MobileTabBar() {

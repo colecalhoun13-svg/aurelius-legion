@@ -2,7 +2,7 @@
 
 // The chrome now comes from the route group's layout — this page just holds
 // the chat. (PR5 of the UX program replaces this with the One Home.)
-import { AureliusChat } from "../../components/AureliusChat";
+import { AureliusChat } from "../../../components/AureliusChat";
 
 export default function Home() {
   return (

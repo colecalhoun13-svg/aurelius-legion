@@ -4,6 +4,7 @@ const nextConfig = {
   // muscle memory keep working (query strings carry over automatically).
   async redirects() {
     return [
+      { source: "/", destination: "/home", permanent: false },
       { source: "/bridge", destination: "/decisions", permanent: false },
       { source: "/inbox", destination: "/decisions?tab=triage", permanent: false },
       { source: "/corpus", destination: "/brain?tab=ask", permanent: false },
