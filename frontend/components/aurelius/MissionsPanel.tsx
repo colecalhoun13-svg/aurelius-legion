@@ -44,10 +44,19 @@ export default function MissionsPanel() {
   const [activity, setActivity] = useState<Activity | null>(null);
   const [objective, setObjective] = useState("");
   const [launching, setLaunching] = useState(false);
+  const [week, setWeek] = useState<{ acted7: number; undone7: number; pendingNow: number } | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/deck");
     if (res.ok) setActivity((await res.json()).activity);
+  }, []);
+
+  // The week's trust-loop counts — how much got done without Cole touching it.
+  useEffect(() => {
+    fetch("/api/scoreboard")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j?.autonomy && setWeek(j.autonomy))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -84,6 +93,16 @@ export default function MissionsPanel() {
           pulse armed
         </span>
       </header>
+
+      {/* The week, counted — the trust loop made visible */}
+      {week && (
+        <p className="text-sm text-neutral-400 -mt-2">
+          This week on its own:{" "}
+          <span className="text-aurelius-gold font-semibold">{week.acted7}</span> handled ·{" "}
+          <span className={week.undone7 > 0 ? "text-amber-300" : "text-neutral-500"}>{week.undone7} undone</span> ·{" "}
+          <span className="text-neutral-500">{week.pendingNow} awaiting you</span>
+        </p>
+      )}
 
       {/* MISSION LAUNCHER — the autonomy front door */}
       <section className="aurelius-panel-frame p-5 space-y-3">

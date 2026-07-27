@@ -7,6 +7,7 @@
 // volume's full text opens in a reader. Deep-linkable via ?doc=<id>.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SparkLine } from "../viz/Spark";
 
 type Shelf = { domain: string; label: string; read: number; total: number; discovered: number; cycles: number };
 type Recent = { id: string; title: string; domain: string; createdAt: string };
@@ -339,7 +340,22 @@ export default function ShelvesPanel() {
   const [q, setQ] = useState("");
   const [sortKey, setSortKey] = useState<"createdAt" | "title" | "domain">("createdAt");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
+  const [growth, setGrowth] = useState<(number | null)[]>([]);
   const pushedRef = useRef(false);
+
+  // The library growing — cumulative volumes by week (last 12).
+  useEffect(() => {
+    fetch("/api/scoreboard")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        const dates: string[] = j?.corpusDates ?? [];
+        if (!dates.length) return;
+        const now = Date.now();
+        const weeks = Array.from({ length: 12 }, (_, i) => now - (11 - i) * 7 * 86400_000);
+        setGrowth(weeks.map((end) => dates.filter((d) => new Date(d).getTime() <= end).length));
+      })
+      .catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -454,6 +470,11 @@ export default function ShelvesPanel() {
       <header className="flex items-baseline justify-between aurelius-rule">
         <h1 className="aurelius-heading text-4xl">The Shelves</h1>
         <span className="flex items-center gap-3 text-sm text-neutral-500">
+          {growth.length > 1 && (growth[growth.length - 1] ?? 0) > (growth[0] ?? 0) && (
+            <span title="volumes collected — last 12 weeks" className="hidden sm:inline-flex">
+              <SparkLine values={growth} width={110} height={30} />
+            </span>
+          )}
           <span>{lib === null ? "…" : `${totalBooks} volumes · ${totalRead} studied`}</span>
           <span className="flex border border-aurelius-gold/30 rounded-lg overflow-hidden text-xs">
             <button
