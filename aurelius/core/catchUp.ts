@@ -110,6 +110,11 @@ const JOBS: CatchUpJob[] = [
     sundayOnly: true,
     run: async () => (await import("../measurement/scoreboard.ts")).computeWeeklySnapshot(),
   },
+  {
+    name: "db_backup",
+    hour: 2,
+    run: async () => (await import("./backup.ts")).runDbBackup(),
+  },
   // The three Sunday learners the check-in council found missing here —
   // without these entries they silently never recovered from a sleeping
   // process, so a codespace nap cost a whole week of learning.

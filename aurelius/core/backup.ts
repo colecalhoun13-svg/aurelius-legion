@@ -1,0 +1,77 @@
+// aurelius/core/backup.ts
+//
+// THE BACKUP LAYER (check-in council PR2). The second brain lives in exactly
+// one database; before this file there was no copy anywhere. Nightly pg_dump
+// (custom format, compressed — restore with pg_restore) into a gitignored
+// dir, pruned to a retention window. Runs at 02:00 via the spine + catch-up,
+// and boot warns loudly when the newest dump is stale (hard rule 3: honest
+// failure, once, with the fix).
+//
+// Deploy notes: the Codespace ships pg_dump; the Railway/Mini runbooks
+// install postgresql-client. On the Mini, point AURELIUS_BACKUP_DIR at the
+// UGREEN NAS mount and this same file becomes the NAS backup — no rework.
+
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import fs from "node:fs";
+import path from "node:path";
+
+const pexec = promisify(execFile);
+
+const BACKUP_DIR = process.env.AURELIUS_BACKUP_DIR ?? path.resolve(process.cwd(), "backups");
+const KEEP = Math.max(2, Number(process.env.AURELIUS_BACKUP_KEEP ?? 14));
+const STALE_HOURS = 48;
+
+function listDumps(): { file: string; mtime: number }[] {
+  try {
+    return fs
+      .readdirSync(BACKUP_DIR)
+      .filter((f) => f.startsWith("aurelius-") && f.endsWith(".dump"))
+      .map((f) => ({ file: path.join(BACKUP_DIR, f), mtime: fs.statSync(path.join(BACKUP_DIR, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+  } catch {
+    return [];
+  }
+}
+
+export async function runDbBackup(): Promise<{ ok: boolean; file?: string; bytes?: number; error?: string }> {
+  const url = process.env.DATABASE_URL;
+  if (!url) return { ok: false, error: "DATABASE_URL not set — nothing to back up" };
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const file = path.join(BACKUP_DIR, `aurelius-${stamp}.dump`);
+  try {
+    await pexec("pg_dump", ["--no-owner", "--no-privileges", "-Fc", "-f", file, url], {
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    const bytes = fs.statSync(file).size;
+    if (bytes < 1024) throw new Error(`dump suspiciously small (${bytes} bytes)`);
+    // Prune beyond retention — newest first, keep KEEP.
+    for (const old of listDumps().slice(KEEP)) {
+      try { fs.unlinkSync(old.file); } catch {}
+    }
+    console.log(`[backup] ${path.basename(file)} written (${(bytes / 1024).toFixed(0)} KB), keeping ${KEEP}`);
+    return { ok: true, file, bytes };
+  } catch (err: any) {
+    try { fs.unlinkSync(file); } catch {}
+    const msg = err?.message ?? String(err);
+    console.error(
+      `[backup] FAILED: ${msg}` +
+        (/ENOENT/.test(msg) ? " — pg_dump not installed; apt-get install postgresql-client" : "")
+    );
+    return { ok: false, error: msg };
+  }
+}
+
+/** Boot honesty: one loud line when the brain has no fresh copy. */
+export function warnIfBackupStale(): void {
+  const dumps = listDumps();
+  if (dumps.length === 0) {
+    console.warn(`[backup] NO BACKUPS EXIST in ${BACKUP_DIR} — the second brain has one copy. First dump runs tonight at 02:00 (or run: npx tsx -e "import('./core/backup.ts').then(m=>m.runDbBackup())")`);
+    return;
+  }
+  const ageH = (Date.now() - dumps[0]!.mtime) / 3600_000;
+  if (ageH > STALE_HOURS) {
+    console.warn(`[backup] newest dump is ${Math.round(ageH)}h old (> ${STALE_HOURS}h) — the 02:00 job hasn't run; check the process was awake overnight.`);
+  }
+}
