@@ -57,8 +57,9 @@ These are acceptance tests, not vibes. Aurelius is "there" when all of them hold
   current tasks, goals, and reasoning.
 - Runs for days without crashing. Recovers from restart without losing memory,
   tasks, or goals.
-- Every decision, route, model call, tool call, and error is visible in the cockpit.
-  Cole can debug Aurelius from the cockpit alone.
+- Every decision, route, model call, tool call, and error is visible in-app.
+  Cole can debug Aurelius from the Traces surface alone (`/aurelius?tab=traces` —
+  the cockpit's heir after the 2026-07 UX consolidation).
 
 **Added by the newer vision:**
 
@@ -172,11 +173,13 @@ recall. **Built.**
 Note/Capture · DailyPlan · Ritual/RitualInstance · CalendarEvent · **BridgeSignal**
 (the core surface) · IntentActionGap (the push). **Built.**
 
-**Surfaces:**
-- **Operator lane** — Command Deck + Today (Cole's day, plan, capture).
-- **Observability lane** — Cockpit (22 telemetry widgets) + Substrate (review and
-  steer Aurelius's autonomous work). "Debug from the cockpit alone" lives here.
-- **Corpus** — document/knowledge browser.
+**Surfaces (post the 2026-07 UX consolidation — grouped nav, nine doors):**
+- **The day** — One Home (deck+today+chat merged) · Decisions (signals+triage) · Calendar.
+- **Direction** — Goals & Projects (with the Scoreboard) · Brain (shelves+reader, ask, syntheses).
+- **Aurelius** — Missions | Autonomy dial | Traces, one tabbed page. "Debug from
+  the cockpit alone" now lives in Traces (the 22-widget cockpit was deleted in the
+  consolidation; tracing itself is unchanged and total).
+- **Setup** — Tools · Engines · Settings.
 
 **Notifications (OG Part XIX):** morning briefing (tactical) · midday check
 (corrective, silent when on pace) · nightly debrief (reflective) · overload/
@@ -191,7 +194,9 @@ via Telegram; PWA web push at deploy).**
 
 ## 4. Honest current state (code-grounded — supersedes older snapshots)
 
-**Built and working (through 2026-07-13):**
+**Built and working (through 2026-07-27 — see the state log at the end for the
+latest entry; older bullets below describe earlier eras and are kept for
+lineage):**
 - 6-provider LLM router with failover, operator-as-lens prompt assembly, multi-
   operator routing, Claude 5 tier map.
 - Four-layer brain live: Living Knowledge + propose→confirm, Compiled Understanding
@@ -203,8 +208,8 @@ via Telegram; PWA web push at deploy).**
   no send scope), FRED macro data.** Training engine (volume, 1RM, two-pass feedback).
 - Missions execute (plan → research → synthesize → report → auto-ingest). Self-writing
   wiki / Living Documents. Weekly scoreboard, knowledge freshness, corrections capture.
-- Structured tracing on every scheduled run + request; 22 live cockpit widgets on real
-  Postgres. Provider failover, missed-schedule catch-up, conversation continuity.
+- Structured tracing on every scheduled run + request, surfaced in the Traces tab.
+  Provider failover, missed-schedule catch-up, conversation continuity.
 - Prisma/Postgres real; pgvector. Next.js cockpit; imperial black+gold; PWA installable.
 - Reliability primitives: catch-up sweep, continuity, honest-failure guards.
 
@@ -588,12 +593,38 @@ been fully built and verified.
   stale — backend `tsc --noEmit` is clean (exit 0). That path stays parked (Block 11),
   but it does not currently break the type-check.
 
-**The frontier now** is (1) making the built acting/trust layer **legible and operable
-from the UI** — undo works only via chat (no button/route), grants happen only via chat,
-and the trust ledger has no screen; the sharpest next arc is an Autonomy surface (active
-grants + track record + `suggestNextGrant` + one-tap grant/revoke) and wiring undo to a
-button on `/deck` and `/bridge`; (2) the outward/income engines (still correctly parked
-pending Cole's real business data; the draft→gate→confirm rails already exist); and
-(3) always-on deployment (Mac Mini) to prove "runs for days." **Blocked on Cole:** the
-embeddings provider switch (keys are in — confirm `EMBEDDINGS_PROVIDER` isn't pinned to
-`mock`), and the always-on deploy.
+- **2026-07-27 — the twelve days the last entry missed (PRs #15–#42), plus the
+  check-in council's hardening.** Native structured tool calling across all
+  providers; capability-gap sweep; corpus forget path; generic Sheets read/write;
+  504-resilient chat. The full **UX consolidation**: 17 pages → grouped nav
+  (nine doors, four whisper-cap groups), One Home (deck+today+chat merged),
+  One Box chat, Brain (bookcase shelves + **click-a-spine reader** + catalog +
+  ask + syntheses), Decisions (signals+triage), the **/aurelius super-page**
+  (Missions | Autonomy dial | Traces — the old frontier (1) is DONE: one-tap
+  grant/revoke, trust ledger on screen, undo buttons on Home/Decisions/Autonomy),
+  ⌘K jump palette, mobile 5-tab chrome, PWA share-target. The
+  **`knowledge.apply_proposal` keyhole** (hard rule 1's third path): research/
+  ingestion-born proposals finalize under grant through the executor — receipts +
+  one-tap undo; chat/observer/freshness keep the confirm loop; autonomy+persona
+  scopes never auto-apply (the legacy escalation matrix that bypassed the
+  executor was deleted). **Research retrieval fixed** (the 9-for-9 dead-pull
+  bug): subject-not-prompt queries, a relevance gate, and real book sources
+  (Wikipedia/Open Library/**Gutenberg full primary text**) for work units.
+  **Dashboards**: Scoreboard tab (follow-through, day bars, habit grids, goal
+  pace, llmDependenceRate trend). **Safety**: `AURELIUS_API_KEY` lock on the
+  API (mandatory before any always-on deploy), RSS ingest defused, nightly
+  `pg_dump` backups with boot staleness warning, catch-up covers all Sunday
+  learners. Legacy surfaces deleted (~900 LOC: cockpit remnants, /deck, /today,
+  /console, dead autonomy loop stubs). Smoke suite **218/218**; `tsc` clean
+  both sides; prod build green.
+
+**The frontier now** is (1) **fuel, not features** — the check-in council's
+verdict: live embeddings (switch off `mock` + backfill), the two grants flipped
+on the Autonomy tab, first real athlete sheet handed over; (2) **always-on** to
+prove "runs for days" — Railway as the near-term soak (runbook:
+`docs/DEPLOY_RAILWAY.md`; the API lock is a hard precondition), Mac Mini + UGREEN
+as the sovereign end-state (`docs/DEPLOY_MAC_MINI.md` — the backup layer already
+points at the NAS with one env var); (3) the trust flywheel — `suggestNextGrant`
+pushed into the briefing/scoreboard so grants widen on evidence; and (4) the
+outward/income engines (still correctly parked pending Cole's real business
+data; the draft→gate→confirm rails already exist).

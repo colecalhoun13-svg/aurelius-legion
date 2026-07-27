@@ -22,8 +22,6 @@ import { xaiAdapter } from "../engines/xaiClient.ts";
 import { researchEngineAdapter } from "../research/researchEngine.ts";
 import { reflectionEngineAdapter } from "../autonomy/reflectionEngine.ts";
 
-// DEFERRED — Phase 9 (Nervous System): autonomy orchestrator
-// import { autonomyEngineAdapter } from "../autonomy/autonomyEngine.ts";
 
 // DEFERRED — Phase 8 (Self-Upgrade / Memory Evolution): synthesis layer
 // import { memoryEvolutionEngineAdapter } from "../memory/memoryEvolutionEngine.ts";
@@ -81,6 +79,5 @@ export function registerAllEngines() {
   registerEngine(reflectionEngineAdapter);
 
   // DEFERRED registrations:
-  // registerEngine(autonomyEngineAdapter);          // Phase 9
   // registerEngine(memoryEvolutionEngineAdapter);   // Phase 8
 }

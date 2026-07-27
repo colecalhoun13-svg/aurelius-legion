@@ -13,6 +13,10 @@ const nextConfig = {
       { source: "/projects", destination: "/goals", permanent: false },
       { source: "/autonomy", destination: "/aurelius?tab=autonomy", permanent: false },
       { source: "/traces", destination: "/aurelius?tab=traces", permanent: false },
+      // The legacy trio deleted on the check-in council's ruling — bookmarks live on.
+      { source: "/deck", destination: "/home", permanent: false },
+      { source: "/today", destination: "/home", permanent: false },
+      { source: "/console", destination: "/home", permanent: false },
     ];
   },
   experimental: {
