@@ -883,6 +883,34 @@ async function main() {
     await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
   }
 
+  console.log("── research retrieval: relevance gate + work/topic routing (9-for-9 fix) ──");
+  {
+    const { filterRelevant } = await import("../research/researchAdapters/relevance.ts");
+    const subject = "Why We Sleep — Matthew Walker";
+    const junk = [
+      { title: "Measurement of the ATLAS detector jet response", snippet: "pp collisions at 13 TeV", source: "arxiv" as const, confidence: 0.75 },
+      { title: "Search for supersymmetry in final states", snippet: "ATLAS collaboration", source: "arxiv" as const, confidence: 0.75 },
+    ];
+    const real = [
+      { title: "Why We Sleep", snippet: "Matthew Walker's book on sleep science", source: "wikipedia" as const, confidence: 0.85 },
+    ];
+    const gated = filterRelevant(subject, [...junk, ...real], 0.34);
+    check("relevance gate kills ATLAS junk, keeps the real source", gated.length === 1 && gated[0]!.title === "Why We Sleep");
+    check("gate passes everything through for an empty subject", filterRelevant("— · —", junk).length === junk.length);
+
+    const { CURRICULUM, parseDiscoveries } = await import("../learning/curriculum.ts");
+    const strat = CURRICULUM.find((t) => t.domain === "strategy");
+    check(
+      "curriculum units carry work/topic kind (books route to book sources)",
+      !!strat && strat.canon.some((u) => u.kind === "work") && strat.canon.some((u) => u.kind === "topic")
+    );
+    const discovered = parseDiscoveries("1. Peak — Anders Ericsson\n2. deliberate practice and skill acquisition", "test field", []);
+    check(
+      "discovered units get kinds (author dash = work, phrase = topic)",
+      discovered.length === 2 && discovered[0]!.kind === "work" && discovered[1]!.kind === "topic"
+    );
+  }
+
   console.log("── ingestion keyhole: knowledge.apply_proposal (Cole's ruling) ──");
   {
     const { registerAllActions } = await import("../autonomy/registerActions.ts");
