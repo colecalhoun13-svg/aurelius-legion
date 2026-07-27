@@ -27,6 +27,7 @@ export async function POST(request: Request) {
             status: body.status ?? "today",
             priority: body.priority,
             domain: body.domain,
+            scheduledFor: body.scheduledFor, // calendar quick-add pins a day
           })
         );
       case "completeTask":
