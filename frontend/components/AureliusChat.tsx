@@ -230,13 +230,56 @@ export function AureliusChat() {
     }
   };
 
-  return (
-    <div className="flex flex-col max-w-xl w-full mx-auto border border-zinc-800 rounded-lg p-4 bg-black/60 text-zinc-100">
-      <h2 className="text-lg font-semibold mb-3">Aurelius OS v3.4 — Console</h2>
+  // Staged thinking copy (Outsider's ruling: an in-thread indicator with
+  // honest stages beats streaming). Ticks while loading so the copy advances.
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!loading) { setElapsed(0); return; }
+    const started = Date.now();
+    const t = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 5000);
+    return () => clearInterval(t);
+  }, [loading]);
+  const thinkingCopy =
+    elapsed < 5 ? "Thinking…" :
+    elapsed < 20 ? "Working on it…" :
+    elapsed < 45 ? "Reading and reasoning — long answers take a minute." :
+    "Still at it — deep work under way. This will land, even if you step away.";
 
-      <div className="flex flex-col gap-2 mb-3 max-h-80 overflow-y-auto text-sm">
+  // The deterministic +Task chip: Cole's task list is never trusted to
+  // inference. Straight to the API, instant, with a receipt in the thread.
+  const addTaskDirect = async () => {
+    const title = input.trim();
+    if (!title) return;
+    setInput("");
+    const d = new Date();
+    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    try {
+      const res = await fetch("/api/today/actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "createTask", title, status: "today", date }),
+      });
+      setMessages((prev) => [
+        ...prev,
+        { role: "aurelius", content: res.ok ? `✦ Task for today: “${title}” — on the deck.` : `Couldn't add “${title}” — try again in a moment.` },
+      ]);
+    } catch {
+      setMessages((prev) => [...prev, { role: "aurelius", content: `Couldn't add “${title}” — try again in a moment.` }]);
+    }
+  };
+
+  return (
+    <div className="flex flex-col w-full flex-1 aurelius-panel-frame border border-aurelius-gold/25 bg-black/60 text-aurelius-text p-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <h2 className="aurelius-heading text-base text-aurelius-gold/80 tracking-widest">Aurelius</h2>
+        <span className="text-[10px] text-neutral-500">one box — the whole mind</span>
+      </div>
+
+      <div className="flex flex-col gap-2 mb-3 flex-1 min-h-[240px] max-h-[55vh] overflow-y-auto text-sm">
         {messages.length === 0 && (
-          <div className="text-zinc-500">Type a message — or attach photos/videos — to speak with Aurelius.</div>
+          <div className="text-neutral-500">
+            Ask anything, give an order, capture a thought, attach photos or video.
+          </div>
         )}
 
         {messages.map((m, idx) => (
@@ -244,39 +287,49 @@ export function AureliusChat() {
             key={idx}
             className={
               m.role === "user"
-                ? "self-end bg-zinc-800 px-3 py-2 rounded-lg max-w-[80%]"
-                : "self-start bg-zinc-900 px-3 py-2 rounded-lg max-w-[80%] border border-yellow-600/40"
+                ? "self-end bg-aurelius-gold/15 border border-aurelius-gold/25 px-3 py-2 rounded-lg max-w-[85%]"
+                : "self-start bg-black/50 px-3 py-2 rounded-lg max-w-[85%] border border-aurelius-gold/30"
             }
           >
-            <div className="text-[10px] uppercase tracking-wide mb-1 text-zinc-500">
+            <div className="text-[10px] uppercase tracking-widest mb-1 text-neutral-500">
               {m.role === "user" ? "Operator" : "Aurelius"}
             </div>
             {m.attachments && m.attachments.length > 0 && (
-              <div className="text-[11px] text-yellow-500/80 mb-1 space-y-0.5">
+              <div className="text-[11px] text-aurelius-gold/80 mb-1 space-y-0.5">
                 {m.attachments.map((a, i) => (
                   <div key={i}>{a.kind === "image" ? "🖼" : "🎬"} {a.name}</div>
                 ))}
               </div>
             )}
-            <div className="whitespace-pre-wrap">{m.content}</div>
+            <div className="whitespace-pre-wrap leading-relaxed">{m.content}</div>
           </div>
         ))}
+
+        {loading && (
+          <div className="self-start bg-black/50 px-3 py-2 rounded-lg max-w-[85%] border border-aurelius-gold/30">
+            <div className="text-[10px] uppercase tracking-widest mb-1 text-neutral-500">Aurelius</div>
+            <div className="flex items-center gap-2 text-neutral-400">
+              <span className="inline-block w-2 h-2 rounded-full bg-aurelius-gold animate-pulse" />
+              {thinkingCopy}
+            </div>
+          </div>
+        )}
       </div>
 
-      {error && <div className="text-xs text-red-400 mb-2">{error}</div>}
+      {error && <div className="text-xs text-amber-300/90 mb-2">{error}</div>}
 
       {attachments.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 mb-2">
           {attachments.map((a, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs bg-zinc-900 border border-yellow-600/30 rounded px-2 py-1.5">
+            <div key={i} className="flex items-center gap-2 text-xs bg-black/50 border border-aurelius-gold/30 rounded px-2 py-1.5">
               {a.kind === "image" ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={a.dataUrl} alt="attachment" className="h-9 w-9 object-cover rounded" />
               ) : (
                 <span className="text-lg">🎬</span>
               )}
-              <span className="text-zinc-300 max-w-[140px] truncate">{a.file.name}</span>
-              <button onClick={() => removeAttachment(i)} className="text-zinc-500 hover:text-red-400" aria-label="remove">✕</button>
+              <span className="text-neutral-300 max-w-[140px] truncate">{a.file.name}</span>
+              <button onClick={() => removeAttachment(i)} className="text-neutral-500 hover:text-red-400" aria-label="remove">✕</button>
             </div>
           ))}
         </div>
@@ -295,23 +348,31 @@ export function AureliusChat() {
           onClick={() => fileRef.current?.click()}
           disabled={loading}
           title="Attach photos or videos"
-          className="px-3 py-2 text-sm rounded bg-zinc-800 border border-zinc-700 hover:border-yellow-500 disabled:opacity-50"
+          className="min-w-[44px] px-3 py-2 text-sm rounded-lg bg-black/50 border border-aurelius-gold/30 hover:border-aurelius-gold/70 disabled:opacity-50"
         >
           📎
         </button>
         <input
-          className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-yellow-500"
-          placeholder="Ask Aurelius anything, or attach photos/videos..."
+          className="flex-1 bg-black/50 border border-aurelius-gold/30 rounded-lg px-3 py-2 text-sm outline-none focus:border-aurelius-gold/70 placeholder:text-neutral-600"
+          placeholder="Talk to Aurelius…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
         />
         <button
+          onClick={addTaskDirect}
+          disabled={loading || !input.trim()}
+          title="Make this exact text a task for today — instant, no AI in the loop"
+          className="px-3 py-2 text-xs rounded-lg border border-aurelius-gold/40 text-aurelius-gold hover:bg-aurelius-gold/15 disabled:opacity-40"
+        >
+          +Task
+        </button>
+        <button
           onClick={sendMessage}
           disabled={loading}
-          className="px-4 py-2 text-sm rounded bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="px-4 py-2 text-sm font-semibold rounded-lg bg-aurelius-gold text-black hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading ? "Thinking..." : "Send"}
+          Send
         </button>
       </div>
     </div>
