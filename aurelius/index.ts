@@ -1288,6 +1288,8 @@ import { startTelegramBridge, sendToCole } from "./telegram/bot.ts";
   await warmupDb();
   const { reapStaleActing } = await import("./autonomy/executor.ts");
   await reapStaleActing();
+  // Backup honesty at every boot: one loud line if the brain has no fresh copy.
+  import("./core/backup.ts").then((m) => m.warnIfBackupStale()).catch(() => {});
   // Seeds run AFTER warmup (they used to race it and lose to a cold Neon —
   // "[rituals] seed failed ... Can't reach database server" at every cold
   // boot). Both are idempotent upserts, so post-warmup is the honest slot.
@@ -1467,6 +1469,14 @@ scheduleNamed("weekly_scoreboard", "0 20 * * 0", "weekly scoreboard", () => {
   runTraced("schedule", "weekly_scoreboard", () => computeWeeklySnapshot()).catch((err) =>
     console.error("[scoreboard] failed:", err)
   );
+});
+// Nightly backup — 02:00: pg_dump the whole brain, prune to retention.
+// The one copy of everything Aurelius knows stops being the only copy.
+scheduleNamed("db_backup", "0 2 * * *", "nightly database backup", () => {
+  runTraced("schedule", "db_backup", async () => {
+    const { runDbBackup } = await import("./core/backup.ts");
+    return runDbBackup();
+  }).catch((err) => console.error("[backup] failed:", err));
 });
 // Curriculum ingest — Sunday 22:00: Aurelius studies the next unit of each
 // field's canon (strategy → Sun Tzu, Musashi, …; wealth → Buffett, Taleb, …;

@@ -883,6 +883,16 @@ async function main() {
     await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
   }
 
+  console.log("── nightly backup: pg_dump the brain (council PR2) ──");
+  {
+    const { runDbBackup, warnIfBackupStale } = await import("../core/backup.ts");
+    const res = await runDbBackup();
+    check("pg_dump produces a real dump file", res.ok === true && (res.bytes ?? 0) > 1024, res.error ?? "");
+    warnIfBackupStale(); // must not throw either way
+    check("stale-backup boot check runs clean", true);
+    if (res.file) { const fs = await import("node:fs"); try { fs.unlinkSync(res.file); } catch {} }
+  }
+
   console.log("── research retrieval: relevance gate + work/topic routing (9-for-9 fix) ──");
   {
     const { filterRelevant } = await import("../research/researchAdapters/relevance.ts");
