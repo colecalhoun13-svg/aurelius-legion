@@ -12,23 +12,28 @@ and everything here transfers: same env, same process, same backup script
 > must be set on the service before the first deploy. An always-on backend
 > without the lock is an open grant-writer on the public internet.
 
-## What runs where
+## What runs where — TWO services, one project
 
 | Piece | Where | Why |
 |---|---|---|
-| Backend (Express + spine + Telegram) | **Railway service** (this doc) | must be always-on |
+| Backend (Express + spine + Telegram) | **Railway service 1** (`aurelius/Dockerfile`) | must be always-on |
+| Frontend (the app — Next.js PWA) | **Railway service 2** (`Dockerfile.frontend` at repo root) | gives the app a PERMANENT URL — open it from your phone anytime, no codespace |
 | Postgres + pgvector | **Neon** (already there) | nothing moves |
-| Frontend (Next.js PWA) | stays wherever it is (Codespace now; Railway 2nd service or Vercel later) | doesn't need to be always-on — Telegram is the push surface |
-| Backups | Railway **volume** mounted at `/data/backups` | nightly pg_dump lands here |
+| Backups | Railway **volume** on service 1, mounted at `/data/backups` | nightly pg_dump lands here |
+
+**Where you find the app after deploying:** the frontend service's generated
+domain — `https://<something>.up.railway.app`. Open it on your phone → share
+menu → **Add to Home Screen** → the crest icon on your phone is now the app's
+permanent home, codespace or no codespace.
 
 Telegram needs **no webhook** — the bot long-polls outbound from inside the
 process, so it works from any host with no inbound config.
 
-## Steps (~30 minutes, one-time)
+## Service 1 — the backend (~20 minutes, one-time)
 
 1. **railway.com → New Project → Deploy from GitHub repo** → pick
-   `aurelius-legion`. When asked for a root directory, set **`aurelius/`**
-   (the Dockerfile there is the build recipe — Railway auto-detects it).
+   `aurelius-legion`. In the service's **Settings → Root Directory**, set
+   **`aurelius`** (its Dockerfile is the build recipe — Railway auto-detects it).
 2. **Variables** (service → Variables tab). Copy your working values from the
    codespace `.env` / Codespaces secrets:
    - `DATABASE_URL` — the **Neon** URL (never the local sandbox one)
@@ -45,19 +50,46 @@ process, so it works from any host with no inbound config.
 3. **Volume**: service → Settings → Volumes → mount at **`/data`** (1 GB is
    plenty). This is where nightly dumps live; without it they vanish on
    redeploy.
-4. **Networking**: Settings → Networking → **Generate Domain** ONLY if the
-   frontend/phone must reach this backend directly (OAuth connects, chat when
-   the frontend isn't sharing a codespace). With the API key set this is safe;
-   without a need, skip it — private is private.
-5. **Google OAuth redirect**: if you generated a domain and want to (re)connect
-   Google from it, add `https://<your-domain>/api/calendar/callback` to the
-   OAuth client's authorized redirects in Google Cloud Console. Existing tokens
-   keep working — they refresh from any host; you only need this for FUTURE
-   re-connects.
+4. **Networking**: Settings → Networking → **Generate Domain** — with the
+   two-service setup you WANT this one public too: the phone's Connect links
+   (Google/Gmail/Instagram OAuth) go straight to the backend. The API key
+   makes this safe; OAuth callbacks are the only open routes.
+5. **Google OAuth redirect**: add
+   `https://<backend-domain>/api/calendar/callback` (and the gmail/instagram
+   equivalents you use) to the OAuth client's authorized redirects in Google
+   Cloud Console. Existing tokens keep working — they refresh from any host;
+   this matters only for FUTURE re-connects.
 6. **Deploy** fires on push to `main` from then on. Watch the boot log for:
    - `[auth]` — must NOT say DORMANT (the key is set)
    - `[backup]` — the staleness warning fires the first boot, then never again
    - the ENV CHECK block — every key you set shows `true`
+
+## Service 2 — the app itself (~10 minutes)
+
+1. Same project → **New Service → GitHub repo** → `aurelius-legion` again.
+2. **Settings → Build**: leave Root Directory at the repo root and set
+   **Dockerfile Path = `Dockerfile.frontend`** (it builds BOTH trees — the
+   frontend's API routes import backend modules directly, so `frontend/`
+   alone can't build).
+3. **Variables** (frontend service):
+   - `DATABASE_URL` — same Neon URL (the app's API routes read the DB directly)
+   - `AURELIUS_API_KEY` — same value as the backend (unlocks the chat proxy)
+   - `BACKEND_ORIGIN` — the backend's **private** URL from Railway's service
+     panel (e.g. `http://aurelius-backend.railway.internal:3001`) so chat
+     rides the internal network
+   - `NEXT_PUBLIC_BACKEND_URL` — the backend's **public** domain from step 4
+     above (baked into the build — it's where the phone's Connect buttons point)
+   - engine/embeddings keys the API routes use: `ANTHROPIC_API_KEY`,
+     `EMBEDDINGS_PROVIDER` + its key
+4. **Settings → Networking → Generate Domain.** That domain is THE APP:
+   `https://<something>.up.railway.app`. Open it on your phone → share menu →
+   **Add to Home Screen** → the crest on your home screen now opens Aurelius
+   from anywhere, forever, codespace closed.
+5. Redeploys of both services fire automatically on every push to `main`.
+
+*(Build recipe verified against the identical native sequence — two `npm ci`,
+`prisma generate`, prod `next build`, all green; the first Railway build log
+is the live confirmation.)*
 
 ## The first-week soak (this is the point)
 
@@ -69,7 +101,10 @@ process, so it works from any host with no inbound config.
 - Any morning: a fresh dump sits in `/data/backups` (Railway → service →
   Volume browser, or check the boot log's backup line).
 
+- Any moment: the app answers at its permanent domain from your phone with
+  the codespace closed — that's the "where do I find it" answer, forever.
+
 Two clean weeks = the "runs for days" DoD line is proven, and the Mini
 migration becomes: run the same env on the Mini, point
-`AURELIUS_BACKUP_DIR` at the UGREEN mount, flip DNS/Tailscale, delete the
-Railway service.
+`AURELIUS_BACKUP_DIR` at the UGREEN mount, flip DNS/Tailscale, delete both
+Railway services.
