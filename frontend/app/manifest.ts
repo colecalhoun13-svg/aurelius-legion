@@ -6,14 +6,14 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Aurelius OS",
     short_name: "Aurelius",
     description: "Operator-class second mind. Operate with discipline.",
-    start_url: "/deck",
+    start_url: "/home",
     display: "standalone",
     orientation: "portrait",
     background_color: "#0a0a0a",
     theme_color: "#0a0a0a",
     // Long-press the icon → straight to the daily verbs.
     shortcuts: [
-      { name: "Capture a thought", url: "/deck?capture=1" },
+      { name: "Capture a thought", url: "/home" },
       { name: "Decisions", url: "/decisions" },
       { name: "Ask the brain", url: "/brain?tab=ask" },
     ],

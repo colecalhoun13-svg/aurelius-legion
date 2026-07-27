@@ -18,7 +18,7 @@ const GROUPS: Array<{ title: string; items: Array<{ name: string; path: string; 
   {
     title: "The engine room",
     items: [
-      { name: "Chat console", path: "/", glyph: "❯", desc: "The plain conversation view" },
+      { name: "Chat console", path: "/console", glyph: "❯", desc: "The plain conversation view" },
       { name: "Tools", path: "/tools", glyph: "⚒", desc: "Integrations and what unlocks them" },
       { name: "Engines", path: "/engines", glyph: "⚙", desc: "Which minds answer which calls" },
       { name: "Traces", path: "/traces", glyph: "🜸", desc: "Every decision, step by step" },

@@ -14,20 +14,8 @@ export type OperatorDefinition = {
 export const operatorRegistry: Record<string, OperatorDefinition> = {
   home: {
     name: "Home",
-    path: "/deck",
-    description: "The day: greeting, biggest risk, what needs you",
-  },
-  today: {
-    // Folds into Home when the One Home ships (UX-PR5).
-    name: "Today",
-    path: "/today",
-    description: "Plan, tasks, habits, capture",
-  },
-  chat: {
-    // Becomes Home's spine when the One Box ships (UX-PR5/6).
-    name: "Chat",
-    path: "/",
-    description: "Talk to Aurelius",
+    path: "/home",
+    description: "The day, what needs you, and the conversation — one screen",
   },
   decisions: {
     name: "Decisions",
