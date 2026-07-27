@@ -24,7 +24,12 @@ export async function POST(request: Request) {
   try {
     const res = await fetch(`${BACKEND_ORIGIN}/api/aurelius`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        // Server-only env (never NEXT_PUBLIC) — unlocks the backend when its
+        // AURELIUS_API_KEY lock is set; harmless extra header when it isn't.
+        ...(process.env.AURELIUS_API_KEY ? { "x-aurelius-key": process.env.AURELIUS_API_KEY } : {}),
+      },
       body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
