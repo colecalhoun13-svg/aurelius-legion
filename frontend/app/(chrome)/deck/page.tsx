@@ -5,6 +5,7 @@
 // Everything else lives on its own page. Calm surface, depth one click away.
 
 import { useCallback, useEffect, useState } from "react";
+import { QUOTES } from "../../../lib/quotes";
 
 type SignalAction = { label: string; action: string; payload?: any };
 type Signal = {
@@ -54,43 +55,7 @@ function greeting(): string {
   return "Evening";
 }
 
-// A fresh quote every load — the persona's warrior-philosopher lineage
-// (aureliusPersona.ts): tested through action, written with brutal economy.
-const QUOTES: [string, string][] = [
-  ["You have power over your mind — not outside events. Realize this, and you will find strength.", "Marcus Aurelius"],
-  ["Waste no more time arguing about what a good man should be. Be one.", "Marcus Aurelius"],
-  ["The impediment to action advances action. What stands in the way becomes the way.", "Marcus Aurelius"],
-  ["If it is not right, do not do it; if it is not true, do not say it.", "Marcus Aurelius"],
-  ["Confine yourself to the present.", "Marcus Aurelius"],
-  ["The best revenge is to be unlike him who performed the injury.", "Marcus Aurelius"],
-  ["Very little is needed to make a happy life; it is all within yourself, in your way of thinking.", "Marcus Aurelius"],
-  ["It is not death that a man should fear, but he should fear never beginning to live.", "Marcus Aurelius"],
-  ["We suffer more often in imagination than in reality.", "Seneca"],
-  ["Luck is what happens when preparation meets opportunity.", "Seneca"],
-  ["He who is brave is free.", "Seneca"],
-  ["Begin at once to live, and count each separate day as a separate life.", "Seneca"],
-  ["It is a rough road that leads to the heights of greatness.", "Seneca"],
-  ["No man is free who is not master of himself.", "Epictetus"],
-  ["First say to yourself what you would be; and then do what you have to do.", "Epictetus"],
-  ["It's not what happens to you, but how you react to it that matters.", "Epictetus"],
-  ["Don't explain your philosophy. Embody it.", "Epictetus"],
-  ["The greater the difficulty, the more glory in surmounting it.", "Epictetus"],
-  ["Dwell on the beauty of life. Watch the stars, and see yourself running with them.", "Marcus Aurelius"],
-  ["Think of yourself as dead. You have lived your life. Now take what's left and live it properly.", "Marcus Aurelius"],
-  ["When you arise in the morning, think of what a precious privilege it is to be alive.", "Marcus Aurelius"],
-  ["In the midst of chaos, there is also opportunity.", "Sun Tzu"],
-  ["The supreme art of war is to subdue the enemy without fighting.", "Sun Tzu"],
-  ["Victorious warriors win first and then go to war.", "Sun Tzu"],
-  ["Do nothing that is of no use.", "Miyamoto Musashi"],
-  ["You must understand that there is more than one path to the top of the mountain.", "Miyamoto Musashi"],
-  ["Today is victory over yourself of yesterday.", "Miyamoto Musashi"],
-  ["Nature does not hurry, yet everything is accomplished.", "Lao Tzu"],
-  ["A journey of a thousand miles begins with a single step.", "Lao Tzu"],
-  ["Mastering others is strength. Mastering yourself is true power.", "Lao Tzu"],
-  ["Character is destiny.", "Heraclitus"],
-  ["No man ever steps in the same river twice.", "Heraclitus"],
-  ["There is surely nothing other than the single purpose of the present moment.", "Hagakure"],
-]
+// The day's quote comes from the shared lineage (lib/quotes.ts).
 
 
 
