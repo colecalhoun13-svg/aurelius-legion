@@ -229,6 +229,21 @@ export async function listCorpus(limit = 50) {
 }
 
 /**
+ * One document, whole — including contentText, which listCorpus deliberately
+ * omits. This is the Reader's source: Cole opening a book off the shelf.
+ */
+export async function getCorpusDoc(id: string) {
+  return prisma.corpusDocument.findUnique({
+    where: { id },
+    select: {
+      id: true, title: true, sourceType: true, sourceUrl: true,
+      domain: true, summary: true, chunkCount: true, createdAt: true,
+      contentText: true,
+    },
+  });
+}
+
+/**
  * The awareness block — injected into every prompt so Aurelius knows
  * what's in its own library without being asked.
  */
