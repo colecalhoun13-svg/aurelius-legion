@@ -78,6 +78,14 @@ export const ACTION_CLASSES: ActionClass[] = [
       "Draft SOPs and workflow docs into the Business OS living document.",
     gate: "propose→confirm before it becomes canonical",
   },
+  {
+    key: "knowledge.apply_proposal",
+    operator: "knowledge",
+    tier: "inward",
+    description:
+      "File what it learns from research and ingestion straight into Living Knowledge — no per-item confirm; every write lands as a receipt with one-tap undo.",
+    gate: "scope guards by construction — autonomy and persona proposals still stop for Cole; undo restores the prior value",
+  },
 
   // ── Outward — NEVER grantable, Cole confirms every instance ─────────
   {

@@ -19,9 +19,12 @@ import { prisma } from "../core/db/prisma.ts";
 import { setKnowledge, getKnowledge } from "./store.ts";
 import { writeCache } from "../compiled/cache.ts";
 import { getIntentClass } from "./intentClasses.ts";
-import { isAutoApproved } from "./escalation.ts";
+import { isAutoApproved, ESCALATION_SCOPE } from "./escalation.ts";
 import type { KnowledgeSourceType } from "./types.ts";
 import type { TaggedSignature } from "../compiled/types.ts";
+
+/** Where a proposal was born — decides whether the ingestion keyhole applies. */
+export type ProposalOrigin = "chat" | "research" | "ingestion" | "observer" | "freshness";
 
 export type ProposalStatus =
   | "pending"
@@ -74,6 +77,7 @@ export type CreateProposalInput = {
   proposedValue: any;
   rationale: string;
   coleNaturalLanguage: string;
+  origin?: ProposalOrigin;
 };
 
 export async function createProposal(
@@ -166,6 +170,43 @@ export async function createProposal(
     console.error("[proposals] escalation check failed — staying pending:", err);
   }
 
+  // THE INGESTION KEYHOLE (Cole's ruling: the per-item confirm chore was "too
+  // involved"). Research/ingestion-born proposals may FINALIZE under the
+  // granted inward class `knowledge.apply_proposal` — through the executor, so
+  // every write lands as an acted receipt with a one-tap Undo that restores
+  // the prior value. Guards by construction: chat/observer/freshness proposals
+  // keep the confirm loop (Cole's own words, his voice, and re-anchoring stale
+  // truth all deserve his eyes), and the autonomy (hard rule 1) and persona
+  // (one voice) scopes never auto-apply no matter what's granted.
+  try {
+    const fromIngestion = input.origin === "research" || input.origin === "ingestion";
+    if (fromIngestion && input.scope !== ESCALATION_SCOPE && input.scope !== "persona") {
+      const { decideAction } = await import("../autonomy/grants.ts");
+      if ((await decideAction("knowledge.apply_proposal")).finalize) {
+        const { executeAction } = await import("../autonomy/executor.ts");
+        const res = await executeAction({
+          actionClass: "knowledge.apply_proposal",
+          operatorId: input.operatorId,
+          sourceType: "reasoning_output",
+          sourceId: proposal.id,
+          prepare: async () => ({
+            title: `Learned: ${input.scope}.${input.key}`,
+            body:
+              `${input.rationale}\n` +
+              `Filed: ${JSON.stringify(input.proposedValue).slice(0, 200)}` +
+              (priorValue !== null ? `\nWas: ${JSON.stringify(priorValue).slice(0, 120)}` : ""),
+            payload: { proposalId: proposal.id, operatorId: input.operatorId },
+          }),
+        });
+        if (res.finalized) {
+          return (await getProposalById(input.operatorId, proposal.id)) ?? proposal;
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[proposals] ingestion keyhole failed — staying pending:", err);
+  }
+
   return proposal;
 }
 
@@ -233,6 +274,10 @@ export type ResolveProposalInput = {
   decision: "confirmed" | "denied" | "corrected";
   coleResponseText: string;
   correctedValue?: any;
+  // Honest provenance for the keyhole path: an auto-filed write is
+  // research_ingestion by aurelius, never dressed up as Cole's conversation.
+  sourceType?: KnowledgeSourceType;
+  updatedBy?: string;
 };
 
 export async function resolveProposal(
@@ -275,10 +320,10 @@ export async function resolveProposal(
         scope: proposal.scope,
         key: proposal.key,
         value: valueToApply,
-        sourceType: "cole_conversation" as KnowledgeSourceType,
+        sourceType: input.sourceType ?? ("cole_conversation" as KnowledgeSourceType),
         sourceId: proposal.id,
         rationale: `${input.decision === "corrected" ? "Corrected" : "Confirmed"} from: "${proposal.coleNaturalLanguage}" → "${input.coleResponseText}"`,
-        updatedBy: "cole",
+        updatedBy: input.updatedBy ?? "cole",
       });
     } catch (err) {
       console.error(`[proposals] failed to apply ${input.decision}:`, err);
@@ -325,4 +370,45 @@ export async function resolveProposal(
   }
 
   return proposal;
+}
+
+/**
+ * The keyhole's one-tap Undo (registered as knowledge.apply_proposal's inverse):
+ * restore the prior value if there was one, deactivate the entry the auto-apply
+ * created otherwise, and mark the proposal denied so nothing re-applies it.
+ */
+export async function undoAppliedProposal(
+  operatorId: string,
+  proposalId: string
+): Promise<{ restored: boolean; detail: string }> {
+  const p = await getProposalById(operatorId, proposalId);
+  if (!p) return { restored: false, detail: "proposal not found" };
+
+  if (p.priorValue !== null) {
+    await setKnowledge({
+      operatorId: p.operatorId,
+      scope: p.scope,
+      key: p.key,
+      value: p.priorValue,
+      sourceType: "cole_correction" as KnowledgeSourceType,
+      sourceId: p.id,
+      rationale: `Undo: Cole reversed the auto-filed proposal — prior value restored`,
+      updatedBy: "cole",
+    });
+  } else {
+    await prisma.knowledgeEntry.updateMany({
+      where: { operatorId: p.operatorId, scope: p.scope, key: p.key, active: true },
+      data: { active: false, updatedBy: "cole" },
+    });
+  }
+
+  await prisma.knowledgeProposal.updateMany({
+    where: { id: p.id },
+    data: { status: "denied" },
+  });
+
+  return {
+    restored: true,
+    detail: p.priorValue !== null ? "prior value restored" : "entry deactivated",
+  };
 }

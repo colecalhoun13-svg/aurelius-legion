@@ -43,4 +43,25 @@ export function registerAllActions(): void {
   registerActionFinalizer("autonomy.apply_grant", async (payload: any) =>
     grantAutonomy({ actionClass: payload?.actionClass, grantedBy: "cole", note: "granted via Bridge confirm" })
   );
+  // Inward: file a research/ingestion-born knowledge proposal into Living
+  // Knowledge. Runs under the knowledge.apply_proposal keyhole (or Cole's
+  // Bridge confirm when ungranted). Dynamic import breaks the proposals ↔
+  // executor cycle. Provenance stays honest: research_ingestion by aurelius.
+  registerActionFinalizer("knowledge.apply_proposal", async (payload: any) => {
+    const { resolveProposal } = await import("../knowledge/proposals.ts");
+    return resolveProposal({
+      operatorId: payload?.operatorId,
+      proposalId: payload?.proposalId,
+      decision: "confirmed",
+      coleResponseText: "auto-filed under the knowledge.apply_proposal grant",
+      sourceType: "research_ingestion",
+      updatedBy: "aurelius",
+    });
+  });
+  // Real undo: restore the prior value (or deactivate the entry the apply
+  // created) and mark the proposal denied so it can't silently re-apply.
+  registerActionInverse("knowledge.apply_proposal", async (payload: any) => {
+    const { undoAppliedProposal } = await import("../knowledge/proposals.ts");
+    return undoAppliedProposal(payload?.operatorId, payload?.proposalId);
+  });
 }

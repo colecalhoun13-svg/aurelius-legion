@@ -883,6 +883,78 @@ async function main() {
     await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
   }
 
+  console.log("── ingestion keyhole: knowledge.apply_proposal (Cole's ruling) ──");
+  {
+    const { registerAllActions } = await import("../autonomy/registerActions.ts");
+    registerAllActions(); // the real finalizer + inverse for knowledge.apply_proposal
+    const { grantAutonomy, revokeAutonomy } = await import("../autonomy/grants.ts");
+    const { undoAction } = await import("../autonomy/executor.ts");
+    const khOp = await resolveOperatorId("training");
+    if (khOp) {
+      // Ungranted → a research-born proposal stays pending (the confirm loop).
+      const gatedProp = await createProposal({
+        operatorId: khOp, operatorName: "training", intentClassId: "rep_band_update",
+        scope: "smoke_keyhole", key: `${TAG}_gated`, proposedValue: "v1",
+        rationale: "smoke", coleNaturalLanguage: "smoke", origin: "research",
+      });
+      check("ungranted: research proposal stays pending", gatedProp.status === "pending");
+
+      await grantAutonomy({ actionClass: "knowledge.apply_proposal", note: "smoke" });
+
+      // Granted → it auto-files: confirmed, honest provenance, acted receipt + Undo.
+      const autoProp = await createProposal({
+        operatorId: khOp, operatorName: "training", intentClassId: "rep_band_update",
+        scope: "smoke_keyhole", key: `${TAG}_auto`, proposedValue: "learned value",
+        rationale: "smoke", coleNaturalLanguage: "smoke", origin: "research",
+      });
+      check("granted: research proposal auto-files as confirmed", autoProp.status === "confirmed");
+      const autoEntry = await prisma.knowledgeEntry.findFirst({
+        where: { operatorId: khOp, scope: "smoke_keyhole", key: `${TAG}_auto` },
+      });
+      check(
+        "keyhole write lands with honest provenance (research_ingestion by aurelius)",
+        autoEntry?.value === "learned value" && autoEntry?.sourceType === "research_ingestion" && autoEntry?.updatedBy === "aurelius"
+      );
+      const receipt = await prisma.bridgeSignal.findFirst({ where: { sourceId: autoProp.id, status: "acted" } });
+      const receiptUndo = ((receipt?.actions as any[]) ?? []).some((a) => a?.action === "undo_action");
+      check("keyhole write files an acted receipt with one-tap Undo", !!receipt && receiptUndo);
+
+      // Undo → the learned entry deactivates (no prior value) + proposal denied.
+      const undone = receipt ? await undoAction(receipt.id) : { ok: false };
+      const afterUndo = await prisma.knowledgeEntry.findFirst({
+        where: { operatorId: khOp, scope: "smoke_keyhole", key: `${TAG}_auto`, active: true },
+      });
+      const deniedProp = await prisma.knowledgeProposal.findUnique({ where: { id: autoProp.id } });
+      check("undo deactivates the learned entry + marks the proposal denied", undone.ok && !afterUndo && deniedProp?.status === "denied");
+
+      // Guards by construction: chat origin and the persona scope never
+      // keyhole-apply, even while the grant is active.
+      const chatProp = await createProposal({
+        operatorId: khOp, operatorName: "training", intentClassId: "rep_band_update",
+        scope: "smoke_keyhole", key: `${TAG}_chat`, proposedValue: "v", rationale: "smoke",
+        coleNaturalLanguage: "smoke", origin: "chat",
+      });
+      const personaProp = await createProposal({
+        operatorId: khOp, operatorName: "training", intentClassId: "persona_calibration",
+        scope: "persona", key: `${TAG}_persona`, proposedValue: "v", rationale: "smoke",
+        coleNaturalLanguage: "smoke", origin: "research",
+      });
+      check(
+        "guards hold under grant: chat origin + persona scope stay pending",
+        chatProp.status === "pending" && personaProp.status === "pending"
+      );
+
+      await revokeAutonomy("knowledge.apply_proposal");
+      // cleanup this block's artifacts
+      await prisma.bridgeSignal.deleteMany({ where: { sourceId: { in: [gatedProp.id, autoProp.id, chatProp.id, personaProp.id] } } });
+      await prisma.knowledgeProposal.deleteMany({ where: { key: { contains: TAG } } });
+      await prisma.knowledgeEntry.deleteMany({ where: { key: { contains: TAG } } });
+      await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
+    } else {
+      check("ingestion keyhole (skipped — no training operator)", true);
+    }
+  }
+
   // ── command deck: the confronting home screen (master-class #5) ──
   console.log("── command deck: biggest-risk line + inline bridge ──");
   const deck = await getDeck();

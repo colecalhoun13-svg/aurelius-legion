@@ -412,6 +412,7 @@ export async function runResearch(task: ResearchTask): Promise<ResearchOutput> {
             proposedValue: d.proposedValue,
             rationale: d.rationale ?? `Research-derived from query: "${task.query}"`,
             coleNaturalLanguage: d.coleNaturalLanguage ?? task.query,
+            origin: "research", // eligible for the knowledge.apply_proposal keyhole
           });
           proposalsCreated++;
         } catch (err) {

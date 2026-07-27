@@ -107,6 +107,7 @@ export async function runFreshnessSweep() {
       proposedValue: entry.value,
       rationale: `${entry.scope}.${entry.key} hasn't been touched in ${ageDays} days (half-life ${entry.halfLifeDays}d). Confirm it still holds, correct it, or deny to leave it as-is.`,
       coleNaturalLanguage: "(freshness sweep — no conversation trigger)",
+      origin: "freshness", // re-anchoring stale truth stays Cole's call — never keyhole-applied
     });
     proposed++;
   }
