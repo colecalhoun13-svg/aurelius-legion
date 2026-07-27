@@ -1,6 +1,9 @@
 // aurelius/research/researchTypes.ts
 
-export type ResearchSource = "bing" | "serpapi" | "llm" | "embedding" | "arxiv" | "pubmed" | "semanticscholar" | "openalex";
+export type ResearchSource =
+  | "bing" | "serpapi" | "llm" | "embedding"
+  | "arxiv" | "pubmed" | "semanticscholar" | "openalex"
+  | "wikipedia" | "openlibrary" | "gutenberg";
 
 export type ResearchResult = {
   title: string;
@@ -22,6 +25,12 @@ export type ResearchTask = {
   depth?: "shallow" | "medium" | "deep";
   autonomyMode?: string;
   secondaryOperators?: string[];
+  // The curriculum's fix for nine-for-nine dead pulls: the SUBJECT is the
+  // short thing being studied ("Why We Sleep — Matthew Walker"), distinct
+  // from `query` (the long study prompt, which is a terrible search string).
+  // `kind` routes works to book/encyclopedia sources instead of paper APIs.
+  subject?: string;
+  kind?: "work" | "topic";
 };
 
 export type FusedInsight = {

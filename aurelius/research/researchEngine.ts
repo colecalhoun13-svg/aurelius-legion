@@ -260,15 +260,31 @@ export async function runResearch(task: ResearchTask): Promise<ResearchOutput> {
     console.warn("[research] llmResearch failed:", err);
   }
 
-  // ── Tier 1.5: open academic sources (free, no keys, always on) ──
-  // Domain-gated: arXiv/PubMed/Semantic Scholar/OpenAlex are gold for EMPIRICAL
-  // fields but return irrelevant papers for humanities/classics (Sun Tzu, the
-  // Stoics, copywriting), injecting noise. Only sweep them where they help.
-  if (ACADEMIC_DOMAINS.has(task.operator)) {
+  // ── Tier 1.5: open sources (free, no keys, always on) ──
+  // The nine-for-nine fix, three parts:
+  //   1. SEARCH THE SUBJECT, not the study prompt — the curriculum's long
+  //      "develop a practitioner-grade understanding…" essay prompt was being
+  //      sent to arXiv verbatim, which returned physics junk for everything.
+  //   2. WORKS route to book sources (Wikipedia/Open Library/Gutenberg) —
+  //      paper archives structurally cannot hold books.
+  //   3. RELEVANCE GATE — a paper that never mentions the subject is noise,
+  //      not evidence, no matter which archive returned it.
+  const searchTerm = (task.subject ?? task.query).slice(0, 240);
+  if (task.kind === "work") {
+    try {
+      const { bookSourcesSearch } = await import("./researchAdapters/bookSourcesAdapter.ts");
+      results.push(...(await bookSourcesSearch(searchTerm)));
+    } catch (err) {
+      console.warn("[research] book sources unavailable:", err);
+    }
+  } else if (ACADEMIC_DOMAINS.has(task.operator)) {
+    // arXiv/PubMed/S2/OpenAlex are gold for EMPIRICAL topics but return
+    // irrelevant papers for humanities/classics — domain-gated as before.
     try {
       const { openSourcesSearch } = await import("./researchAdapters/openSourcesAdapter.ts");
-      const open = await openSourcesSearch(task.query, Math.max(2, Math.floor(limit / 3)));
-      results.push(...open);
+      const { filterRelevant } = await import("./researchAdapters/relevance.ts");
+      const open = await openSourcesSearch(searchTerm, Math.max(2, Math.floor(limit / 3)));
+      results.push(...filterRelevant(searchTerm, open, 0.34));
     } catch (err) {
       console.warn("[research] open sources unavailable:", err);
     }

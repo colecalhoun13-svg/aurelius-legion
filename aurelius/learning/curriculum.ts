@@ -35,7 +35,7 @@ import { ingestDocument } from "../corpus/ingest.ts";
 import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { surfaceSignal } from "../core/bridge.ts";
 
-export type Unit = { title: string; query: string };
+export type Unit = { title: string; query: string; kind?: "work" | "topic" };
 type Track = { operator: string; domain: string; label: string; canon: Unit[] };
 
 // One adaptive study frame that fits BOTH a work and a topic: extract a work's
@@ -52,11 +52,15 @@ function learnQuery(subject: string, field: string): string {
   );
 }
 
-const unit = (subject: string, field: string): Unit => ({ title: subject, query: learnQuery(subject, field) });
+const unit = (subject: string, field: string, kind?: "work" | "topic"): Unit => ({
+  title: subject,
+  query: learnQuery(subject, field),
+  kind,
+});
 
 // Interleave works and topics so study alternates a book and a concept.
-function interleave(a: string[], b: string[]): string[] {
-  const out: string[] = [];
+function interleave<T>(a: T[], b: T[]): T[] {
+  const out: T[] = [];
   const n = Math.max(a.length, b.length);
   for (let i = 0; i < n; i++) {
     if (i < a.length) out.push(a[i]!);
@@ -66,7 +70,15 @@ function interleave(a: string[], b: string[]): string[] {
 }
 
 function track(operator: string, domain: string, label: string, field: string, works: string[], topics: string[]): Track {
-  return { operator, domain, label, canon: interleave(works, topics).map((s) => unit(s, field)) };
+  // kind travels with the unit — research routes works to book sources
+  // (Wikipedia/Open Library/Gutenberg) and topics to the paper archives.
+  return {
+    operator, domain, label,
+    canon: interleave(
+      works.map((s) => unit(s, field, "work")),
+      topics.map((s) => unit(s, field, "topic"))
+    ),
+  };
 }
 
 // ── THE SEED CANON (works + topics) ──────────────────────────────────
@@ -399,7 +411,9 @@ export function parseDiscoveries(text: string, field: string, existing: Unit[]):
     if (!n || seen.has(n)) continue;
     if (knownNorms.some((k) => sameWork(k, n))) continue;
     seen.add(n);
-    out.push(unit(title, field));
+    // An author dash or "by" reads as a WORK (book/paper); bare phrases are topics.
+    const kind = /\s+[—–]\s+|\bby\s+[A-Z]/.test(line) ? ("work" as const) : ("topic" as const);
+    out.push(unit(title, field, kind));
   }
   return out;
 }
@@ -548,6 +562,7 @@ export async function runCurriculumIngest(opts?: {
             `Revisit "${reviewOf}" in ${trk.label} at greater depth than a first pass: the edge cases, where the idea ` +
             `fails or is contested, where authorities disagree and why, and its second-order implications. Connect it to ` +
             `what's already understood in the field, and sharpen the decision heuristics it yields.`,
+          kind: u?.kind,
         };
       } else {
         studyUnit = {
@@ -555,10 +570,19 @@ export async function runCurriculumIngest(opts?: {
           query:
             `What are the most important recent developments, refinements, or debates in ${trk.label} ` +
             `that a serious practitioner should absorb now? Be specific and connect it to real decisions.`,
+          kind: "topic",
         };
       }
 
-      const res = await runResearch({ query: studyUnit.query, operator: trk.operator, depth: "deep" });
+      // subject = the short searchable thing; query = the long study prompt.
+      // Sending the prompt to the archives was the nine-for-nine bug.
+      const res = await runResearch({
+        query: studyUnit.query,
+        operator: trk.operator,
+        depth: "deep",
+        subject: studyUnit.title.replace(/^Deeper: /, ""),
+        kind: studyUnit.kind,
+      });
       const body = [res.synthesis, ...(res.insights ?? [])].filter(Boolean).join("\n\n");
 
       // Honest failure: no engine / empty → SKIP, don't ingest, don't record studied.
