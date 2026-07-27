@@ -66,9 +66,13 @@ export async function pollRssOnce() {
       const title = `Feed digest ${dstr}: ${new URL(feed.url).hostname}`;
       const dup = await prisma.corpusDocument.findFirst({ where: { title, sourceUrl: feed.url } });
       if (dup) continue; // one digest per feed per day
+      // External feed content is untrusted — defuse before it enters the
+      // corpus, same as every other ingest path (check-in council C4: this
+      // was the one door that skipped it, letting a feed steer syntheses).
+      const { defuseDirectives } = await import("../llm/directiveParser.ts");
       await ingestDocument({
         title,
-        content: list.map((i) => `## ${i.title}\n${i.desc}\n${i.link}`).join("\n\n"),
+        content: defuseDirectives(list.map((i) => `## ${i.title}\n${i.desc}\n${i.link}`).join("\n\n")),
         sourceType: "url",
         sourceUrl: feed.url,
         domain: feed.domain,

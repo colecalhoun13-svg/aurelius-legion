@@ -89,11 +89,32 @@ const app = express();
 app.use(express.json({ limit: "25mb" })); // room for base64 photos / short clips attached in chat
 app.use(
   cors({
-    origin: "*",
+    // Lockable: set FRONTEND_ORIGIN (comma-separated) to pin CORS to the real
+    // frontend host(s). Unset keeps the open default for local dev.
+    origin: process.env.FRONTEND_ORIGIN ? process.env.FRONTEND_ORIGIN.split(",").map((s) => s.trim()) : "*",
     methods: ["GET", "POST"],
     credentials: true,
   })
 );
+
+// THE LOCK (check-in council PR1). With AURELIUS_API_KEY set, every /api route
+// demands the x-aurelius-key header — the "Cole is the only writer" rule
+// becomes code, not network position. Exempt: OAuth auth/callback (the browser
+// and Google/Meta hit those directly) and /health. Dormant-until-configured
+// (hard rule 4): unset key = open, one loud boot line says so — but the
+// Railway/Mini runbooks make setting it MANDATORY before any always-on deploy.
+const API_KEY = process.env.AURELIUS_API_KEY?.trim();
+const AUTH_EXEMPT = /^\/api\/[a-z_]+\/(auth|callback)(\/|$|\?)/;
+if (!API_KEY) {
+  console.warn("[auth] DORMANT — no AURELIUS_API_KEY set. Fine on a private machine; set it BEFORE exposing port 3001 or deploying always-on.");
+}
+app.use((req, res, next) => {
+  if (!API_KEY) return next();
+  if (req.path === "/health" || req.path === "/" || AUTH_EXEMPT.test(req.path)) return next();
+  if (req.get("x-aurelius-key") === API_KEY) return next();
+  return res.status(401).json({ error: "unauthorized — send x-aurelius-key (set AURELIUS_API_KEY on the caller)" });
+});
+
 app.use("/api", requestTracer("/api"));
 
 console.log("ENV CHECK — Aurelius OS");

@@ -110,6 +110,27 @@ const JOBS: CatchUpJob[] = [
     sundayOnly: true,
     run: async () => (await import("../measurement/scoreboard.ts")).computeWeeklySnapshot(),
   },
+  // The three Sunday learners the check-in council found missing here —
+  // without these entries they silently never recovered from a sleeping
+  // process, so a codespace nap cost a whole week of learning.
+  {
+    name: "capability_gaps",
+    hour: 19, // 19:30 live; catch-up granularity is the hour
+    sundayOnly: true,
+    run: async () => (await import("../autonomy/capabilityGaps.ts")).sweepCapabilityGaps(),
+  },
+  {
+    name: "decision_curriculum",
+    hour: 21,
+    sundayOnly: true,
+    run: async () => (await import("../learning/decisionCurriculum.ts")).runDecisionCurriculum(),
+  },
+  {
+    name: "curriculum_ingest",
+    hour: 22,
+    sundayOnly: true,
+    run: async () => (await import("../learning/curriculum.ts")).runCurriculumIngest(),
+  },
 ];
 
 /** Did this job leave a trace row today (fired = counted, even if it errored — never re-fire a crash loop)? */
