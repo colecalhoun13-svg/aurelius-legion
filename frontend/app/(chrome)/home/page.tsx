@@ -55,6 +55,8 @@ export default function HomePage() {
   const [today, setToday] = useState<TodayData | null>(null);
   const [briefing, setBriefing] = useState<{ text: string; at: string } | null>(null);
   const [briefingOpen, setBriefingOpen] = useState(false);
+  const [debrief, setDebrief] = useState<string | null>(null);
+  const [debriefOpen, setDebriefOpen] = useState(false);
   const [overnightOpen, setOvernightOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [newTask, setNewTask] = useState("");
@@ -75,6 +77,10 @@ export default function HomePage() {
     fetch("/api/rituals")
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
+        // Evenings get the debrief instead of a morning museum piece.
+        if (j?.nightly_debrief?.outputText && new Date().getHours() >= 20) {
+          setDebrief(j.nightly_debrief.outputText);
+        }
         if (j?.morning_briefing?.outputText) {
           setBriefing({ text: j.morning_briefing.outputText, at: j.morning_briefing.firedAt });
           // Unread today → open; already seen this session → a quiet line.
@@ -163,6 +169,30 @@ export default function HomePage() {
               className="w-full text-left text-xs text-neutral-500 hover:text-aurelius-gold px-1"
             >
               ✦ Briefing read — tap to reopen
+            </button>
+          )}
+        </section>
+      )}
+
+      {/* Evening debrief — a quiet line after 20:00, opens on tap */}
+      {debrief && (
+        <section className="mt-3">
+          {debriefOpen ? (
+            <div className="aurelius-panel-frame border border-aurelius-gold/25 p-4">
+              <div className="flex items-baseline justify-between">
+                <span className="aurelius-heading text-sm text-aurelius-gold/80">Evening debrief</span>
+                <button onClick={() => setDebriefOpen(false)} className="text-xs text-neutral-500 hover:text-aurelius-gold">
+                  collapse
+                </button>
+              </div>
+              <p className="mt-2 text-sm text-neutral-300 whitespace-pre-wrap leading-relaxed">{debrief}</p>
+            </div>
+          ) : (
+            <button
+              onClick={() => setDebriefOpen(true)}
+              className="w-full text-left text-xs text-neutral-500 hover:text-aurelius-gold px-1"
+            >
+              ☾ The day's debrief is in — tap to read
             </button>
           )}
         </section>
