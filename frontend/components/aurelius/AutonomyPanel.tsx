@@ -13,7 +13,7 @@ type Suggestion = { actionClass: string; reason: string };
 type RecentAction = { id: string; title: string; kind: string; createdAt: string; actionClass: string | null };
 type Dial = { active: { actionClass: string; grantedAt: string }[]; classes: Keyhole[]; suggestions: Suggestion[]; recentActions: RecentAction[] };
 
-export default function AutonomyPage() {
+export default function AutonomyPanel() {
   const [dial, setDial] = useState<Dial | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);

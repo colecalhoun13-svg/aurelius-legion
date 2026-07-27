@@ -11,6 +11,8 @@ const nextConfig = {
       { source: "/library", destination: "/brain", permanent: false },
       { source: "/wiki", destination: "/brain?tab=wiki", permanent: false },
       { source: "/projects", destination: "/goals", permanent: false },
+      { source: "/autonomy", destination: "/aurelius?tab=autonomy", permanent: false },
+      { source: "/traces", destination: "/aurelius?tab=traces", permanent: false },
     ];
   },
   experimental: {

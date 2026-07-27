@@ -3,7 +3,8 @@
 // MOBILE TAB BAR — the phone chrome. Five thumb-reach destinations (iOS
 // convention caps at five); everything else stays reachable through these
 // pages. Targets ≥44px; safe-area padded for gesture-nav phones.
-// NOTE: tab targets update as the council merges land (Brain, Decisions, Home).
+// v2 ruling: Goals takes tab 4 — "+1" logging is a daily thumb gesture,
+// while Brain's ask is already Home's chat box; Brain leads the More list.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -13,8 +14,8 @@ const TABS: Array<{ label: string; path: string; glyph: string; also?: string[] 
   { label: "Home", path: "/home", glyph: "❂", also: ["/deck", "/today"] },
   { label: "Decisions", path: "/decisions", glyph: "⇄" },
   { label: "Calendar", path: "/calendar", glyph: "◷" },
-  { label: "Brain", path: "/brain", glyph: "❈" },
-  { label: "More", path: "/more", glyph: "⋯", also: ["/goals", "/aurelius", "/autonomy", "/tools", "/engines", "/traces", "/settings", "/console"] },
+  { label: "Goals", path: "/goals", glyph: "◎", also: ["/projects"] },
+  { label: "More", path: "/more", glyph: "⋯", also: ["/brain", "/aurelius", "/autonomy", "/tools", "/engines", "/traces", "/settings", "/console"] },
 ];
 
 export default function MobileTabBar() {
