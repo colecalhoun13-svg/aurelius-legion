@@ -1,9 +1,12 @@
 "use client";
 
-// GOALS — big and small, grouped by horizon, with progress logging.
+// GOALS & PROJECTS — the numbers that must move, one door with three rooms:
+// Goals (log progress), Projects (runway), Scoreboard (did the number go
+// up — the coach's wall of trends). Same ?tab= pattern as /brain.
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import ProjectsSection from "../../../components/ProjectsSection";
+import ScoreboardPanel from "../../../components/goals/ScoreboardPanel";
 
 type Goal = { id: string; name: string; domain: string; horizon: string; progressPct: number; measure: any };
 
@@ -15,7 +18,7 @@ function localDate(): string {
 const HORIZON_ORDER = ["life", "year", "quarter"];
 const HORIZON_LABEL: Record<string, string> = { life: "Life", year: "This Year", quarter: "This Quarter" };
 
-export default function GoalsPage() {
+function GoalsBody() {
   const [goals, setGoals] = useState<Goal[] | null>(null);
   const [name, setName] = useState("");
   const [targetN, setTargetN] = useState("10");
@@ -92,7 +95,57 @@ export default function GoalsPage() {
             className="px-4 py-2 bg-aurelius-gold text-black text-sm font-semibold rounded-lg">Add</button>
         </div>
       </section>
-      <ProjectsSection />
     </main>
+  );
+}
+
+const TABS = [
+  { key: "goals", label: "Goals" },
+  { key: "projects", label: "Projects" },
+  { key: "scoreboard", label: "Scoreboard" },
+] as const;
+type TabKey = (typeof TABS)[number]["key"];
+
+function GoalsInner() {
+  const [tab, setTab] = useState<TabKey>("goals");
+
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    if (p.get("tab") && TABS.some((t) => t.key === p.get("tab"))) setTab(p.get("tab") as TabKey);
+  }, []);
+
+  return (
+    <div className="space-y-6">
+      <nav className="flex justify-center gap-2 max-w-3xl mx-auto">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`aurelius-heading text-sm tracking-widest px-4 py-2 rounded-lg border min-h-[44px] ${
+              tab === t.key
+                ? "border-aurelius-gold/70 bg-aurelius-gold/15 text-aurelius-gold"
+                : "border-aurelius-gold/20 text-neutral-500 hover:text-aurelius-gold hover:border-aurelius-gold/40"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
+      {tab === "goals" && <GoalsBody />}
+      {tab === "projects" && (
+        <main className="text-aurelius-text max-w-3xl mx-auto aurelius-stagger">
+          <ProjectsSection />
+        </main>
+      )}
+      {tab === "scoreboard" && <ScoreboardPanel />}
+    </div>
+  );
+}
+
+export default function GoalsPage() {
+  return (
+    <Suspense fallback={null}>
+      <GoalsInner />
+    </Suspense>
   );
 }

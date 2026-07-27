@@ -14,6 +14,7 @@ const DESTINATIONS: Array<{ name: string; path: string; glyph: string; alias: st
   { name: "Triage", path: "/decisions?tab=triage", glyph: "⇄", alias: "inbox review" },
   { name: "Calendar", path: "/calendar", glyph: "◷", alias: "week schedule" },
   { name: "Goals & Projects", path: "/goals", glyph: "◎", alias: "progress" },
+  { name: "Scoreboard", path: "/goals?tab=scoreboard", glyph: "◎", alias: "stats trends charts dashboard follow-through" },
   { name: "Brain · Shelves", path: "/brain", glyph: "❈", alias: "library books sources reader" },
   { name: "Brain · Ask", path: "/brain?tab=ask", glyph: "❈", alias: "corpus recall" },
   { name: "Brain · Syntheses", path: "/brain?tab=wiki", glyph: "❈", alias: "wiki" },
