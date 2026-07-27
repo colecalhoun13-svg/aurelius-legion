@@ -65,11 +65,15 @@ export default function WikiPage() {
     if (!active || rebuilding) return;
     setRebuilding(true);
     try {
-      await fetch("/api/wiki", {
+      const res = await fetch("/api/wiki", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ slug: active.slug }),
       });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        window.alert(`Couldn't rewrite: ${j.error ?? res.status}`);
+      }
       await load();
       await open(active.slug);
     } finally {

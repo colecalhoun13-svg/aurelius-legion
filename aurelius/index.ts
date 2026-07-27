@@ -914,6 +914,7 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
             proposedValue: d.proposedValue,
             rationale: d.rationale ?? "",
             coleNaturalLanguage: d.coleNaturalLanguage ?? message,
+            origin: "chat", // Cole's own words — the natural confirm loop stays
           });
           knowledgeProposalsCreated.push({
             id: proposal.id,

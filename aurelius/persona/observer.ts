@@ -100,6 +100,7 @@ export async function observeCommunicationStyle() {
       proposedValue: obs.value,
       rationale: `Observed, not assumed: ${obs.rationale}`,
       coleNaturalLanguage: "(weekly persona observation — no conversation trigger)",
+      origin: "observer", // the voice calibrates only on Cole's confirm — never keyhole-applied
     });
     proposed++;
   }

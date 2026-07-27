@@ -52,18 +52,54 @@ const SEV: Record<string, string> = {
   info: "text-neutral-400 border-aurelius-gold/25",
 };
 
+type RecentAction = { id: string; title: string; createdAt: string; actionClass: string | null };
+
 export default function BridgePage() {
   const [signals, setSignals] = useState<Signal[] | null>(null);
   const [proposals, setProposals] = useState<Proposal[] | null>(null);
+  const [recentActions, setRecentActions] = useState<RecentAction[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [deckRes, propRes] = await Promise.all([fetch("/api/deck"), fetch("/api/proposals")]);
-    if (deckRes.ok) setSignals((await deckRes.json()).bridge);
-    if (propRes.ok) setProposals((await propRes.json()).proposals);
+    try {
+      const [deckRes, propRes, dialRes] = await Promise.all([
+        fetch("/api/deck"),
+        fetch("/api/proposals"),
+        fetch("/api/autonomy/dial"),
+      ]);
+      if (!deckRes.ok) throw new Error("Aurelius couldn't load the bench right now — try again in a moment.");
+      setSignals((await deckRes.json()).bridge);
+      if (propRes.ok) setProposals((await propRes.json()).proposals);
+      // The other half of the trust loop: what it already did on its own,
+      // still reversible — visible on the ruling surface, not just Autonomy.
+      if (dialRes.ok) setRecentActions((await dialRes.json()).recentActions ?? []);
+      setErr(null);
+    } catch (e: any) {
+      setErr(e?.message ?? "failed to load");
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const undo = async (id: string) => {
+    if (busy) return;
+    setBusy(id);
+    try {
+      const res = await fetch("/api/autonomy/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ signalId: id }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        window.alert(`Couldn't undo: ${j.error ?? res.status}`);
+      }
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const act = async (id: string, status: string) => {
     await fetch("/api/today/actions", {
@@ -141,10 +177,11 @@ export default function BridgePage() {
           <h2 className="aurelius-heading text-lg">Awaiting your ruling</h2>
           {proposals.map((p) => (
             <div key={p.id} className="aurelius-panel-frame p-5 border border-sky-400/40">
+              {/* Plain English leads; machine identifiers demote to metadata —
+                  Cole rules on a sentence, not on scope.key · intent_class_id. */}
               <div className="flex items-start justify-between gap-3">
-                <span className="font-medium text-sm">
-                  <span className="text-aurelius-gold">{p.scope}.{p.key}</span>
-                  <span className="text-neutral-500"> · {p.operatorName} · {p.intentClassId.replace(/_/g, " ")}</span>
+                <span className="font-medium text-sm text-neutral-100">
+                  {p.rationale || p.coleNaturalLanguage || `${p.scope}.${p.key}`}
                 </span>
                 <span className="text-[10px] uppercase tracking-wider text-sky-300 border border-sky-400/40 rounded px-1.5 py-0.5 shrink-0">
                   proposal
@@ -162,10 +199,12 @@ export default function BridgePage() {
                   <span className="text-[11px] uppercase tracking-wider text-aurelius-gold/70 mr-2">proposed</span>
                   {showValue(p.proposedValue)}
                 </p>
-                {p.rationale && <p className="text-xs text-neutral-500 mt-2">{p.rationale}</p>}
-                {p.coleNaturalLanguage && (
+                {p.rationale && p.coleNaturalLanguage && !p.coleNaturalLanguage.startsWith("(") && (
                   <p className="text-xs text-neutral-600 italic">from: “{p.coleNaturalLanguage}”</p>
                 )}
+                <p className="text-[11px] text-neutral-600 mt-2">
+                  {p.scope}.{p.key} · {p.operatorName} · {p.intentClassId.replace(/_/g, " ")}
+                </p>
               </div>
 
               <div className="flex gap-2 mt-4">
@@ -192,11 +231,40 @@ export default function BridgePage() {
         </section>
       )}
 
+      {err && <p className="text-sm text-amber-300/90">{err}</p>}
+
       {signals && signals.length === 0 && (proposals?.length ?? 0) === 0 && (
         <p className="text-neutral-600 italic text-center py-16">
           Quiet. When Aurelius finishes something in the background — a research pass,
           a closed-out day, a pattern worth confirming — it lands here.
         </p>
+      )}
+
+      {/* DONE ON ITS OWN — executed under a granted keyhole, still reversible.
+          The receipts reach the ruling surface, not just the Autonomy tab. */}
+      {recentActions.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="aurelius-heading text-sm text-aurelius-gold/70 tracking-widest">Done on its own — reversible</h2>
+          {recentActions.map((a) => (
+            <div key={a.id} className="flex items-start gap-3 aurelius-panel-frame border border-aurelius-gold/15 px-4 py-2.5">
+              <span className="text-aurelius-gold/60 mt-px">✦</span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm text-neutral-300 truncate">{a.title}</span>
+                <span className="block text-[11px] text-neutral-600 mt-0.5">
+                  {a.actionClass ?? "autonomous"} ·{" "}
+                  {new Date(a.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </span>
+              <button
+                onClick={() => undo(a.id)}
+                disabled={busy === a.id}
+                className="text-xs border border-amber-500/50 rounded-lg px-3 py-1 hover:bg-amber-500/15 text-amber-300 disabled:opacity-50 shrink-0"
+              >
+                {busy === a.id ? "Undoing…" : "Undo"}
+              </button>
+            </div>
+          ))}
+        </section>
       )}
 
       <ul className="space-y-4">

@@ -11,8 +11,12 @@ anyone (human or agent) working in this repo.
    draft, ingest) inside a Cole-granted intent-class — reversible, traced,
    landing on the Bridge as an executed proposal. Every **outward** action
    (publish/send/spend) stops for Cole's confirm — non-grantable by
-   construction. Living Knowledge writes still go through propose→confirm
-   (`knowledge/proposals.ts`) or explicit Cole action (corrections).
+   construction. Living Knowledge writes go through propose→confirm
+   (`knowledge/proposals.ts`), explicit Cole action (corrections), or — for
+   research/ingestion-born proposals only — the Cole-granted
+   `knowledge.apply_proposal` keyhole (executor receipts + one-tap undo;
+   chat/observer/freshness proposals keep the confirm loop, and the
+   `autonomy` + `persona` scopes never auto-apply, granted or not).
    **Autonomy never escalates its own autonomy** (scope `autonomy` never
    auto-applies; the grant switch is only ever Cole's hand).
 2. **One voice.** No personality modes. The voice calibrates from learned
