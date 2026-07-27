@@ -17,16 +17,19 @@ export default function AutonomyPanel() {
   const [dial, setDial] = useState<Dial | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Undo horizon: a week by default, widened on demand — the server can
+  // reverse older actions just fine, the list only shows what's asked for.
+  const [days, setDays] = useState(7);
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/autonomy/dial");
+      const res = await fetch(`/api/autonomy/dial?days=${days}`);
       if (!res.ok) throw new Error("Aurelius couldn't load this right now — try again in a moment.");
       setDial(await res.json());
     } catch (e: any) {
       setErr(e?.message ?? "failed to load");
     }
-  }, []);
+  }, [days]);
   useEffect(() => { load(); }, [load]);
 
   const act = useCallback(async (op: "grant" | "revoke", actionClass: string) => {
@@ -147,7 +150,15 @@ export default function AutonomyPanel() {
       {/* Recent autonomous actions — reversible */}
       {dial?.recentActions && dial.recentActions.length > 0 && (
         <section className="space-y-3">
-          <h2 className="aurelius-heading text-lg">Recent actions — reversible</h2>
+          <div className="flex items-baseline justify-between">
+            <h2 className="aurelius-heading text-lg">Recent actions — reversible</h2>
+            <button
+              onClick={() => setDays(days === 7 ? 90 : 7)}
+              className="text-xs text-neutral-500 hover:text-aurelius-gold"
+            >
+              {days === 7 ? "show older ↓" : "last 7 days ↑"}
+            </button>
+          </div>
           {dial.recentActions.map((a) => (
             <div key={a.id} className="aurelius-panel-frame p-4 border border-aurelius-gold/20 flex items-start justify-between gap-3">
               <span className="min-w-0">

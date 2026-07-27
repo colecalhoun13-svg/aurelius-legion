@@ -7,6 +7,7 @@
 // the OAuth flows.
 
 import { useEffect, useState } from "react";
+import { backendUrl } from "../../../lib/backendUrl";
 
 type Integration = {
   name: string;
@@ -15,8 +16,6 @@ type Integration = {
   glyph: string;
   need?: string;
 };
-
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:3001";
 
 const LIGHT: Record<Integration["status"], { dot: string; label: string }> = {
   live: { dot: "bg-emerald-400", label: "live" },
@@ -27,15 +26,19 @@ const LIGHT: Record<Integration["status"], { dot: string; label: string }> = {
   parked: { dot: "bg-neutral-700", label: "parked" },
 };
 
-const CONNECTS: Array<{ name: string; href: string; desc: string }> = [
-  { name: "Google (Calendar · Sheets · Drive)", href: `${BACKEND}/api/calendar/auth`, desc: "one authorization covers all three" },
-  { name: "Gmail", href: `${BACKEND}/api/gmail/auth`, desc: "read + draft-only, never sends alone" },
-  { name: "Instagram", href: `${BACKEND}/api/instagram/auth`, desc: "metrics + gated publishing" },
+const CONNECTS: Array<{ name: string; path: string; desc: string }> = [
+  { name: "Google (Calendar · Sheets · Drive)", path: "/api/calendar/auth", desc: "one authorization covers all three" },
+  { name: "Gmail", path: "/api/gmail/auth", desc: "read + draft-only, never sends alone" },
+  { name: "Instagram", path: "/api/instagram/auth", desc: "metrics + gated publishing" },
 ];
 
 export default function SettingsPage() {
   const [items, setItems] = useState<Integration[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Resolved on the client so Connect works from the phone PWA too
+  // (Codespaces forwarded domains derive the backend from the page's host).
+  const [backend, setBackend] = useState("http://localhost:3001");
+  useEffect(() => setBackend(backendUrl()), []);
 
   useEffect(() => {
     fetch("/api/tools")
@@ -61,7 +64,7 @@ export default function SettingsPage() {
           {CONNECTS.map((c) => (
             <a
               key={c.name}
-              href={c.href}
+              href={`${backend}${c.path}`}
               className="flex items-center gap-4 aurelius-panel-frame border border-aurelius-gold/20 px-4 py-3 hover:border-aurelius-gold/50"
             >
               <span className="flex-1">

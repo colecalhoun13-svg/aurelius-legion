@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 // GET → the autonomy dial: active grants, the grantable menu with each keyhole's
 // trust track record, the "want me to just handle it?" suggestions, and the
 // recent autonomous actions that can still be undone.
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const { listActiveGrants } = await import("../../../../../aurelius/autonomy/grants");
     const { listGrantableClasses } = await import("../../../../../aurelius/autonomy/actionClasses");
@@ -32,15 +32,18 @@ export async function GET() {
       };
     });
 
-    // Recent autonomous actions that carry a one-tap Undo.
+    // Recent autonomous actions that carry a one-tap Undo. Default horizon is
+    // a week; ?days=N widens it (the server undoes older ones just fine).
+    const daysParam = Number(new URL(request.url).searchParams.get("days"));
+    const days = Number.isFinite(daysParam) && daysParam > 0 ? Math.min(daysParam, 365) : 7;
     const acted = await prisma.bridgeSignal.findMany({
-      where: { status: "acted", createdAt: { gte: new Date(Date.now() - 7 * 24 * 3600 * 1000) } },
+      where: { status: "acted", createdAt: { gte: new Date(Date.now() - days * 24 * 3600 * 1000) } },
       orderBy: { createdAt: "desc" },
-      take: 25,
+      take: 100,
     });
     const recentActions = acted
       .filter((s: any) => ((s.actions as any[]) ?? []).some((a) => a?.action === "undo_action"))
-      .slice(0, 10)
+      .slice(0, days > 7 ? 50 : 10)
       .map((s: any) => ({
         id: s.id,
         title: s.title,
