@@ -119,7 +119,12 @@ export function startPaperlessPoller() {
   if (timer) return;
   console.log("[paperless] poller live (every 10 min)");
   // Traced like the rest of the spine so a failing 10-min poll is visible.
+  // Overlap guard (go-live council): a slow batch (>10 min of PDFs) must not
+  // overlap its own next tick — both would pass the dedup findFirst window.
+  let inFlight = false;
   timer = setInterval(() => {
+    if (inFlight) { console.log("[paperless] previous poll still running — skipping tick"); return; }
+    inFlight = true;
     runTraced("poll", "paperless", () => pollPaperlessOnce()).catch((err) =>
       console.warn("[paperless] poll failed:", err)
     );

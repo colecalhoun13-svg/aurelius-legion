@@ -107,13 +107,27 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
   };
 
   // Not an upsert: Prisma can't address a compound unique when a member is
-  // NULL (operatorId null = the whole-system snapshot). Find-then-write.
+  // NULL (operatorId null = the whole-system snapshot). Find-then-write,
+  // backstopped by the partial unique index (migration
+  // job_claims_and_snapshot_dedup) — a concurrent creator loses with P2002
+  // and we fall through to update the winner's row.
   const existing = await prisma.measurementSnapshot.findFirst({
     where: { weekStart, operatorId: null },
   });
-  const snapshot = existing
-    ? await prisma.measurementSnapshot.update({ where: { id: existing.id }, data: { metrics } })
-    : await prisma.measurementSnapshot.create({ data: { weekStart, metrics } });
+  let snapshot;
+  if (existing) {
+    snapshot = await prisma.measurementSnapshot.update({ where: { id: existing.id }, data: { metrics } });
+  } else {
+    try {
+      snapshot = await prisma.measurementSnapshot.create({ data: { weekStart, metrics } });
+    } catch (err: any) {
+      if (err?.code !== "P2002") throw err;
+      // A concurrent run won the create — update its row instead.
+      const winner = await prisma.measurementSnapshot.findFirst({ where: { weekStart, operatorId: null } });
+      if (!winner) throw err;
+      snapshot = await prisma.measurementSnapshot.update({ where: { id: winner.id }, data: { metrics } });
+    }
+  }
 
   const week = weekStart.toISOString().slice(0, 10);
   const missionsRun = Object.values(missionCounts).reduce((s: number, n: any) => s + n, 0);

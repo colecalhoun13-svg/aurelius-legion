@@ -160,7 +160,7 @@ export async function runCatchUp() {
   // Cole may have re-timed a ritual from chat; honor the LIVE time so catch-up
   // fires (or waits) at the overridden hour, not the hardcoded default below.
   // A PAUSED ritual is skipped entirely — don't resurrect it via catch-up.
-  const { getEffectiveTime, isJobEnabled } = await import("./schedule.ts");
+  const { getEffectiveTime, isJobEnabled, claimDailyRun, finishDailyRun } = await import("./schedule.ts");
 
   let fired = 0;
   for (const job of JOBS) {
@@ -178,12 +178,18 @@ export async function runCatchUp() {
     const effectiveExpiry = job.expiresHour !== undefined ? hour + (job.expiresHour - job.hour) : undefined;
     if (effectiveExpiry !== undefined && now.getHours() >= effectiveExpiry) continue;
     if (await ranToday(job.name, todayStart)) continue;
+    // The ATOMIC gate (go-live council): trace rows are best-effort telemetry;
+    // the claim row is the law. If the live cron owns today, we lose the claim
+    // and skip — the double-briefing window is closed.
+    if (!(await claimDailyRun(job.name))) continue;
 
     console.log(`[catchup] ${job.name} was due ${hour}:${String(minute).padStart(2, "0")} and never ran — firing now`);
     try {
       await runTraced("catchup", job.name, job.run);
+      await finishDailyRun(job.name, true);
       fired++;
     } catch (err) {
+      await finishDailyRun(job.name, false);
       console.warn(`[catchup] ${job.name} failed (won't retry until next boot):`, (err as any)?.message ?? err);
     }
   }

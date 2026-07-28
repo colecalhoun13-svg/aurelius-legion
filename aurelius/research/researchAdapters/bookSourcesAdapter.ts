@@ -20,16 +20,35 @@ import { filterRelevant } from "./relevance.ts";
 
 const TIMEOUT_MS = 12_000;
 
-async function fetchWithTimeout(url: string): Promise<Response> {
+// The abort covers the WHOLE exchange — headers AND body. Clearing the timer
+// when headers land left a multi-MB Gutenberg body free to trickle for
+// minutes and stall a study cycle (go-live council); callers use bodyText/
+// bodyJson so the signal stays armed until the body is fully read.
+function startFetch(url: string): { res: Promise<Response>; done: () => void; signal: AbortSignal } {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  return {
+    res: fetch(url, { signal: ctl.signal, headers: { "User-Agent": "AureliusOS/1.0 (personal research agent)" } }),
+    done: () => clearTimeout(t),
+    signal: ctl.signal,
+  };
+}
+
+async function bodyJson(url: string): Promise<any> {
+  const f = startFetch(url);
   try {
-    return await fetch(url, {
-      signal: ctl.signal,
-      headers: { "User-Agent": "AureliusOS/1.0 (personal research agent)" },
-    });
+    return await (await f.res).json();
   } finally {
-    clearTimeout(t);
+    f.done();
+  }
+}
+
+async function bodyText(url: string): Promise<string> {
+  const f = startFetch(url);
+  try {
+    return await (await f.res).text();
+  } finally {
+    f.done();
   }
 }
 
@@ -42,17 +61,13 @@ function searchable(subject: string): string {
 export async function wikipediaSearch(subject: string, limit = 2): Promise<ResearchResult[]> {
   try {
     const q = searchable(subject);
-    const search = await (
-      await fetchWithTimeout(`https://en.wikipedia.org/w/rest.php/v1/search/page?q=${encodeURIComponent(q)}&limit=3`)
-    ).json();
+    const search = await bodyJson(`https://en.wikipedia.org/w/rest.php/v1/search/page?q=${encodeURIComponent(q)}&limit=3`);
     const pages: any[] = (search?.pages ?? []).slice(0, limit + 1);
     const out: ResearchResult[] = [];
     for (const p of pages) {
       if (out.length >= limit) break;
       try {
-        const sum = await (
-          await fetchWithTimeout(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(p.key)}`)
-        ).json();
+        const sum = await bodyJson(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(p.key)}`);
         const extract = (sum?.extract ?? "").trim();
         if (!extract) continue;
         out.push({
@@ -77,11 +92,9 @@ export async function wikipediaSearch(subject: string, limit = 2): Promise<Resea
 export async function openLibrarySearch(subject: string, limit = 2): Promise<ResearchResult[]> {
   try {
     const q = searchable(subject);
-    const json = await (
-      await fetchWithTimeout(
-        `https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&limit=${limit}&fields=title,author_name,first_publish_year,subject,key`
-      )
-    ).json();
+    const json = await bodyJson(
+      `https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&limit=${limit}&fields=title,author_name,first_publish_year,subject,key`
+    );
     return (json?.docs ?? []).slice(0, limit).map((d: any) => ({
       title: d.title ?? "untitled",
       snippet: [
@@ -110,7 +123,7 @@ export async function openLibrarySearch(subject: string, limit = 2): Promise<Res
 export async function gutenbergSearch(subject: string): Promise<ResearchResult[]> {
   try {
     const q = searchable(subject);
-    const json = await (await fetchWithTimeout(`https://gutendex.com/books?search=${encodeURIComponent(q)}`)).json();
+    const json = await bodyJson(`https://gutendex.com/books?search=${encodeURIComponent(q)}`);
     const hit = (json?.results ?? [])[0];
     if (!hit) return [];
     const meta: ResearchResult = {
@@ -126,7 +139,7 @@ export async function gutenbergSearch(subject: string): Promise<ResearchResult[]
       | undefined;
     if (txtUrl) {
       try {
-        const raw = await (await fetchWithTimeout(txtUrl)).text();
+        const raw = await bodyText(txtUrl);
         const bodyStart = raw.search(/\*\*\*\s*START OF (THE|THIS) PROJECT GUTENBERG EBOOK[^*]*\*\*\*/i);
         const body = (bodyStart >= 0 ? raw.slice(raw.indexOf("***", bodyStart + 3) + 3) : raw)
           .replace(/\r/g, "")

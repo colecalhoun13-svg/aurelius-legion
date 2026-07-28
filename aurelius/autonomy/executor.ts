@@ -21,7 +21,7 @@
 // prepare() always runs, so the loop is closed to its last reversible step —
 // what reaches Cole is a mostly-done thing to approve, not homework.
 
-import { prisma } from "../core/db/prisma.ts";
+import { prisma, withDb } from "../core/db/prisma.ts";
 import { runTraced } from "../core/trace.ts";
 import { decideAction } from "./grants.ts";
 import { getActionFinalizer, getActionInverse, hasActionInverse } from "./actionRegistry.ts";
@@ -70,22 +70,38 @@ export async function executeAction(args: {
         payload: { actionClass: args.actionClass, actionPayload: prepared.payload ?? null, result: result ?? null },
       });
     }
-    const sig = await prisma.bridgeSignal.create({
-      data: {
-        kind: "background_result",
-        operatorId: args.operatorId ?? null,
-        domain: prepared.domain ?? null,
-        sourceType: args.sourceType ?? "reasoning_output",
-        sourceId: args.sourceId ?? null,
-        severity: "info",
-        status: "acted", // executed proposal — done, on the record, reversible
-        title: prepared.title,
-        body:
-          prepared.body +
-          `\n\n_Done on its own under grant \`${args.actionClass}\`.${undoable ? " Tap Undo (or say “undo that”) and I'll reverse it." : " Reversible — tell me if this was wrong."}_`,
-        actions,
-      },
-    });
+    // The receipt is the trust contract: the ACTION already happened, so this
+    // write gets the cold-Neon retry (go-live council) — an executed action
+    // with no receipt/undo is the one inconsistency the whole layer forbids.
+    let sig;
+    try {
+      sig = await withDb(() =>
+        prisma.bridgeSignal.create({
+          data: {
+            kind: "background_result",
+            operatorId: args.operatorId ?? null,
+            domain: prepared.domain ?? null,
+            sourceType: args.sourceType ?? "reasoning_output",
+            sourceId: args.sourceId ?? null,
+            severity: "info",
+            status: "acted", // executed proposal — done, on the record, reversible
+            title: prepared.title,
+            body:
+              prepared.body +
+              `\n\n_Done on its own under grant \`${args.actionClass}\`.${undoable ? " Tap Undo (or say “undo that”) and I'll reverse it." : " Reversible — tell me if this was wrong."}_`,
+            actions,
+          },
+        })
+      );
+    } catch (err) {
+      // Last resort: the payload lands in the log so the action is reconstructable.
+      console.error(
+        `[executor] EXECUTED ${args.actionClass} but the receipt write failed — manual record:`,
+        JSON.stringify({ title: prepared.title, payload: prepared.payload ?? null, result: result ?? null }).slice(0, 2000),
+        err
+      );
+      throw err;
+    }
     return { finalized: true, reason: decision.reason, bridgeSignalId: sig.id, result };
   }
 

@@ -13,9 +13,20 @@
 //   • anthropicEngine → "Anthropic engine is not configured. Missing ANTHROPIC_API_KEY."
 //   • the other five   → "<PROVIDER>_API_KEY is not configured."  (e.g. GROQ_API_KEY)
 //   • the router's own all-providers-down line ("All configured LLM providers failed").
+// AND every adapter's RUNTIME failure string (go-live council: a 3am 429 with a
+// single funded provider returned "Anthropic API error: …" as text — it passed
+// this guard, got filed as a briefing, overwrote wiki pages, was embedded and
+// re-injected into every future prompt. Runtime errors are non-answers too):
+//   • "<Provider> API error: …" · "<Provider> engine encountered an error: …"
+//   • "<Provider> fetch error: …"
 
 export function engineUnavailableText(text: string): boolean {
-  return /_API_KEY is not configured|engine is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(
-    text ?? ""
+  return (
+    /_API_KEY is not configured|engine is not configured|Missing .*_API_KEY|All configured LLM providers failed/i.test(
+      text ?? ""
+    ) ||
+    /^\s*(Anthropic|OpenAI|Gemini|Google|Groq|DeepSeek|xAI|Grok)\b.{0,30}(API error|engine encountered an error|fetch error|request failed)/i.test(
+      text ?? ""
+    )
   );
 }

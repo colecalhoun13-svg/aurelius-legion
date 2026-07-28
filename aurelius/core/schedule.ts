@@ -35,6 +35,76 @@ const OVERRIDES_SCOPE = "system";
 const OVERRIDES_KEY = "schedule_overrides";
 const DISABLED_KEY = "schedule_disabled";
 
+// ── ONCE-PER-DAY CLAIMS (go-live council) ────────────────────────────
+// The live cron and the boot catch-up used to dedup on best-effort trace
+// telemetry — a redeploy straddling a cron minute double-fired the briefing.
+// Now every daily/weekly job atomically CLAIMS its (jobName, localDay) row
+// before running; only the winner runs. A claim stuck "running" >30 min is a
+// dead process — the next contender takes it over. Interval jobs (calendar
+// sync, pollers) are NOT here; they're meant to repeat.
+const ONCE_PER_DAY = new Set([
+  "rss_ingest", "market_pulse", "schedule_protection", "morning_briefing",
+  "initiative_pulse", "midday_check", "nightly_debrief", "weekend_pulse",
+  "persona_observer", "weekly_planning", "freshness_sweep", "weekly_scoreboard",
+  "capability_gaps", "decision_curriculum", "curriculum_ingest", "db_backup",
+]);
+
+export function localDayKey(): string {
+  return new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in process TZ
+}
+
+/** True = you own today's run. Availability beats dedup: if the claim STORE
+ *  is unreachable (cold Neon at boot), run unclaimed rather than skip. */
+export async function claimDailyRun(jobName: string, day = localDayKey()): Promise<boolean> {
+  const { prisma, withDb } = await import("./db/prisma.ts");
+  try {
+    await withDb(() => prisma.jobRun.create({ data: { jobName, day } }));
+    return true;
+  } catch (err: any) {
+    if (err?.code !== "P2002") {
+      console.warn(`[schedule] claim store unreachable for ${jobName} — running unclaimed:`, err?.message ?? err);
+      return true;
+    }
+    // Someone owns it. Take over only a stale "running" claim (dead process).
+    try {
+      const takeover = await prisma.jobRun.updateMany({
+        where: { jobName, day, status: "running", updatedAt: { lt: new Date(Date.now() - 30 * 60_000) } },
+        data: { status: "running" }, // bumps updatedAt — the takeover marker
+      });
+      return takeover.count === 1;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export async function finishDailyRun(jobName: string, ok: boolean, day = localDayKey()): Promise<void> {
+  try {
+    const { prisma } = await import("./db/prisma.ts");
+    await prisma.jobRun.updateMany({ where: { jobName, day }, data: { status: ok ? "done" : "failed" } });
+  } catch {
+    // best-effort — the claim row alone already prevents double-fire
+  }
+}
+
+function withDailyClaim(name: string, handler: () => void | Promise<void>): () => Promise<void> {
+  if (!ONCE_PER_DAY.has(name)) return async () => { await handler(); };
+  return async () => {
+    const day = localDayKey();
+    if (!(await claimDailyRun(name, day))) {
+      console.log(`[schedule] ${name} already ran/claimed for ${day} — skipping`);
+      return;
+    }
+    try {
+      await handler();
+      await finishDailyRun(name, true, day);
+    } catch (err) {
+      await finishDailyRun(name, false, day);
+      throw err;
+    }
+  };
+}
+
 /**
  * Register a named scheduled job. Wraps nodeSchedule.scheduleJob so the job can
  * later be re-timed OR paused by name. Call once per job at boot; overrides and
@@ -46,8 +116,10 @@ export function scheduleNamed(
   label: string,
   handler: () => void | Promise<void>
 ): any {
-  const job = nodeSchedule.scheduleJob(name, defaultCron, handler as any);
-  registry.set(name, { name, label, defaultCron, currentCron: defaultCron, job, handler, enabled: true });
+  // Daily/weekly jobs run behind the once-per-day claim (see ONCE_PER_DAY).
+  const guarded = withDailyClaim(name, handler);
+  const job = nodeSchedule.scheduleJob(name, defaultCron, guarded as any);
+  registry.set(name, { name, label, defaultCron, currentCron: defaultCron, job, handler: guarded, enabled: true });
   return job;
 }
 
