@@ -46,7 +46,9 @@ process, so it works from any host with no inbound config.
    - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
    - `GOOGLE_REDIRECT_URI=https://<backend-domain>/api/calendar/callback` —
      without it, future Connect taps redirect to localhost (existing tokens
-     are unaffected either way)
+     are unaffected either way). Same pattern per service when you use them:
+     `GOOGLE_GMAIL_REDIRECT_URI=…/api/gmail/callback`,
+     `INSTAGRAM_REDIRECT_URI=…/api/instagram/callback`
    - `TZ=America/Chicago` **and** `AURELIUS_TZ=America/Chicago` — the
      container runs UTC; TZ is what makes the 07:00 briefing fire at YOUR
      7am, not 2am (pre-flight council finding)
@@ -89,6 +91,11 @@ process, so it works from any host with no inbound config.
    frontend's API routes import backend modules directly, so `frontend/`
    alone can't build).
 3. **Variables** (frontend service):
+   - `APP_UNLOCK_SECRET` — **the app's own lock** (generate: `openssl rand -hex 16`).
+     The app domain is public; without this, anyone who finds the URL has your
+     whole brain — the go-live council's hardest finding. With it, the first
+     visit from any device shows one password field (/unlock); enter the
+     secret once and that device stays open for a year. NON-OPTIONAL.
    - `DATABASE_URL` — same Neon URL (the app's API routes read the DB directly)
    - `AURELIUS_API_KEY` — same value as the backend (unlocks the chat proxy)
    - `BACKEND_ORIGIN` — the backend's **private** URL from Railway's service

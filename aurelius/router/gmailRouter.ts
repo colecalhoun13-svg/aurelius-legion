@@ -4,6 +4,7 @@
 
 import { Router, type Request, type Response } from "express";
 import { gmailAuth, listInbox } from "../gmail/engine.ts";
+import { mintOAuthState, consumeOAuthState } from "../google/oauth.ts";
 
 export const gmailRouter = Router();
 
@@ -18,7 +19,7 @@ gmailRouter.get("/status", async (_req: Request, res: Response) => {
 });
 
 gmailRouter.get("/auth", (_req: Request, res: Response) => {
-  const url = gmailAuth.buildAuthUrl();
+  const url = gmailAuth.buildAuthUrl(mintOAuthState());
   if (!url) return res.status(400).send("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are not set. Add them and restart.");
   res.redirect(url);
 });
@@ -28,6 +29,10 @@ gmailRouter.get("/callback", async (req: Request, res: Response) => {
   const gerror = String(req.query.error ?? "");
   if (gerror) return res.status(400).send(`Google returned an error: ${gerror}`);
   if (!code) return res.status(400).send("Missing ?code from Google.");
+  // Login-CSRF guard: the callback must carry the state /auth minted.
+  if (!consumeOAuthState(String(req.query.state ?? ""))) {
+    return res.status(403).send("OAuth state mismatch — start again from /api/gmail/auth.");
+  }
   const result = await gmailAuth.handleCallback(code);
   if (!result.ok) return res.status(500).send(`Connection failed: ${result.error}`);
   res.send(`<!doctype html><html><body style="background:#0a0a0a;color:#d4af37;font-family:Georgia,serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">

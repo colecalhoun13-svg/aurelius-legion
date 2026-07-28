@@ -115,8 +115,9 @@ export async function disconnectInstagram(): Promise<void> {
 
 // ── The flow ─────────────────────────────────────────────────────────
 
-/** Step 1: the consent URL Cole opens once. Null when app creds are missing. */
-export function buildAuthUrl(): string | null {
+/** Step 1: the consent URL Cole opens once. Null when app creds are missing.
+ *  `state` is the login-CSRF guard the callback verifies (go-live council). */
+export function buildAuthUrl(state?: string): string | null {
   const cfg = clientConfig();
   if (!cfg) return null;
   const params = new URLSearchParams({
@@ -124,6 +125,7 @@ export function buildAuthUrl(): string | null {
     redirect_uri: redirectUri(),
     response_type: "code",
     scope: SCOPES,
+    ...(state ? { state } : {}),
   });
   return `${DIALOG}?${params}`;
 }

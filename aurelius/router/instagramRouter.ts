@@ -5,6 +5,7 @@
 // routes static (no /:param), so ordering hazards don't apply.
 
 import { Router, type Request, type Response } from "express";
+import { mintOAuthState, consumeOAuthState } from "../google/oauth.ts";
 import {
   buildAuthUrl,
   handleOAuthCallback,
@@ -32,7 +33,7 @@ instagramRouter.get("/status", async (_req: Request, res: Response) => {
 
 // GET /api/instagram/auth — the one link Cole clicks, once.
 instagramRouter.get("/auth", (_req: Request, res: Response) => {
-  const url = buildAuthUrl();
+  const url = buildAuthUrl(mintOAuthState());
   if (!url) {
     return res
       .status(400)
@@ -44,6 +45,10 @@ instagramRouter.get("/auth", (_req: Request, res: Response) => {
 // GET /api/instagram/callback — Meta lands here with ?code=
 instagramRouter.get("/callback", async (req: Request, res: Response) => {
   const code = String(req.query.code ?? "");
+  // Login-CSRF guard: the callback must carry the state /auth minted.
+  if (!consumeOAuthState(String(req.query.state ?? ""))) {
+    return res.status(403).send("OAuth state mismatch — start again from /api/instagram/auth.");
+  }
   const err = String(req.query.error_description ?? req.query.error ?? "");
   if (err) return res.status(400).send(`Instagram/Meta returned an error: ${err}`);
   if (!code) return res.status(400).send("Missing ?code from Meta.");
