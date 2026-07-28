@@ -113,8 +113,9 @@ export async function disconnectCalendar(): Promise<void> {
 
 // ── The flow ─────────────────────────────────────────────────────────
 
-/** Step 1: the consent URL Cole opens once. Null when creds are missing. */
-export function buildAuthUrl(): string | null {
+/** Step 1: the consent URL Cole opens once. Null when creds are missing.
+ *  `state` is the login-CSRF guard the callback verifies (go-live council). */
+export function buildAuthUrl(state?: string): string | null {
   const cfg = clientConfig();
   if (!cfg) return null;
   const params = new URLSearchParams({
@@ -124,6 +125,7 @@ export function buildAuthUrl(): string | null {
     scope: SCOPE,
     access_type: "offline", // → refresh token
     prompt: "consent",      // → refresh token EVERY time, even on re-auth
+    ...(state ? { state } : {}),
   });
   return `${AUTH_URL}?${params}`;
 }

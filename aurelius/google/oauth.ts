@@ -16,12 +16,31 @@ import { prisma } from "../core/db/prisma.ts";
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
+// LOGIN-CSRF GUARD (go-live council): /auth mints a single-use state; the
+// callback must return it. Without this, an attacker could lure the browser
+// to /api/*/callback?code=<their code> and poison the stored token with
+// THEIR Google account. In-memory is right — the round trip is minutes,
+// single process, and a restart just means clicking Connect again.
+import { randomBytes } from "node:crypto";
+const pendingStates = new Map<string, number>(); // state → expiry
+export function mintOAuthState(): string {
+  const s = randomBytes(16).toString("hex");
+  pendingStates.set(s, Date.now() + 10 * 60_000);
+  return s;
+}
+export function consumeOAuthState(state: string): boolean {
+  const exp = pendingStates.get(state);
+  pendingStates.delete(state);
+  for (const [k, e] of pendingStates) if (e < Date.now()) pendingStates.delete(k);
+  return !!exp && exp > Date.now();
+}
+
 type StoredTokens = { refresh_token: string; access_token: string; expires_at: number };
 
 export type GoogleOAuth = {
   isConfigured(): boolean;
   redirectUri(): string;
-  buildAuthUrl(): string | null;
+  buildAuthUrl(state?: string): string | null;
   handleCallback(code: string): Promise<{ ok: boolean; error?: string }>;
   isConnected(): Promise<boolean>;
   disconnect(): Promise<void>;
@@ -129,12 +148,13 @@ export function makeGoogleOAuth(cfg: {
   return {
     isConfigured: () => clientConfig() !== null,
     redirectUri,
-    buildAuthUrl() {
+    buildAuthUrl(state?: string) {
       const cc = clientConfig();
       if (!cc) return null;
       const params = new URLSearchParams({
         client_id: cc.id, redirect_uri: redirectUri(), response_type: "code",
         scope: cfg.scope, access_type: "offline", prompt: "consent",
+        ...(state ? { state } : {}),
       });
       return `${AUTH_URL}?${params}`;
     },

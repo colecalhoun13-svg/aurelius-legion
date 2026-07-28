@@ -6,6 +6,7 @@
 // so ordering hazards don't apply here.
 
 import { Router, type Request, type Response } from "express";
+import { mintOAuthState, consumeOAuthState } from "../google/oauth.ts";
 import {
   buildAuthUrl,
   handleOAuthCallback,
@@ -50,7 +51,7 @@ calendarRouter.get("/status", async (_req: Request, res: Response) => {
 
 // GET /api/calendar/auth — the one link Cole clicks, once.
 calendarRouter.get("/auth", (_req: Request, res: Response) => {
-  const url = buildAuthUrl();
+  const url = buildAuthUrl(mintOAuthState());
   if (!url) {
     return res
       .status(400)
@@ -65,6 +66,10 @@ calendarRouter.get("/callback", async (req: Request, res: Response) => {
   const gerror = String(req.query.error ?? "");
   if (gerror) return res.status(400).send(`Google returned an error: ${gerror}`);
   if (!code) return res.status(400).send("Missing ?code from Google.");
+  // Login-CSRF guard: the callback must carry the state /auth minted.
+  if (!consumeOAuthState(String(req.query.state ?? ""))) {
+    return res.status(403).send("OAuth state mismatch — start again from /api/calendar/auth.");
+  }
 
   const result = await handleOAuthCallback(code);
   if (!result.ok) return res.status(500).send(`Connection failed: ${result.error}`);

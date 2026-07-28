@@ -114,13 +114,20 @@ app.use(
 // (hard rule 4): unset key = open, one loud boot line says so — but the
 // Railway/Mini runbooks make setting it MANDATORY before any always-on deploy.
 const API_KEY = process.env.AURELIUS_API_KEY?.trim();
-const AUTH_EXEMPT = /^\/api\/[a-z_]+\/(auth|callback)(\/|$|\?)/;
+// Exact allowlist, not a pattern (go-live council: /api/x/auth/../../grants
+// matched the old regex — Express doesn't collapse dot-segments pre-route).
+const AUTH_EXEMPT = new Set([
+  "/health", "/",
+  "/api/calendar/auth", "/api/calendar/callback",
+  "/api/gmail/auth", "/api/gmail/callback",
+  "/api/instagram/auth", "/api/instagram/callback",
+]);
 if (!API_KEY) {
   console.warn("[auth] DORMANT — no AURELIUS_API_KEY set. Fine on a private machine; set it BEFORE exposing port 3001 or deploying always-on.");
 }
 app.use((req, res, next) => {
   if (!API_KEY) return next();
-  if (req.path === "/health" || req.path === "/" || AUTH_EXEMPT.test(req.path)) return next();
+  if (AUTH_EXEMPT.has(req.path)) return next();
   if (req.get("x-aurelius-key") === API_KEY) return next();
   return res.status(401).json({ error: "unauthorized — send x-aurelius-key (set AURELIUS_API_KEY on the caller)" });
 });
