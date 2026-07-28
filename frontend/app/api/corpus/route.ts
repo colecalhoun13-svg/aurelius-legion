@@ -6,7 +6,8 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    return NextResponse.json({ documents: await listCorpus() });
+    // The shelves/catalog draw from this — 50 hid volume 51+ (council).
+    return NextResponse.json({ documents: await listCorpus(1000) });
   } catch (error: any) {
     console.error("Corpus list error:", error);
     return NextResponse.json({ error: error?.message ?? "Failed to load corpus" }, { status: 500 });

@@ -53,8 +53,15 @@ const SEV: Record<string, string> = {
 
 export default function HomePage() {
   const [deck, setDeck] = useState<Deck | null>(null);
-  // The day's quote — fresh each load, same ritual as the old Deck.
-  const [quote] = useState(() => QUOTES[Math.floor(Math.random() * QUOTES.length)]!);
+  // The day's quote + greeting resolve AFTER mount: the server prerender
+  // can't know this load's random quote or Cole's local hour, and the
+  // mismatch caused a hydration error + content flash on every open.
+  const [quote, setQuote] = useState<[string, string] | null>(null);
+  const [hello, setHello] = useState("Welcome");
+  useEffect(() => {
+    setQuote(QUOTES[Math.floor(Math.random() * QUOTES.length)]!);
+    setHello(greeting());
+  }, []);
   const [today, setToday] = useState<TodayData | null>(null);
   const [briefing, setBriefing] = useState<{ text: string; at: string } | null>(null);
   const [briefingOpen, setBriefingOpen] = useState(false);
@@ -129,13 +136,18 @@ export default function HomePage() {
 
   const bridge = deck?.bridge ?? [];
   const overnight = deck?.overnight ?? [];
-  const tasks = [...(today?.overdue ?? []), ...(today?.tasks ?? [])];
+  const seenTasks = new Set<string>();
+  const tasks = [...(today?.overdue ?? []), ...(today?.tasks ?? [])].filter((t) => {
+    if (seenTasks.has(t.id)) return false;
+    seenTasks.add(t.id);
+    return true;
+  });
 
   return (
     <div className="max-w-2xl mx-auto text-aurelius-text aurelius-stagger flex flex-col min-h-full">
       {/* ── Above the fold: the day, in one breath ── */}
       <header className="text-center pt-2">
-        <h1 className="aurelius-heading text-4xl md:text-5xl">{greeting()}, Operator</h1>
+        <h1 className="aurelius-heading text-4xl md:text-5xl">{hello}, Operator</h1>
         {deck?.biggestRisk && (
           <p
             className={`mt-3 text-base leading-snug ${
@@ -152,10 +164,12 @@ export default function HomePage() {
           </p>
         )}
         {/* The day's quote — the ritual survives the merge */}
-        <blockquote className="mt-4 max-w-xl mx-auto">
-          <p className="text-sm italic text-neutral-400 leading-relaxed">“{quote[0]}”</p>
-          <footer className="aurelius-heading text-xs text-aurelius-gold/60 mt-1.5">— {quote[1]}</footer>
-        </blockquote>
+        {quote && (
+          <blockquote className="mt-4 max-w-xl mx-auto">
+            <p className="text-sm italic text-neutral-400 leading-relaxed">“{quote[0]}”</p>
+            <footer className="aurelius-heading text-xs text-aurelius-gold/60 mt-1.5">— {quote[1]}</footer>
+          </blockquote>
+        )}
       </header>
 
       {/* Briefing — open when fresh, one quiet line once read */}

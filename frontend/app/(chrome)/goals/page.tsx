@@ -5,6 +5,7 @@
 // up — the coach's wall of trends). Same ?tab= pattern as /brain.
 
 import { Suspense, useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import ProjectsSection from "../../../components/ProjectsSection";
 import ScoreboardPanel from "../../../components/goals/ScoreboardPanel";
 
@@ -109,10 +110,13 @@ type TabKey = (typeof TABS)[number]["key"];
 function GoalsInner() {
   const [tab, setTab] = useState<TabKey>("goals");
 
+  // Keyed on the live search params (not mount-once): a ⌘K jump to ?tab=…
+  // while ALREADY on this page must switch tabs (same-route nav ≠ remount).
+  const searchParams = useSearchParams();
   useEffect(() => {
-    const p = new URLSearchParams(window.location.search);
-    if (p.get("tab") && TABS.some((t) => t.key === p.get("tab"))) setTab(p.get("tab") as TabKey);
-  }, []);
+    const t = searchParams.get("tab");
+    if (t && TABS.some((x) => x.key === t)) setTab(t as TabKey);
+  }, [searchParams]);
 
   return (
     <div className="space-y-6">
