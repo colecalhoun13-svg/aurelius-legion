@@ -198,7 +198,12 @@ export function startInboxWatcher() {
   }
   if (timer) return;
   console.log(`[inbox] watching ${dir} (every 10 min; drop .md/.txt/.pdf)`);
+  // Overlap guard (go-live council): a slow batch (>10 min of PDFs) must not
+  // overlap its own next tick — both would pass the dedup findFirst window.
+  let inFlight = false;
   timer = setInterval(() => {
+    if (inFlight) { console.log("[inbox] previous poll still running — skipping tick"); return; }
+    inFlight = true;
     runTraced("poll", "ingest_inbox", () => pollInboxOnce()).catch((err) =>
       console.warn("[inbox] poll failed:", err)
     );

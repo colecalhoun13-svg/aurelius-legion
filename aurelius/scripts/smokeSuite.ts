@@ -883,6 +883,32 @@ async function main() {
     await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
   }
 
+  console.log("── go-live reliability: job claims + runtime-error guard ──");
+  {
+    const { claimDailyRun, finishDailyRun } = await import("../core/schedule.ts");
+    const jobName = `smoke_job_${TAG}`;
+    const day = "2026-01-01";
+    check("first claim wins", (await claimDailyRun(jobName, day)) === true);
+    check("second claim loses (no double-fire)", (await claimDailyRun(jobName, day)) === false);
+    await finishDailyRun(jobName, true, day);
+    const row = await prisma.jobRun.findUnique({ where: { jobName_day: { jobName, day } } });
+    check("finished claim marked done", row?.status === "done");
+    // A stale "running" claim (dead process) is taken over after 30 min.
+    const staleName = `smoke_stale_${TAG}`;
+    await prisma.jobRun.create({ data: { jobName: staleName, day, status: "running", updatedAt: new Date(Date.now() - 45 * 60_000) } });
+    check("stale running claim is taken over", (await claimDailyRun(staleName, day)) === true);
+    await prisma.jobRun.deleteMany({ where: { jobName: { contains: TAG } } });
+
+    const { engineUnavailableText } = await import("../llm/nonAnswer.ts");
+    check(
+      "runtime API errors are non-answers (the 3am-429 garbage class)",
+      engineUnavailableText("Anthropic API error: 429 overloaded") &&
+        engineUnavailableText("OpenAI engine encountered an error: fetch failed") &&
+        engineUnavailableText("Gemini fetch error: socket hang up") &&
+        !engineUnavailableText("Anthropic's approach to error handling in distributed systems is worth studying.")
+    );
+  }
+
   console.log("── pre-session recall: calendar × brain join ──");
   {
     const { prepCandidates, sessionPrepForEvents, formatSessionPrep } = await import("../planning/sessionPrep.ts");

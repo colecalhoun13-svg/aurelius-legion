@@ -59,6 +59,31 @@ export async function runDbBackup(): Promise<{ ok: boolean; file?: string; bytes
       `[backup] FAILED: ${msg}` +
         (/ENOENT/.test(msg) ? " — pg_dump not installed; apt-get install postgresql-client" : "")
     );
+    // Always-on has no boot warning to catch this (go-live council): a failed
+    // nightly must reach Cole's queue, once per day, not just a log line.
+    try {
+      const { prisma } = await import("./db/prisma.ts");
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const already = await prisma.bridgeSignal.findFirst({
+        where: { sourceType: "backup_failure", createdAt: { gte: today } },
+        select: { id: true },
+      });
+      if (!already) {
+        await prisma.bridgeSignal.create({
+          data: {
+            kind: "background_result",
+            domain: "personal",
+            sourceType: "backup_failure",
+            severity: "attention",
+            status: "surfaced",
+            title: "Nightly backup FAILED — the brain has no fresh copy",
+            body: `pg_dump error: ${msg.slice(0, 300)}\n\nUntil this is fixed, the newest dump is whatever last succeeded. ${/ENOENT/.test(msg) ? "Fix: install postgresql-client in the image/host." : "Check DATABASE_URL reachability and pg_dump/server version compatibility."}`,
+          },
+        });
+      }
+    } catch {
+      // signal is best-effort — the log line above already fired
+    }
     return { ok: false, error: msg };
   }
 }

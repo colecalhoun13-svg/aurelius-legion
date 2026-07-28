@@ -77,6 +77,7 @@ export async function pollRssOnce() {
         sourceUrl: feed.url,
         domain: feed.domain,
         triggeredBy: "schedule",
+        dedupKey: `rss:${feed.url}#${dstr}`, // DB-level once-per-feed-per-day
       });
       ingested++;
     } catch (err) {

@@ -667,3 +667,18 @@ model KnowledgeEntry {
   @@index([operatorId, scope])
   @@index([operatorId, active])
 }
+// Atomic once-per-day claim for scheduled jobs (go-live council). The catch-up
+// dedup used to rest on best-effort trace telemetry — a redeploy straddling a
+// cron minute could double-fire the briefing, or a killed run could count as
+// done. Now: INSERT the (jobName, day) claim; only the winner runs. A claim
+// stuck "running" >30 min is treated as a dead process and taken over.
+model JobRun {
+  id        String   @id @default(cuid())
+  jobName   String
+  day       String   // local YYYY-MM-DD (process TZ)
+  status    String   @default("running") // running | done | failed
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([jobName, day])
+}

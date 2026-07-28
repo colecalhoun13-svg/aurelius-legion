@@ -54,6 +54,10 @@ export async function syncCalendar(opts: { daysBack?: number; daysAhead?: number
   if (!(await isCalendarConnected())) {
     return { ok: false as const, reason: "not_connected" as const };
   }
+  // Prune guard (go-live council): anything created/updated after this moment
+  // (a quick-add, a schedule-protection hold) postdates the fetched pages and
+  // must never be deleted by this sync's prune.
+  const syncStartedAt = new Date();
   const timeMin = new Date(Date.now() - (opts.daysBack ?? SYNC_DAYS_BACK) * 86400_000);
   const timeMax = new Date(Date.now() + (opts.daysAhead ?? SYNC_DAYS_AHEAD) * 86400_000);
 
@@ -116,7 +120,7 @@ export async function syncCalendar(opts: { daysBack?: number; daysAhead?: number
   } else {
     removed += (
       await prisma.calendarEvent.deleteMany({
-        where: { startAt: { gte: timeMin, lte: timeMax }, externalId: { notIn: seen } },
+        where: { startAt: { gte: timeMin, lte: timeMax }, externalId: { notIn: seen }, syncedAt: { lt: syncStartedAt } },
       })
     ).count;
   }
