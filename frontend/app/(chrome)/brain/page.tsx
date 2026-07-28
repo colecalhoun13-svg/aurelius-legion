@@ -7,6 +7,7 @@
 // feed by note/URL), Syntheses (the wiki it maintains).
 
 import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import ShelvesPanel from "../../../components/brain/ShelvesPanel";
 import AskPanel from "../../../components/brain/AskPanel";
 import WikiPanel from "../../../components/brain/WikiPanel";
@@ -22,11 +23,16 @@ function BrainInner() {
   const [tab, setTab] = useState<TabKey>("shelves");
 
   // Deep links keep working: /brain?ask=… (TopBar) lands on the Ask tab.
+  // Keyed on the live search params (not mount-once): a ⌘K jump to
+  // /brain?tab=… or ?ask=… while ALREADY on /brain must switch tabs.
+  const searchParams = useSearchParams();
   useEffect(() => {
-    const p = new URLSearchParams(window.location.search);
-    if (p.get("ask") !== null) setTab("ask");
-    else if (p.get("tab") && TABS.some((t) => t.key === p.get("tab"))) setTab(p.get("tab") as TabKey);
-  }, []);
+    if (searchParams.get("ask") !== null) setTab("ask");
+    else {
+      const t = searchParams.get("tab");
+      if (t && TABS.some((x) => x.key === t)) setTab(t as TabKey);
+    }
+  }, [searchParams]);
 
   return (
     <div className="space-y-6">

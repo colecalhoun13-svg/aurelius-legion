@@ -8,6 +8,7 @@
 // link straight to /aurelius?tab=autonomy — the dial stays one tap away).
 
 import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import MissionsPanel from "../../../components/aurelius/MissionsPanel";
 import AutonomyPanel from "../../../components/aurelius/AutonomyPanel";
 import TracesPanel from "../../../components/aurelius/TracesPanel";
@@ -22,10 +23,13 @@ type TabKey = (typeof TABS)[number]["key"];
 function AureliusInner() {
   const [tab, setTab] = useState<TabKey>("missions");
 
+  // Keyed on the live search params (not mount-once): a ⌘K jump to ?tab=…
+  // while ALREADY on this page must switch tabs (same-route nav ≠ remount).
+  const searchParams = useSearchParams();
   useEffect(() => {
-    const p = new URLSearchParams(window.location.search);
-    if (p.get("tab") && TABS.some((t) => t.key === p.get("tab"))) setTab(p.get("tab") as TabKey);
-  }, []);
+    const t = searchParams.get("tab");
+    if (t && TABS.some((x) => x.key === t)) setTab(t as TabKey);
+  }, [searchParams]);
 
   return (
     <div className="space-y-6">

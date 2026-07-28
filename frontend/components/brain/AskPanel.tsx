@@ -5,6 +5,7 @@
 // four writes deep: vector index, memory, awareness registry, bridge signal.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 type CorpusDoc = {
   id: string;
@@ -58,14 +59,23 @@ export default function CorpusPage() {
 
   useEffect(() => {
     load();
-    // Arriving from the top-bar search: /corpus?ask=…
-    const q = new URLSearchParams(window.location.search).get("ask");
-    if (q) {
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Arriving from the ⌘K bar: ?ask=… — keyed on the params so a SECOND ask
+  // while already on this tab fires too (App Router same-route navigation
+  // doesn't remount; the old mount-only effect silently dropped it).
+  const searchParams = useSearchParams();
+  const lastAskRef = useRef<string | null>(null);
+  useEffect(() => {
+    const q = searchParams.get("ask");
+    if (q && q !== lastAskRef.current) {
+      lastAskRef.current = q;
       setQuestion(q);
       submitAsk(q);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [searchParams]);
 
   const submitAsk = async (q?: string) => {
     const text = (q ?? question).trim();

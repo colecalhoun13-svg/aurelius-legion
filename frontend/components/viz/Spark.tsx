@@ -38,7 +38,7 @@ export function SparkLine({
   const last = pts[pts.length - 1]!;
   return (
     <span className="inline-flex items-center gap-2">
-      <svg width={width} height={height} className="overflow-visible">
+      <svg viewBox={`0 0 ${width} ${height}`} className="overflow-visible w-full max-w-full h-auto" style={{ maxWidth: width }}>
         <path d={d} fill="none" stroke={GOLD} strokeWidth="1.5" strokeLinejoin="round" opacity="0.9" />
         {pts.length === 1 && <circle cx={x(last.i)} cy={y(last.v)} r="2.5" fill={GOLD} />}
         <circle cx={x(last.i)} cy={y(last.v)} r="2.5" fill={GOLD} />
@@ -68,7 +68,7 @@ export function SparkBars({
   const bw = Math.max(4, (width - gap * (values.length - 1)) / values.length);
   const chartH = labels ? height - 14 : height;
   return (
-    <svg width={width} height={height}>
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full max-w-full h-auto" style={{ maxWidth: width }}>
       {values.map((v, i) => {
         const h = Math.max(v > 0 ? 3 : 1, (v / hi) * (chartH - 4));
         return (

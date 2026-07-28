@@ -120,7 +120,11 @@ export default function CalendarPage() {
     const date = new Date(weekStart.getTime() + i * 86400000);
     const key = localDayKey(date);
     const dayTasks = tasks.filter((t) => t.scheduledFor && localDayKey(new Date(t.scheduledFor)) === key);
-    const dayEvents = events.filter((e) => localDayKey(new Date(e.startAt)) === key);
+    // All-day events are stored as UTC midnight — bucketing them through the
+    // local clock lands a Wednesday event in Tuesday's column (go-live council).
+    const dayEvents = events.filter((e) =>
+      e.raw?.allDay ? String(e.startAt).slice(0, 10) === key : localDayKey(new Date(e.startAt)) === key
+    );
     const isToday = key === localDayKey(new Date());
     return { date, key, dayTasks, dayEvents, isToday };
   });
