@@ -126,11 +126,11 @@ export async function ingestDocument(input: IngestInput) {
       .then(async (m) => { await m.mirrorCorpusDoc(doc); await m.mirrorIndex(); })
       .catch((err) => console.warn("[corpus] vault mirror failed (non-fatal):", err));
 
-    // The wiki keeps up with the corpus — fire-and-forget synthesis so
-    // the domain's living page absorbs the new material. Never blocks
-    // or fails an ingestion.
+    // The wiki keeps up with the corpus — DEBOUNCED per domain (final
+    // council): a batch of drops rewrites each touched page once, not once
+    // per document. Never blocks or fails an ingestion.
     import("../wiki/engine.ts")
-      .then(({ synthesizeWikiPage }) => synthesizeWikiPage(doc.domain, "ingestion"))
+      .then(({ queueWikiSynthesis }) => queueWikiSynthesis(doc.domain, "ingestion"))
       .catch((err) => console.warn("[corpus] wiki refresh failed (non-fatal):", err));
 
     return { doc, chunkCount };
