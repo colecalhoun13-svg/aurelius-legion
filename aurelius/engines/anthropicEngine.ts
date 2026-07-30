@@ -5,6 +5,7 @@
  * Respects the model passed in by the router.
  */
 import type { EngineAdapter } from "./engineAdapter.ts";
+import { CACHE_BREAK } from "../llm/promptMarkers.ts";
 
 type RunAnthropicInput = {
   model?: string;
@@ -35,7 +36,22 @@ async function runAnthropic({
     messages: [{ role: "user", content: userPrompt }],
     max_tokens: maxTokens,
   };
-  if (systemPrompt) body.system = systemPrompt;
+  if (systemPrompt) {
+    // Prompt caching (final council): the router assembles a static prefix
+    // (persona/identity/operators/tool catalog) above CACHE_BREAK and live
+    // context below it. Marking the prefix block with cache_control turns
+    // ~8K tokens per call into 90%-discounted cache reads. Prompts without
+    // the marker (raw callers) ship as a plain string, exactly as before.
+    const at = systemPrompt.indexOf(CACHE_BREAK);
+    if (at > 0) {
+      body.system = [
+        { type: "text", text: systemPrompt.slice(0, at), cache_control: { type: "ephemeral" } },
+        { type: "text", text: systemPrompt.slice(at) },
+      ];
+    } else {
+      body.system = systemPrompt;
+    }
+  }
   if (tools?.length) body.tools = tools;
 
   try {

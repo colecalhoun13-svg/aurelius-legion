@@ -33,6 +33,7 @@ import {
 } from "../memory/memoryService.ts";
 import { buildToolCatalog } from "../tools/toolRegistry.ts";
 import { nativeToolsFor, parseNativeToolCalls } from "./nativeTools.ts";
+import { CACHE_BREAK } from "./promptMarkers.ts";
 import type { ToolDirective } from "./directiveParser.ts";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -63,6 +64,9 @@ export type LLMTask = {
   // Attach the native invoke_tool function on directive-capable providers so
   // tool calls arrive structured instead of regex-parsed from prose.
   nativeTools?: boolean;
+  // Skip the ~21KB tool catalog for calls whose output strips directives
+  // anyway (wiki synthesis and kin) — pure token savings, zero behavior loss.
+  omitToolCatalog?: boolean;
   // Phase 4.5 — Knowledge update propose/confirm context
   knowledgeContext?: {
     operatorId: string;
@@ -298,33 +302,18 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     secondaries: [],
   };
 
+  // ── STATIC PREFIX (final council, efficiency seat) ──────────────────
+  // Layers 1/2/3/4/6 are byte-identical for a given operator combination,
+  // so they lead the prompt and get cached by capable providers (the
+  // Anthropic adapter marks everything above CACHE_BREAK with
+  // cache_control). Dynamic layers follow the break. Semantic layer
+  // numbering is unchanged — only the assembly order moved.
+
   // Layer 1: Base persona
   parts.push(BASE_PERSONA_PROMPT);
 
-  // Layer 1.5: Operator state — score + learned calibration, one voice.
-  // No modes: the register modulates from live state and from persona.*
-  // entries Cole has confirmed, never from a persona switch.
-  try {
-    const { getOperatorStateBlock } = await import("../measurement/operatorScore.ts");
-    const stateBlock = await getOperatorStateBlock();
-    if (stateBlock) parts.push("\n" + stateBlock);
-  } catch (err) {
-    console.warn("[router] operator state block failed (non-fatal):", err);
-  }
-
   // Layer 2: Identity
   parts.push("\n" + formatIdentityForPrompt());
-
-  // Layer 2.4: NOW — the brain knows what time it is (final council). Clock,
-  // next events with countdowns, today's load, standing grants. 60s-cached
-  // body, fresh clock line; never fatal.
-  try {
-    const { buildNowBlock } = await import("../core/nowContext.ts");
-    const nowBlock = await buildNowBlock();
-    if (nowBlock) parts.push("\n" + nowBlock);
-  } catch (err) {
-    console.warn("[ROUTER] NOW layer failed (non-fatal):", err);
-  }
 
   // Layer 3: Primary operator (full core + lens extension + tone)
   const primaryBlock = formatPrimaryOperatorCore(operators.primary);
@@ -345,6 +334,50 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     if (secondaryBlocks.length > 1) {
       parts.push("\n" + secondaryBlocks.join("\n"));
     }
+  }
+
+  // Layer 6: Tool catalog — static, so it lives in the cached prefix. Gated:
+  // task types that strip directives afterwards (wiki synthesis and kin) set
+  // omitToolCatalog and skip its ~21KB entirely (final council).
+  if (!task.omitToolCatalog) {
+    try {
+      const toolCatalog = buildToolCatalog();
+      if (toolCatalog) {
+        parts.push("\n═══ " + toolCatalog);
+        if (task.nativeTools) {
+          parts.push(
+            "\nWhen you need a tool, PREFER calling the invoke_tool function with { tool, action, data } exactly as cataloged above — it cannot be mis-parsed. The [TOOL: ...] text form remains a working fallback."
+          );
+        }
+      }
+    } catch (err) {
+      console.warn("[ROUTER] tool catalog generation failed:", err);
+    }
+  }
+
+  // ── CACHE BREAK — everything below changes per call ─────────────────
+  parts.push("\n" + CACHE_BREAK);
+
+  // Layer 1.5: Operator state — score + learned calibration, one voice.
+  // No modes: the register modulates from live state and from persona.*
+  // entries Cole has confirmed, never from a persona switch.
+  try {
+    const { getOperatorStateBlock } = await import("../measurement/operatorScore.ts");
+    const stateBlock = await getOperatorStateBlock();
+    if (stateBlock) parts.push("\n" + stateBlock);
+  } catch (err) {
+    console.warn("[router] operator state block failed (non-fatal):", err);
+  }
+
+  // Layer 2.4: NOW — the brain knows what time it is (final council). Clock,
+  // next events with countdowns, today's load, standing grants. 60s-cached
+  // body, fresh clock line; never fatal.
+  try {
+    const { buildNowBlock } = await import("../core/nowContext.ts");
+    const nowBlock = await buildNowBlock();
+    if (nowBlock) parts.push("\n" + nowBlock);
+  } catch (err) {
+    console.warn("[ROUTER] NOW layer failed (non-fatal):", err);
   }
 
   // Layer 5: Memory (loaded for primary operator; relations-aware so secondaries surface naturally)
@@ -476,21 +509,6 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     if (awareness) parts.push("\n" + awareness);
   } catch (err) {
     console.warn("[ROUTER] corpus awareness failed (non-fatal):", err);
-  }
-
-  // Layer 6: Tool catalog (auto-generated from registered tool adapters)
-  try {
-    const toolCatalog = buildToolCatalog();
-    if (toolCatalog) {
-      parts.push("\n═══ " + toolCatalog);
-      if (task.nativeTools) {
-        parts.push(
-          "\nWhen you need a tool, PREFER calling the invoke_tool function with { tool, action, data } exactly as cataloged above — it cannot be mis-parsed. The [TOOL: ...] text form remains a working fallback."
-        );
-      }
-    }
-  } catch (err) {
-    console.warn("[ROUTER] tool catalog generation failed:", err);
   }
 
   // Layer 7: Task context

@@ -68,6 +68,35 @@ function deterministicPage(domain: string, m: Awaited<ReturnType<typeof gatherDo
   return lines.join("\n");
 }
 
+// PER-DOMAIN DEBOUNCE (final council, efficiency seat). Every ingested doc
+// used to fire a FULL LLM resynthesis of its domain page — a 10-doc Paperless
+// batch rewrote the same page ten times sequentially (~$0.60 and ten junk
+// revisions for one batch). Ingest paths now queue the domain; one timer
+// flushes every dirty domain once the batch settles. Sunday's
+// synthesizeAllDomains remains the backstop; direct calls stay immediate.
+const WIKI_DEBOUNCE_MS = 15 * 60 * 1000;
+const dirtyDomains = new Set<string>();
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function queueWikiSynthesis(domain: string, reason = "ingestion"): void {
+  dirtyDomains.add(domain);
+  if (debounceTimer) return;
+  debounceTimer = setTimeout(async () => {
+    debounceTimer = null;
+    const domains = [...dirtyDomains];
+    dirtyDomains.clear();
+    for (const d of domains) {
+      try {
+        await synthesizeWikiPage(d, reason);
+      } catch (err) {
+        console.warn(`[wiki] debounced synthesis failed for ${d} (non-fatal):`, err);
+      }
+    }
+  }, WIKI_DEBOUNCE_MS);
+  // Never hold a shutting-down process open for a wiki rewrite.
+  (debounceTimer as any).unref?.();
+}
+
 /**
  * Rewrite the domain's wiki page from current material.
  * Non-destructive: prior content becomes a WikiRevision.
@@ -96,6 +125,7 @@ export async function synthesizeWikiPage(domain: string, reason = "manual") {
     const response = await runLLM({
       taskType: "chat",
       operators: { primary: "strategy", secondaries: [] },
+      omitToolCatalog: true, // synthesis output strips directives — skip the 21KB
       input: `
 Rewrite the living wiki page for the "${domain}" domain of Cole's second brain.
 This is YOUR synthesis — what you actually understand from the material, not a

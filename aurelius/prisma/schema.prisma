@@ -42,6 +42,10 @@ model Memory {
   metadata   Json?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  // Prompt assembly scans this table up to 11× per LLM call (final council).
+  // A GIN index on metadata also exists, SQL-only — see the migration.
+  @@index([operatorId, category, createdAt])
 }
 
 // Extended in place from the Phase-0 stub (data-preserving: legacy rows keep
@@ -114,6 +118,11 @@ model LogEntry {
   message    String
   context    Json?
   createdAt  DateTime @default(now())
+
+  // The fastest-growing, hottest-read table: boot catch-up, the traces
+  // cockpit, scoreboard llm_call aggregation, trust ledger (final council).
+  @@index([type, message, createdAt])
+  @@index([createdAt])
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -37,8 +37,9 @@ anyone (human or agent) working in this repo.
 ## Gotchas (each of these has bitten us)
 
 - **Prisma migration diff always emits** `DROP INDEX
-  "VectorEmbedding_embedding_hnsw_idx"` — excise the DropIndex block from
-  every new migration before deploying.
+  "VectorEmbedding_embedding_hnsw_idx"` — and, since the hot-table-indexes
+  migration, `DROP INDEX "Memory_metadata_gin_idx"` (GIN is SQL-only too).
+  Excise every such DropIndex block from new migrations before deploying.
   Workflow: `npx prisma migrate diff --from-migrations prisma/migrations
   --to-schema-datamodel prisma/schema.prisma --shadow-database-url
   postgresql://aurelius:aurelius@127.0.0.1:5432/shadow_diff --script`.
@@ -58,9 +59,13 @@ anyone (human or agent) working in this repo.
 
 ## Prompt assembly (llm/router.ts::buildSystemPrompt)
 
-Layer order: 1 persona · 1.5 operator state (score + learned calibration) ·
-2 identity · 3–4 operators · 5 memory · 5.5 semantic recall · 5.75 corpus+wiki
-awareness · 6 tool catalog · 7 task · 7.5 pending proposals.
+Assembled in two halves for prompt caching (the Anthropic adapter marks
+everything above `CACHE_BREAK` with cache_control): STATIC prefix — 1 persona ·
+2 identity · 3–4 operators · 6 tool catalog (skipped when
+`omitToolCatalog`) — then LIVE context — 1.5 operator state · 2.4 NOW
+(clock/calendar/load/grants) · 5 memory · 5.5 semantic recall · 5.75
+corpus+wiki awareness · 7 task · 7.5 pending proposals. Semantic layer
+numbers are unchanged; only assembly order moved.
 
 ## Scheduled spine (all traced via core/trace.ts)
 
