@@ -204,9 +204,9 @@ export function startInboxWatcher() {
   timer = setInterval(() => {
     if (inFlight) { console.log("[inbox] previous poll still running — skipping tick"); return; }
     inFlight = true;
-    runTraced("poll", "ingest_inbox", () => pollInboxOnce()).catch((err) =>
-      console.warn("[inbox] poll failed:", err)
-    );
+    runTraced("poll", "ingest_inbox", () => pollInboxOnce())
+      .catch((err) => console.warn("[inbox] poll failed:", err))
+      .finally(() => { inFlight = false; });
   }, POLL_MS);
   runTraced("poll", "ingest_inbox", () => pollInboxOnce()).catch(() => {});
 }

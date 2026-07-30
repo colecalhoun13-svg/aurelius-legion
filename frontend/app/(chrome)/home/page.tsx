@@ -8,7 +8,7 @@
 // scroll down. When nothing needs Cole, this screen is nearly empty —
 // that calm IS the product.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AureliusChat } from "../../../components/AureliusChat";
 import { QUOTES } from "../../../lib/quotes";
 
@@ -63,6 +63,7 @@ export default function HomePage() {
     setHello(greeting());
   }, []);
   const [today, setToday] = useState<TodayData | null>(null);
+  const [ritualsLoaded, setRitualsLoaded] = useState(false);
   const [briefing, setBriefing] = useState<{ text: string; at: string } | null>(null);
   const [briefingOpen, setBriefingOpen] = useState(false);
   const [debrief, setDebrief] = useState<string | null>(null);
@@ -70,6 +71,12 @@ export default function HomePage() {
   const [overnightOpen, setOvernightOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [newTask, setNewTask] = useState("");
+  // Honest failure (final council): a dead backend must NOT render as a calm
+  // empty day, and a failed capture must never silently eat the thought.
+  const [unreachable, setUnreachable] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const [briefingBusy, setBriefingBusy] = useState(false);
+  const taskInputRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -79,7 +86,28 @@ export default function HomePage() {
       ]);
       if (d.ok) setDeck(await d.json());
       if (t.ok) setToday(await t.json());
-    } catch { /* home stays calm even when the backend naps */ }
+      setUnreachable(!d.ok && !t.ok);
+    } catch {
+      setUnreachable(true);
+    }
+  }, []);
+
+  // A flashed error clears itself — one amber line, not a modal.
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 5000);
+    return () => clearTimeout(t);
+  }, [flash]);
+
+  // The home-screen "Capture a thought" shortcut lands on /home?focus=capture —
+  // put the cursor in the task box so the shortcut actually captures.
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get("focus") === "capture") {
+        taskInputRef.current?.focus();
+        taskInputRef.current?.scrollIntoView({ block: "center" });
+      }
+    } catch { /* prerender-safe */ }
   }, []);
 
   useEffect(() => {
@@ -103,16 +131,52 @@ export default function HomePage() {
           } catch { setBriefingOpen(true); }
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setRitualsLoaded(true));
   }, [load]);
 
-  const act = useCallback(async (payload: Record<string, any>) => {
-    await fetch("/api/today/actions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ date: localDate(), ...payload }),
-    });
-    await load();
+  // "Brief me now" — a fresh deploy at noon has no briefing and no way to
+  // summon one from the app (Telegram-only until the final council).
+  const briefMe = useCallback(async () => {
+    if (briefingBusy) return;
+    setBriefingBusy(true);
+    try {
+      const res = await fetch("/api/rituals", { method: "POST" });
+      if (res.ok) {
+        const j = await res.json();
+        if (j?.briefing) {
+          setBriefing({ text: j.briefing, at: new Date().toISOString() });
+          setBriefingOpen(true);
+        }
+      } else {
+        setFlash("Couldn't build the briefing — is the backend awake?");
+      }
+    } catch {
+      setFlash("Couldn't reach the brain for a briefing.");
+    } finally {
+      setBriefingBusy(false);
+    }
+  }, [briefingBusy]);
+
+  // Returns success so callers (the capture box) can keep the input on failure.
+  const act = useCallback(async (payload: Record<string, any>): Promise<boolean> => {
+    try {
+      const res = await fetch("/api/today/actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: localDate(), ...payload }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setFlash(`Couldn't save that: ${j.error ?? "try again in a moment"}`);
+        return false;
+      }
+      await load();
+      return true;
+    } catch {
+      setFlash("Couldn't reach the brain — nothing was saved. Try again.");
+      return false;
+    }
   }, [load]);
 
   const rule = useCallback(async (endpoint: string, id: string) => {
@@ -171,6 +235,19 @@ export default function HomePage() {
           </blockquote>
         )}
       </header>
+
+      {/* No briefing yet (fresh boot, mid-day deploy) → offer to summon one */}
+      {ritualsLoaded && !briefing && (
+        <section className="mt-5">
+          <button
+            onClick={briefMe}
+            disabled={briefingBusy}
+            className="w-full text-left text-xs text-neutral-500 hover:text-aurelius-gold px-1 disabled:opacity-60"
+          >
+            {briefingBusy ? "✦ Composing the briefing…" : "✦ No briefing yet today — brief me now"}
+          </button>
+        </section>
+      )}
 
       {/* Briefing — open when fresh, one quiet line once read */}
       {briefing && (
@@ -334,22 +411,30 @@ export default function HomePage() {
               </span>
             </li>
           ))}
-          {tasks.length === 0 && <li className="text-neutral-500 italic text-sm px-1">Nothing on deck.</li>}
+          {tasks.length === 0 && (
+            <li className={`italic text-sm px-1 ${unreachable ? "text-amber-300/90" : "text-neutral-500"}`}>
+              {unreachable ? "Couldn't reach the brain — this may not be the whole picture." : "Nothing on deck."}
+            </li>
+          )}
         </ul>
         <div className="flex gap-2 mt-3">
           <input
+            ref={taskInputRef}
             value={newTask}
             onChange={(e) => setNewTask(e.target.value)}
-            onKeyDown={(e) => {
+            onKeyDown={async (e) => {
               if (e.key === "Enter" && newTask.trim()) {
-                act({ action: "createTask", title: newTask.trim(), status: "today" });
-                setNewTask("");
+                // Clear ONLY on confirmed save — a failed capture keeps the
+                // text in the box instead of silently eating the thought.
+                const title = newTask.trim();
+                if (await act({ action: "createTask", title, status: "today" })) setNewTask("");
               }
             }}
             placeholder="Add a task for today…"
             className="flex-1 bg-black/40 border border-aurelius-gold/25 rounded-lg px-3 py-2 text-sm outline-none focus:border-aurelius-gold/60"
           />
         </div>
+        {flash && <p className="text-xs text-amber-300 mt-2 px-1">{flash}</p>}
         {(today?.habits ?? []).length > 0 && (
           <div className="flex flex-wrap gap-2 mt-3">
             {(today?.habits ?? []).map((h) => (

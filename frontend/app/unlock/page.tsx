@@ -21,7 +21,14 @@ export default function UnlockPage() {
         body: JSON.stringify({ key: key.trim() }),
       });
       if (res.ok) {
-        window.location.href = "/home";
+        // Resume where the lock interrupted (e.g. a shared link) — relative
+        // same-origin paths only, so ?next= can't become an open redirect.
+        let dest = "/home";
+        try {
+          const next = new URLSearchParams(window.location.search).get("next");
+          if (next && next.startsWith("/") && !next.startsWith("//")) dest = next;
+        } catch { /* fall through to /home */ }
+        window.location.href = dest;
       } else {
         const j = await res.json().catch(() => ({}));
         setErr(j.error ?? "that's not the key");

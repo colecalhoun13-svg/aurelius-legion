@@ -22,6 +22,7 @@ import { generateMorningBriefing } from "../rituals/engine.ts";
 import { ask } from "../corpus/ask.ts";
 import { launchMission } from "../missions/engine.ts";
 import { quickCapture, getToday } from "../productivity/service.ts";
+import { localClock } from "../planning/sessionPrep.ts";
 
 const API = "https://api.telegram.org";
 
@@ -318,8 +319,13 @@ async function handleCommand(chatId: string | number, text: string) {
         events
           .slice(0, 12)
           .map((e) => {
-            const day = e.startAt.toISOString().slice(5, 10);
-            const time = (e.raw as any)?.allDay ? "all day" : e.startAt.toISOString().slice(11, 16);
+            // All-day events live at UTC midnight — their DAY must read from the
+            // UTC date or they shift back a day; timed events read the local clock.
+            const allDay = (e.raw as any)?.allDay;
+            const day = allDay
+              ? e.startAt.toISOString().slice(5, 10)
+              : e.startAt.toLocaleDateString("en-CA", { month: "2-digit", day: "2-digit", timeZone: process.env.AURELIUS_TZ?.trim() || undefined }).slice(-5);
+            const time = allDay ? "all day" : localClock(e.startAt);
             return `${day} ${time} — ${e.title}`;
           })
           .join("\n")

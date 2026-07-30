@@ -13,7 +13,7 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: "#0a0a0a",
     // Long-press the icon → straight to the daily verbs.
     shortcuts: [
-      { name: "Capture a thought", url: "/home" },
+      { name: "Capture a thought", url: "/home?focus=capture" },
       { name: "Decisions", url: "/decisions" },
       { name: "Ask the brain", url: "/brain?tab=ask" },
     ],

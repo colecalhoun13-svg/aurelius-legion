@@ -125,9 +125,9 @@ export function startPaperlessPoller() {
   timer = setInterval(() => {
     if (inFlight) { console.log("[paperless] previous poll still running — skipping tick"); return; }
     inFlight = true;
-    runTraced("poll", "paperless", () => pollPaperlessOnce()).catch((err) =>
-      console.warn("[paperless] poll failed:", err)
-    );
+    runTraced("poll", "paperless", () => pollPaperlessOnce())
+      .catch((err) => console.warn("[paperless] poll failed:", err))
+      .finally(() => { inFlight = false; });
   }, 10 * 60 * 1000);
   runTraced("poll", "paperless", () => pollPaperlessOnce()).catch(() => {});
 }
