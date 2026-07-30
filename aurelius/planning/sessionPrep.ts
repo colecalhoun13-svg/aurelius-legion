@@ -17,7 +17,7 @@ const NOT_A_SESSION = /deep work|protected|focus|briefing|debrief|planning|hold|
 export type PrepEvent = { title: string; startAt: Date | string };
 export type SessionPrep = { time: string; title: string; note: string };
 
-function localClock(d: Date): string {
+export function localClock(d: Date): string {
   try {
     return d.toLocaleTimeString([], {
       hour: "2-digit",

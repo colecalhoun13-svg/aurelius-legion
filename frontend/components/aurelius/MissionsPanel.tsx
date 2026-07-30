@@ -45,10 +45,22 @@ export default function MissionsPanel() {
   const [objective, setObjective] = useState("");
   const [launching, setLaunching] = useState(false);
   const [week, setWeek] = useState<{ acted7: number; undone7: number; pendingNow: number } | null>(null);
+  // null = still checking; the pulse dot must not glow green for a dead backend.
+  const [alive, setAlive] = useState<boolean | null>(null);
+  const [launchError, setLaunchError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/deck");
-    if (res.ok) setActivity((await res.json()).activity);
+    try {
+      const res = await fetch("/api/deck");
+      if (res.ok) {
+        setActivity((await res.json()).activity);
+        setAlive(true);
+      } else {
+        setAlive(false);
+      }
+    } catch {
+      setAlive(false);
+    }
   }, []);
 
   // The week's trust-loop counts — how much got done without Cole touching it.
@@ -69,14 +81,24 @@ export default function MissionsPanel() {
     const text = objective.trim();
     if (!text || launching) return;
     setLaunching(true);
+    setLaunchError(null);
     try {
-      await fetch("/api/missions", {
+      // Clear the objective ONLY on a confirmed launch — a failed one keeps
+      // the text so nothing is silently lost (final council).
+      const res = await fetch("/api/missions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ objective: text }),
       });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setLaunchError(`Launch failed: ${j.error ?? "try again in a moment"}`);
+        return;
+      }
       setObjective("");
       await load();
+    } catch {
+      setLaunchError("Couldn't reach the brain — the mission was not launched.");
     } finally {
       setLaunching(false);
     }
@@ -89,8 +111,17 @@ export default function MissionsPanel() {
       <header className="flex items-baseline justify-between aurelius-rule">
         <h1 className="aurelius-heading text-4xl">Aurelius</h1>
         <span className="flex items-center gap-2.5 text-sm text-neutral-500">
-          <span className="aurelius-live-dot w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
-          pulse armed
+          {alive === false ? (
+            <>
+              <span className="w-2 h-2 rounded-full bg-red-400/80 shadow-[0_0_8px_rgba(248,113,113,0.6)]" />
+              brain unreachable
+            </>
+          ) : (
+            <>
+              <span className={`w-2 h-2 rounded-full ${alive ? "aurelius-live-dot bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" : "bg-neutral-600"}`} />
+              {alive ? "pulse armed" : "checking…"}
+            </>
+          )}
         </span>
       </header>
 
@@ -123,6 +154,7 @@ export default function MissionsPanel() {
             {launching ? "Launching…" : "Launch"}
           </button>
         </div>
+        {launchError && <p className="text-xs text-amber-300">{launchError}</p>}
 
         {missions.length === 0 ? (
           <p className="text-neutral-600 italic text-sm">

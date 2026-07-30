@@ -16,6 +16,7 @@ import { extractDirectives } from "../llm/directiveParser.ts";
 import { getToday } from "../productivity/service.ts";
 import { operatorToday } from "../core/time.ts";
 import { runNightlyPulse } from "../autonomy/pulse.ts";
+import { localClock } from "../planning/sessionPrep.ts";
 
 const RITUAL_DEFS = [
   { name: "morning_briefing", cadence: "daily_morning", scheduledTime: "07:00" },
@@ -113,7 +114,10 @@ export async function generateMorningBriefing(dateStr?: string) {
   if (today.calendarEvents.length > 0) {
     lines.push("Calendar:");
     for (const e of today.calendarEvents.slice(0, 5)) {
-      lines.push(`  ◷ ${new Date(e.startAt).toISOString().slice(11, 16)} ${e.title}`);
+      // localClock, not toISOString — the briefing is the most-read artifact in
+      // the system and a UTC clock teaches Cole to distrust it (final council).
+      const time = (e.raw as any)?.allDay ? "all day" : localClock(new Date(e.startAt));
+      lines.push(`  ◷ ${time} ${e.title}`);
     }
   }
   if (today.habits.length > 0) {

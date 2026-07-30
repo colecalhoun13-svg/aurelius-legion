@@ -24,10 +24,21 @@ function GoalsBody() {
   const [name, setName] = useState("");
   const [targetN, setTargetN] = useState("10");
   const [horizon, setHorizon] = useState("quarter");
+  // A failed load must not render as "you have no goals" (final council).
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/deck");
-    if (res.ok) setGoals((await res.json()).goals);
+    try {
+      const res = await fetch("/api/deck");
+      if (res.ok) {
+        setGoals((await res.json()).goals);
+        setLoadFailed(false);
+      } else {
+        setLoadFailed(true);
+      }
+    } catch {
+      setLoadFailed(true);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -51,6 +62,12 @@ function GoalsBody() {
       <header className="aurelius-rule">
         <h1 className="aurelius-heading text-4xl">Goals</h1>
       </header>
+
+      {loadFailed && goals === null && (
+        <p className="text-sm text-amber-300/90 italic">
+          Couldn't reach the brain — your goals are safe, they just can't be shown right now.
+        </p>
+      )}
 
       {grouped.map((grp) => (
         <section key={grp.horizon} className="aurelius-panel-frame p-6">

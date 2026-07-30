@@ -53,8 +53,11 @@ export async function middleware(req: NextRequest) {
     return NextResponse.json({ error: "locked — open /unlock in the app first" }, { status: 401 });
   }
   const url = req.nextUrl.clone();
+  // Carry the destination through the door — a share-sheet payload
+  // (/share?url=…) on a locked device must survive the unlock, not vanish.
+  const dest = pathname + (req.nextUrl.search || "");
   url.pathname = "/unlock";
-  url.search = "";
+  url.search = dest && dest !== "/" ? `?next=${encodeURIComponent(dest)}` : "";
   return NextResponse.redirect(url);
 }
 
