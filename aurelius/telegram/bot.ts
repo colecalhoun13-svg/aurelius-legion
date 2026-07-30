@@ -279,9 +279,19 @@ async function handleCommand(chatId: string | number, text: string) {
       const menu = grantable
         .map((c) => `  ${active.some((g) => g.actionClass === c.key) ? "●" : "○"} ${c.key} — ${c.description}`)
         .join("\n");
+      // Earned trust, in evidence (final council): when a keyhole's record
+      // says it's ready, /grants SAYS so instead of waiting to be asked.
+      let earned = "";
+      try {
+        const { suggestNextGrant } = await import("../autonomy/trustLedger.ts");
+        const sugg = (await suggestNextGrant()).slice(0, 2);
+        if (sugg.length > 0) {
+          earned = `\n\nEarning it:\n${sugg.map((s) => `  ⚑ ${s.actionClass} — ${s.reason}`).join("\n")}`;
+        }
+      } catch { /* the menu stands alone */ }
       await send(
         chatId,
-        `Active grants:\n${activeLines}\n\nGrantable keyholes (○ off · ● on):\n${menu}\n\n/grant <class> to turn one on · /revoke <class> to turn it off.\nOutward actions (send/publish/spend) can't be granted — I always ask.`
+        `Active grants:\n${activeLines}\n\nGrantable keyholes (○ off · ● on):\n${menu}${earned}\n\n/grant <class> to turn one on · /revoke <class> to turn it off.\nOutward actions (send/publish/spend) can't be granted — I always ask.`
       );
       return;
     }

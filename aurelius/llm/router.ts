@@ -315,6 +315,17 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
   // Layer 2: Identity
   parts.push("\n" + formatIdentityForPrompt());
 
+  // Layer 2.4: NOW — the brain knows what time it is (final council). Clock,
+  // next events with countdowns, today's load, standing grants. 60s-cached
+  // body, fresh clock line; never fatal.
+  try {
+    const { buildNowBlock } = await import("../core/nowContext.ts");
+    const nowBlock = await buildNowBlock();
+    if (nowBlock) parts.push("\n" + nowBlock);
+  } catch (err) {
+    console.warn("[ROUTER] NOW layer failed (non-fatal):", err);
+  }
+
   // Layer 3: Primary operator (full core + lens extension + tone)
   const primaryBlock = formatPrimaryOperatorCore(operators.primary);
   if (primaryBlock) {

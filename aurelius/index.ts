@@ -885,38 +885,69 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
     if (parsed.tools.length > 0) {
       executedTools = await executeToolDirectives(parsed.tools, primary);
 
-      // ── Phase 4 Pass 2: training reasoning after eligible tool successes ──
-      const pass2A = await firePass2ForLoggedSessions(executedTools);
-      const pass2B = await firePass2ForReviewRecent(executedTools);
-      pass2Outcomes = [...pass2A, ...pass2B];
+      // ── BOUNDED AGENTIC LOOP (final council). One sentence can now trigger
+      // a finished multi-step job: the model reads each round's results and
+      // may chain further tool calls, up to MAX_TOOL_ROUNDS rounds total.
+      // Safety is unchanged by construction — every act-shaped call still
+      // routes through the executor's grant/gate regardless of which round
+      // fired it, repeated identical calls are deduped (no ruts), and the
+      // final round forbids further tools so the loop always terminates.
+      const MAX_TOOL_ROUNDS = 3;
+      const keyOf = (t: { tool: string; action: string; data?: any }) =>
+        `${t.tool}.${t.action}:${JSON.stringify(t.data ?? {})}`;
+      const seenCalls = new Set<string>(parsed.tools.map(keyOf));
 
-      // ── Tool-result feedback: the model READS the results and writes the
-      // answer from them. Without this a search/read tool's output never
-      // reaches the model — it only saw a terse "completed" summary after the
-      // fact, so web.search felt empty even when it worked. One extra LLM turn,
-      // no more tool calls (loop-safe: we strip any directives from it).
       let synthesized = "";
       if (executedTools.some((e) => e.result.ok)) {
-        const resultsForModel = executedTools
-          .map((e) => {
-            const head = `${e.directive.tool}.${e.directive.action}`;
-            return e.result.ok
-              ? `[${head}] →\n${JSON.stringify(e.result.output ?? {}, null, 2).slice(0, 7000)}`
-              : `[${head}] FAILED: ${e.result.error}`;
-          })
-          .join("\n\n");
         try {
-          const synth = await routeLLM({
-            taskType: "chat",
-            operators: { primary, secondaries },
-            input:
-              `${message}\n\n[These are the results of the tool(s) you just ran. Write your answer to Cole USING them — synthesize, be specific, and cite the source links when present. Do NOT call any more tools.]\n\n${resultsForModel}`,
-          });
-          synthesized = extractDirectives(synth.text ?? "").cleanedText.trim();
+          const { DIRECTIVE_CAPABLE } = await import("./llm/router.ts");
+          for (let round = 1; round <= MAX_TOOL_ROUNDS; round++) {
+            const resultsForModel = executedTools
+              .map((e) => {
+                const head = `${e.directive.tool}.${e.directive.action}`;
+                return e.result.ok
+                  ? `[${head}] →\n${JSON.stringify(e.result.output ?? {}, null, 2).slice(0, 7000)}`
+                  : `[${head}] FAILED: ${e.result.error}`;
+              })
+              .join("\n\n");
+            const finalRound = round === MAX_TOOL_ROUNDS;
+            const instruction = finalRound
+              ? "Write your answer to Cole USING these results — synthesize, be specific, cite source links when present. Do NOT call any more tools."
+              : "If finishing Cole's request genuinely needs ANOTHER tool call (chained work — e.g. you found the slot, now book it), call it now exactly as cataloged. Otherwise write your final answer USING these results — synthesize, be specific, cite source links when present. Never repeat a call you already made.";
+            const synth = await routeLLM({
+              taskType: "chat",
+              operators: { primary, secondaries },
+              nativeTools: !finalRound, // the last round is synthesis-only
+              input: `${message}\n\n[These are the results of the tool(s) you just ran. ${instruction}]\n\n${resultsForModel}`,
+            });
+            const synthParsed = extractDirectives(synth.text ?? "");
+            if (synth.toolCalls?.length) {
+              try {
+                const { mergeToolDirectives } = await import("./llm/nativeTools.ts");
+                synthParsed.tools = mergeToolDirectives(synthParsed.tools, synth.toolCalls);
+              } catch { /* text directives still work */ }
+            }
+            const newTools = !finalRound && DIRECTIVE_CAPABLE.has(synth.engine)
+              ? synthParsed.tools.filter((t) => !seenCalls.has(keyOf(t)))
+              : [];
+            if (newTools.length === 0) {
+              synthesized = synthParsed.cleanedText.trim();
+              break;
+            }
+            newTools.forEach((t) => seenCalls.add(keyOf(t)));
+            const more = await executeToolDirectives(newTools, primary);
+            executedTools = [...executedTools, ...more];
+          }
         } catch (err) {
           console.warn("[aurelius] tool-result synthesis failed (non-fatal):", (err as any)?.message ?? err);
         }
       }
+
+      // ── Phase 4 Pass 2: training reasoning after eligible tool successes
+      // (over every round's executions, not just the first volley) ──
+      const pass2A = await firePass2ForLoggedSessions(executedTools);
+      const pass2B = await firePass2ForReviewRecent(executedTools);
+      pass2Outcomes = [...pass2A, ...pass2B];
 
       if (synthesized) {
         cleanedText = synthesized; // the real answer replaces the pre-tool preamble
