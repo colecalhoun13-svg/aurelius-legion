@@ -26,7 +26,10 @@ export default function UnlockPage() {
         let dest = "/home";
         try {
           const next = new URLSearchParams(window.location.search).get("next");
-          if (next && next.startsWith("/") && !next.startsWith("//")) dest = next;
+          // Relative same-origin only. Backslash is rejected explicitly:
+          // URL parsing treats "\" as "/" so "/\evil.com" would resolve
+          // protocol-relative to another host (post-sweep council).
+          if (next && next.startsWith("/") && !next.startsWith("//") && !next.includes("\\")) dest = next;
         } catch { /* fall through to /home */ }
         window.location.href = dest;
       } else {

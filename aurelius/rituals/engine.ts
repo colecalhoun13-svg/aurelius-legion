@@ -44,6 +44,7 @@ async function voiceOver(skeleton: string, instruction: string): Promise<string>
     const response = await runLLM({
       taskType: "chat",
       operators: { primary: "strategy", secondaries: [] },
+      noReuse: true, // daily/weekly voice — reuse would replay a prior day
       input: `${instruction}\n\n═══ TODAY'S GROUND TRUTH ═══\n${skeleton}`,
     });
     // Strip any stray [TOOL:]/[SAVE:] directive — the catalog is in the prompt

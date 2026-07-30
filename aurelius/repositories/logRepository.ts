@@ -20,7 +20,10 @@ export async function createLogEntry({
       operatorId,
       type,
       level,
-      message,
+      // Bounded: message is btree-indexed (hot-table migration) and Postgres
+      // rejects index rows past ~2700 bytes — a future long-message writer
+      // must degrade to truncation, never a throwing INSERT (post-sweep).
+      message: message.length > 1000 ? message.slice(0, 1000) + "…" : message,
       context,
     },
   });

@@ -76,6 +76,7 @@ export default function HomePage() {
   const [unreachable, setUnreachable] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [briefingBusy, setBriefingBusy] = useState(false);
+  const [capturing, setCapturing] = useState(false);
   const taskInputRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
@@ -423,11 +424,17 @@ export default function HomePage() {
             value={newTask}
             onChange={(e) => setNewTask(e.target.value)}
             onKeyDown={async (e) => {
-              if (e.key === "Enter" && newTask.trim()) {
+              if (e.key === "Enter" && newTask.trim() && !capturing) {
                 // Clear ONLY on confirmed save — a failed capture keeps the
-                // text in the box instead of silently eating the thought.
-                const title = newTask.trim();
-                if (await act({ action: "createTask", title, status: "today" })) setNewTask("");
+                // text; the in-flight guard stops double-Enter on a slow
+                // network from filing the task twice (post-sweep council).
+                setCapturing(true);
+                try {
+                  const title = newTask.trim();
+                  if (await act({ action: "createTask", title, status: "today" })) setNewTask("");
+                } finally {
+                  setCapturing(false);
+                }
               }
             }}
             placeholder="Add a task for today…"

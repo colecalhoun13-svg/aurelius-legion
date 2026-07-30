@@ -75,22 +75,33 @@ function deterministicPage(domain: string, m: Awaited<ReturnType<typeof gatherDo
 // flushes every dirty domain once the batch settles. Sunday's
 // synthesizeAllDomains remains the backstop; direct calls stay immediate.
 const WIKI_DEBOUNCE_MS = 15 * 60 * 1000;
-const dirtyDomains = new Set<string>();
+const dirtyDomains = new Map<string, string>(); // domain → reason (per-domain, post-sweep)
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let flushInFlight = false; // a slow flush must not overlap its successor
 
 export function queueWikiSynthesis(domain: string, reason = "ingestion"): void {
-  dirtyDomains.add(domain);
+  dirtyDomains.set(domain, reason);
   if (debounceTimer) return;
   debounceTimer = setTimeout(async () => {
     debounceTimer = null;
-    const domains = [...dirtyDomains];
-    dirtyDomains.clear();
-    for (const d of domains) {
-      try {
-        await synthesizeWikiPage(d, reason);
-      } catch (err) {
-        console.warn(`[wiki] debounced synthesis failed for ${d} (non-fatal):`, err);
+    if (flushInFlight) {
+      // Re-arm rather than run two flushes over the same domains.
+      if (dirtyDomains.size > 0) queueWikiSynthesis([...dirtyDomains.keys()][0]!, [...dirtyDomains.values()][0]!);
+      return;
+    }
+    flushInFlight = true;
+    try {
+      const entries = [...dirtyDomains.entries()];
+      dirtyDomains.clear();
+      for (const [d, r] of entries) {
+        try {
+          await synthesizeWikiPage(d, r);
+        } catch (err) {
+          console.warn(`[wiki] debounced synthesis failed for ${d} (non-fatal):`, err);
+        }
       }
+    } finally {
+      flushInFlight = false;
     }
   }, WIKI_DEBOUNCE_MS);
   // Never hold a shutting-down process open for a wiki rewrite.
@@ -102,6 +113,10 @@ export function queueWikiSynthesis(domain: string, reason = "ingestion"): void {
  * Non-destructive: prior content becomes a WikiRevision.
  */
 export async function synthesizeWikiPage(domain: string, reason = "manual") {
+  // A direct synthesis satisfies any queued debounce for the same domain —
+  // otherwise the Sunday curriculum (ingest → queue, then direct synth)
+  // would pay for every page twice (post-sweep council).
+  dirtyDomains.delete(domain);
   const material = await gatherDomainMaterial(domain);
   const existing = await prisma.wikiPage.findUnique({ where: { slug: domain } });
 
@@ -126,6 +141,7 @@ export async function synthesizeWikiPage(domain: string, reason = "manual") {
       taskType: "chat",
       operators: { primary: "strategy", secondaries: [] },
       omitToolCatalog: true, // synthesis output strips directives — skip the 21KB
+      noReuse: true, // near-identical inputs run-to-run — reuse would freeze the page
       input: `
 Rewrite the living wiki page for the "${domain}" domain of Cole's second brain.
 This is YOUR synthesis — what you actually understand from the material, not a

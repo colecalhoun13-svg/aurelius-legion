@@ -338,6 +338,7 @@ export async function planWeekLite() {
     const response = await runLLM({
       taskType: "chat",
       operators: { primary: "strategy", secondaries: [] },
+      noReuse: true, // weekly voice — reuse would replay a prior week
       input: `
 Write Cole's weekly planning briefing from the ground truth below. Structure:
 the week's single priority (pick it from the goals/backlog), what to clear
@@ -438,6 +439,7 @@ export async function planDay(dateStr?: string) {
     const response = await runLLM({
       taskType: "chat",
       operators: { primary: "strategy", secondaries: [] },
+      noReuse: true, // daily voice — reuse would replay a prior day
       input: `
 Write Cole's plan for TODAY from the ground truth below. Structure: the single
 priority for today, the order to attack the open items, where the risk is

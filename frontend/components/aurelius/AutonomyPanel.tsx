@@ -118,8 +118,11 @@ export default function AutonomyPanel() {
       {(() => {
         const flow = dial?.flow ?? [];
         if (flow.length === 0) return null;
+        // Calendar-stepped, not 86400s arithmetic — DST fall-back would
+        // duplicate a key (duplicate React keys, one missing bar).
         const days = Array.from({ length: 14 }, (_, i) => {
-          const d = new Date(Date.now() - (13 - i) * 86400_000);
+          const d = new Date();
+          d.setDate(d.getDate() - (13 - i));
           return { key: localDayKey(d), label: "SMTWTFS"[d.getDay()]! };
         });
         const byDay = new Map(days.map((d) => [d.key, 0]));
