@@ -49,9 +49,10 @@ process, so it works from any host with no inbound config.
      are unaffected either way). Same pattern per service when you use them:
      `GOOGLE_GMAIL_REDIRECT_URI=…/api/gmail/callback`,
      `INSTAGRAM_REDIRECT_URI=…/api/instagram/callback`
-   - `TZ=America/Chicago` **and** `AURELIUS_TZ=America/Chicago` — the
-     container runs UTC; TZ is what makes the 07:00 briefing fire at YOUR
-     7am, not 2am (pre-flight council finding)
+   - `TZ=America/Phoenix` **and** `AURELIUS_TZ=America/Phoenix` — Cole is in
+     Arizona (no DST, UTC-7 year-round). The container runs UTC; TZ is what
+     makes the 07:00 briefing fire at YOUR 7am, not midnight (pre-flight
+     council finding)
    - `PORT=3001` — pins the private-network URL so
      `…railway.internal:3001` stays true for the app service
    - `AURELIUS_BACKUP_DIR=/data/backups`
@@ -107,9 +108,9 @@ process, so it works from any host with no inbound config.
      not a restart
    - engine/embeddings keys the API routes use: `ANTHROPIC_API_KEY`,
      `EMBEDDINGS_PROVIDER` + its key
-   - `TZ=America/Chicago` **and** `AURELIUS_TZ=America/Chicago` — same values
+   - `TZ=America/Phoenix` **and** `AURELIUS_TZ=America/Phoenix` — same values
      as the backend. The app's API routes (spine health, day buckets) compute
-     local day keys in THIS container; without these, every Chicago evening
+     local day keys in THIS container; without these, every Arizona evening
      the cockpit shows phantom "missed" dots (post-sweep council finding)
 4. **Settings → Networking → Generate Domain.** That domain is THE APP:
    `https://<something>.up.railway.app`. Open it on your phone → share menu →
