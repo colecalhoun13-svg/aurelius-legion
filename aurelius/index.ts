@@ -893,9 +893,31 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       // fired it, repeated identical calls are deduped (no ruts), and the
       // final round forbids further tools so the loop always terminates.
       const MAX_TOOL_ROUNDS = 3;
+      // Canonical dedupe key (post-sweep): sort object keys so the same
+      // logical call arriving native vs text-parsed (or with reordered keys)
+      // can't evade the guard and double-execute.
+      const canon = (v: any): any =>
+        Array.isArray(v)
+          ? v.map(canon)
+          : v && typeof v === "object"
+            ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])]))
+            : v;
       const keyOf = (t: { tool: string; action: string; data?: any }) =>
-        `${t.tool}.${t.action}:${JSON.stringify(t.data ?? {})}`;
+        `${t.tool}.${t.action}:${JSON.stringify(canon(t.data ?? {}))}`;
       const seenCalls = new Set<string>(parsed.tools.map(keyOf));
+      // A GATED action stages a Bridge card for Cole — later rounds must not
+      // re-stage the same tool.action with a tweaked payload (duplicate
+      // Confirm cards). Once gated, that action is done for this turn.
+      const gatedActions = new Set<string>();
+      const noteGated = (batch: ExecutedTool[]) => {
+        for (const e of batch) {
+          if ((e.result as any)?.output?.gated) gatedActions.add(`${e.directive.tool}.${e.directive.action}`);
+        }
+      };
+      noteGated(executedTools);
+      // Directives from LATER rounds that aren't tool calls must not vanish
+      // silently (hard rule 3) — collect and process them after the loop.
+      const lateSaves: typeof parsed.saves = [];
 
       let synthesized = "";
       if (executedTools.some((e) => e.result.ok)) {
@@ -927,19 +949,53 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
                 synthParsed.tools = mergeToolDirectives(synthParsed.tools, synth.toolCalls);
               } catch { /* text directives still work */ }
             }
-            const newTools = !finalRound && DIRECTIVE_CAPABLE.has(synth.engine)
-              ? synthParsed.tools.filter((t) => !seenCalls.has(keyOf(t)))
+            const capable = DIRECTIVE_CAPABLE.has(synth.engine);
+            // Non-tool directives from this round survive the loop (hard rule
+            // 3: stripping a [SAVE:] and never persisting it is silent rot).
+            if (capable) {
+              lateSaves.push(...synthParsed.saves);
+              parsed.knowledgeProposals.push(...synthParsed.knowledgeProposals);
+              parsed.knowledgeConfirmations.push(...synthParsed.knowledgeConfirmations);
+            }
+            const newTools = !finalRound && capable
+              ? synthParsed.tools.filter(
+                  (t) => !seenCalls.has(keyOf(t)) && !gatedActions.has(`${t.tool}.${t.action}`)
+                )
               : [];
             if (newTools.length === 0) {
               synthesized = synthParsed.cleanedText.trim();
+              // A fallback engine's tool directives were stripped, not run —
+              // say so, exactly like the first-pass path does.
+              if (!capable && synthParsed.tools.length > 0) {
+                synthesized += `\n\n_(answered by ${synth.engine} — actions from fallback engines don't auto-run; ask again if you want it done)_`;
+              }
               break;
             }
             newTools.forEach((t) => seenCalls.add(keyOf(t)));
             const more = await executeToolDirectives(newTools, primary);
+            noteGated(more);
             executedTools = [...executedTools, ...more];
           }
         } catch (err) {
           console.warn("[aurelius] tool-result synthesis failed (non-fatal):", (err as any)?.message ?? err);
+        }
+      }
+
+      // Saves emitted by later rounds persist exactly like first-pass saves.
+      for (const d of lateSaves) {
+        try {
+          const result = await saveMemory({
+            operator: primary,
+            category: d.category,
+            value: d.value,
+            relatedOperators: secondaries,
+          });
+          if (result) {
+            savedAuto.push(result);
+            autoSavedForReflection.push({ category: d.category, value: d.value });
+          }
+        } catch (err) {
+          console.error("[aurelius] late-round auto save failed:", err);
         }
       }
 

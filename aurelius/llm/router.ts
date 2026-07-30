@@ -67,6 +67,11 @@ export type LLMTask = {
   // Skip the ~21KB tool catalog for calls whose output strips directives
   // anyway (wiki synthesis and kin) — pure token savings, zero behavior loss.
   omitToolCatalog?: boolean;
+  // Keep this call out of the semantic reuse cache, both sides (post-sweep
+  // council): internal synthesis jobs (wiki/briefing/planning voice) have
+  // near-identical inputs run-to-run — reuse would silently freeze their
+  // output for FRESH_DAYS and pollute the chat namespace.
+  noReuse?: boolean;
   // Phase 4.5 — Knowledge update propose/confirm context
   knowledgeContext?: {
     operatorId: string;
@@ -701,7 +706,9 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
         attempt.model,
         systemPrompt,
         task.input,
-        !!task.nativeTools && DIRECTIVE_CAPABLE.has(attempt.provider)
+        // Never attach invoke_tool without its catalog (post-sweep guard):
+        // a model with the function but no listing would call tools blind.
+        !!task.nativeTools && !task.omitToolCatalog && DIRECTIVE_CAPABLE.has(attempt.provider)
       );
       // Fail over on anything that isn't a real answer: a missing key, an
       // adapter-level API error (e.g. a small-context model choking on a long

@@ -37,10 +37,12 @@ function dayKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** The last `n` local days, oldest first. */
+/** The last `n` local days, oldest first. Calendar-stepped, not 86400s
+ *  arithmetic — DST fall-back would duplicate a key. */
 function lastDays(n: number): { key: string; label: string }[] {
   return Array.from({ length: n }, (_, i) => {
-    const d = new Date(Date.now() - (n - 1 - i) * 86400_000);
+    const d = new Date();
+    d.setDate(d.getDate() - (n - 1 - i));
     return { key: dayKey(d), label: "SMTWTFS"[d.getDay()]! };
   });
 }

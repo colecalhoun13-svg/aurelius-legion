@@ -34,8 +34,11 @@ async function persist(level: "info" | "error", message: string, context: Record
   // (master-class #7). Capture it here, at the persist call site, so the id is
   // whatever was active when the event fired — not when the async write lands.
   const traceId = currentTraceId();
+  // message is btree-indexed — bound it so a long error string degrades to
+  // truncation instead of a throwing INSERT (post-sweep council).
+  const bounded = message.length > 1000 ? message.slice(0, 1000) + "…" : message;
   await prisma.logEntry.create({
-    data: { operatorId, type: "trace", level, message, context: traceId ? { ...context, traceId } : context },
+    data: { operatorId, type: "trace", level, message: bounded, context: traceId ? { ...context, traceId } : context },
   });
 }
 

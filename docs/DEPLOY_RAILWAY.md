@@ -107,6 +107,10 @@ process, so it works from any host with no inbound config.
      not a restart
    - engine/embeddings keys the API routes use: `ANTHROPIC_API_KEY`,
      `EMBEDDINGS_PROVIDER` + its key
+   - `TZ=America/Chicago` **and** `AURELIUS_TZ=America/Chicago` — same values
+     as the backend. The app's API routes (spine health, day buckets) compute
+     local day keys in THIS container; without these, every Chicago evening
+     the cockpit shows phantom "missed" dots (post-sweep council finding)
 4. **Settings → Networking → Generate Domain.** That domain is THE APP:
    `https://<something>.up.railway.app`. Open it on your phone → share menu →
    **Add to Home Screen** → the crest on your home screen now opens Aurelius
