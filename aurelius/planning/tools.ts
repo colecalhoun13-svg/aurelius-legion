@@ -317,8 +317,23 @@ export async function planWeekLite() {
     .filter(Boolean)
     .join("\n");
 
+  // Earned-trust nudge (final council): the Sunday planning session is where
+  // Cole decides the week — surface any keyhole whose record has earned the
+  // ask, on the same once-per-cooldown discipline as the morning briefing.
+  let skeletonWithTrust = skeleton;
+  try {
+    const { freshGrantSuggestions, markSuggestionsSurfaced } = await import("../autonomy/trustLedger.ts");
+    const sugg = (await freshGrantSuggestions()).slice(0, 2);
+    if (sugg.length > 0) {
+      skeletonWithTrust +=
+        `\nEarned trust this cycle:\n` +
+        sugg.map((s) => `  ⚑ ${s.actionClass} — ${s.reason} (grant via Aurelius → Autonomy or /grant)`).join("\n");
+      await markSuggestionsSurfaced(sugg);
+    }
+  } catch { /* planning ships without the nudge */ }
+
   // 6. Briefing — LLM voice on top when available
-  let briefing = skeleton;
+  let briefing = skeletonWithTrust;
   try {
     const response = await runLLM({
       taskType: "chat",
@@ -326,11 +341,12 @@ export async function planWeekLite() {
       input: `
 Write Cole's weekly planning briefing from the ground truth below. Structure:
 the week's single priority (pick it from the goals/backlog), what to clear
-first, where the risk is (overload/overdue), and one sentence on pace. Under
+first, where the risk is (overload/overdue), and one sentence on pace. If the
+ground truth lists earned trust, close with that offer in one sentence. Under
 200 words, no headers. Propose — Cole decides.
 
 ═══ GROUND TRUTH ═══
-${skeleton}
+${skeletonWithTrust}
 `.trim(),
     });
     if (!engineUnavailable(response.text)) {
