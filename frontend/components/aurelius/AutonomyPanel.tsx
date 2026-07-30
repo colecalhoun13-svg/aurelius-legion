@@ -6,12 +6,38 @@
 // its own. Granting/revoking here is Cole's own hand on the switch.
 
 import { useCallback, useEffect, useState } from "react";
+import { SparkBars } from "../viz/Spark";
 
 type TrackRecord = { acted: number; confirmed: number; undone: number; failed: number };
 type Keyhole = { key: string; description: string; on: boolean; trackRecord: TrackRecord | null };
 type Suggestion = { actionClass: string; reason: string };
 type RecentAction = { id: string; title: string; kind: string; createdAt: string; actionClass: string | null };
-type Dial = { active: { actionClass: string; grantedAt: string }[]; classes: Keyhole[]; suggestions: Suggestion[]; recentActions: RecentAction[] };
+type FlowSignal = { status: "acted" | "confirmed" | "undone"; createdAt: string };
+type Dial = { active: { actionClass: string; grantedAt: string }[]; classes: Keyhole[]; suggestions: Suggestion[]; recentActions: RecentAction[]; flow?: FlowSignal[] };
+
+// TRUST BAR (final council graphic): a keyhole's record as a shape, not
+// arithmetic. Gold = trusted-and-held (acted + confirmed), amber = Cole
+// reversed it, red = it failed. An unbroken gold bar is a visceral "widen
+// it"; any amber segment is a visible scar.
+function TrustBar({ t }: { t: TrackRecord }) {
+  const total = t.acted + t.confirmed + t.undone + t.failed;
+  if (total === 0) return null;
+  const pct = (n: number) => `${(n / total) * 100}%`;
+  return (
+    <span className="flex items-center gap-2 mt-1.5">
+      <span className="flex h-1.5 rounded-full overflow-hidden flex-1 max-w-[220px] bg-neutral-800">
+        <span className="bg-aurelius-gold/90" style={{ width: pct(t.acted + t.confirmed) }} />
+        <span className="bg-amber-400/90" style={{ width: pct(t.undone) }} />
+        <span className="bg-red-400/90" style={{ width: pct(t.failed) }} />
+      </span>
+      <span className="text-[10px] text-neutral-600 shrink-0">{total}×</span>
+    </span>
+  );
+}
+
+function localDayKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export default function AutonomyPanel() {
   const [dial, setDial] = useState<Dial | null>(null);
@@ -88,6 +114,34 @@ export default function AutonomyPanel() {
 
       {err && <p className="text-red-400 text-sm">Couldn't load: {err}</p>}
 
+      {/* The fortnight's flow — how much got done without Cole's hand, per day */}
+      {(() => {
+        const flow = dial?.flow ?? [];
+        if (flow.length === 0) return null;
+        const days = Array.from({ length: 14 }, (_, i) => {
+          const d = new Date(Date.now() - (13 - i) * 86400_000);
+          return { key: localDayKey(d), label: "SMTWTFS"[d.getDay()]! };
+        });
+        const byDay = new Map(days.map((d) => [d.key, 0]));
+        let undone = 0;
+        for (const s of flow) {
+          if (s.status === "undone") { undone++; continue; }
+          const k = localDayKey(new Date(s.createdAt));
+          if (byDay.has(k)) byDay.set(k, (byDay.get(k) ?? 0) + 1);
+        }
+        return (
+          <section className="aurelius-panel-frame p-4">
+            <div className="flex items-baseline justify-between mb-2">
+              <h2 className="aurelius-heading text-lg">Work handled, fourteen days</h2>
+              <span className={`text-[11px] ${undone > 0 ? "text-amber-300" : "text-neutral-500"}`}>
+                {undone > 0 ? `${undone} undone` : "nothing undone"}
+              </span>
+            </div>
+            <SparkBars values={days.map((d) => byDay.get(d.key) ?? 0)} labels={days.map((d) => d.label)} width={520} height={64} />
+          </section>
+        );
+      })()}
+
       {/* Suggestions — earned trust, offered */}
       {dial?.suggestions && dial.suggestions.length > 0 && (
         <section className="space-y-3">
@@ -123,11 +177,14 @@ export default function AutonomyPanel() {
                   </span>
                   <span className="block text-[11px] text-aurelius-gold/60 mt-1">{c.key}</span>
                   {t && (t.acted + t.confirmed + t.undone + t.failed) > 0 && (
-                    <span className="block text-[11px] text-neutral-600 mt-1.5">
-                      acted {t.acted} · confirmed {t.confirmed}
-                      {t.undone > 0 && <span className="text-amber-400/80"> · undone {t.undone}</span>}
-                      {t.failed > 0 && <span className="text-red-400/80"> · failed {t.failed}</span>}
-                    </span>
+                    <>
+                      <TrustBar t={t} />
+                      <span className="block text-[11px] text-neutral-600 mt-1">
+                        acted {t.acted} · confirmed {t.confirmed}
+                        {t.undone > 0 && <span className="text-amber-400/80"> · undone {t.undone}</span>}
+                        {t.failed > 0 && <span className="text-red-400/80"> · failed {t.failed}</span>}
+                      </span>
+                    </>
                   )}
                 </span>
                 <button

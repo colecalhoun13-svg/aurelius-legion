@@ -49,6 +49,11 @@ export async function GET() {
           habitCompletions: m.habitCompletions ?? 0,
           llmDependenceRate: m.llmDependenceRate ?? null,
           corpusDocsAdded: m.corpusDocsAdded ?? 0,
+          // The learning metrics (final council): computed every Sunday and
+          // previously discarded right here at the API boundary.
+          patternsActive: m.patternsActive ?? null,
+          corrections: m.corrections ?? null,
+          staleKnowledge: m.staleKnowledge ?? null,
         };
       }),
       doneTimestamps: doneTasks.map((t: any) => t.completedAt),

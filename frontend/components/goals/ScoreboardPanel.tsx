@@ -17,6 +17,9 @@ type Week = {
   habitCompletions: number;
   llmDependenceRate: number | null;
   corpusDocsAdded: number;
+  patternsActive: number | null;
+  corrections: number | null;
+  staleKnowledge: number | null;
 };
 type Habit = { id: string; name: string; streak: number; doneToday: boolean };
 type Goal = { id: string; name: string; horizon: string; progressPct: number; measure: any; targetDate?: string | null; createdAt?: string };
@@ -131,7 +134,7 @@ export default function ScoreboardPanel() {
               <span className="text-sm text-neutral-200 flex-1 truncate">{h.name}</span>
               <DotRow days={days.map((d) => habitDays.get(h.id)?.has(d.key) ?? false)} />
               <span className="text-xs text-aurelius-gold/80 w-12 text-right">
-                {h.streak > 0 ? `${h.streak}🔥` : "—"}
+                {h.streak > 0 ? `${h.streak}✦` : "—"}
               </span>
             </div>
           ))}
@@ -193,6 +196,17 @@ export default function ScoreboardPanel() {
         <div className="flex items-center gap-3">
           <span className="text-xs text-neutral-500 w-44">LLM dependence (lower = smarter)</span>
           <SparkLine values={llm} width={300} height={40} min={0} max={100} suffix="%" />
+        </div>
+        {/* The learning metrics — computed every Sunday, finally drawn
+            (final council): patterns rising + corrections falling is the
+            compounding-intelligence thesis, falsifiable at a glance. */}
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-neutral-500 w-44">Compiled patterns (rising = learning)</span>
+          <SparkLine values={feed.weeks.map((w) => w.patternsActive)} width={300} height={40} min={0} />
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-neutral-500 w-44">Corrections (falling = it's sticking)</span>
+          <SparkLine values={feed.weeks.map((w) => w.corrections)} width={300} height={40} min={0} />
         </div>
       </section>
     </div>

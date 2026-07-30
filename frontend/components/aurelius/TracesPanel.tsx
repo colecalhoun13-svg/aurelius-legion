@@ -6,6 +6,7 @@
 // run → action gated or acted. "Debug from the cockpit alone" (NORTH_STAR DoD).
 
 import { useCallback, useEffect, useState } from "react";
+import SpineHealth from "./SpineHealth";
 
 type Step = {
   id: string;
@@ -89,6 +90,9 @@ export default function TracesPanel() {
       <p className="text-sm text-neutral-500">
         Every step of one decision, threaded by a shared id — a turn from request to action.
       </p>
+
+      {/* The aggregate the thread list lacks: did every scheduled job fire? */}
+      <SpineHealth />
 
       {err && <p className="text-red-400 text-sm">Couldn't load traces: {err}</p>}
       {threads && threads.length === 0 && (
