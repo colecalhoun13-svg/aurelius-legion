@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { backendUrl } from "../../../lib/backendUrl";
+import { SparkBars } from "../../../components/viz/Spark";
 
 type Task = { id: string; title: string; scheduledFor: string | null; status: string };
 type CalEvent = { id: string; title: string; startAt: string; endAt: string; raw?: { allDay?: boolean } | null };
@@ -147,6 +148,28 @@ export default function CalendarPage() {
           <button onClick={() => shift(1)} className="border border-aurelius-gold/40 rounded-lg px-3 py-1 hover:bg-aurelius-gold/15 text-aurelius-gold">→</button>
         </div>
       </header>
+
+      {/* The week's load ribbon (final council graphic): busy hours per day —
+          a 7-meeting Tuesday and an empty Friday no longer look identical at
+          a glance, and schedule-protection's choices become legible. */}
+      {events.length > 0 && (
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] text-neutral-500 shrink-0">load · busy h/day</span>
+          <SparkBars
+            values={days.map((d) =>
+              Math.min(
+                12,
+                d.dayEvents
+                  .filter((e) => !e.raw?.allDay)
+                  .reduce((h, e) => h + Math.max(0, (new Date(e.endAt).getTime() - new Date(e.startAt).getTime()) / 3600_000), 0)
+              )
+            )}
+            labels={DAYS.map((d) => d[0]!)}
+            width={340}
+            height={44}
+          />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
         {days.map((d, i) => (

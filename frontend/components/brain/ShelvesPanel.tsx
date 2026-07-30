@@ -470,8 +470,10 @@ export default function ShelvesPanel() {
       <header className="flex items-baseline justify-between aurelius-rule">
         <h1 className="aurelius-heading text-4xl">The Shelves</h1>
         <span className="flex items-center gap-3 text-sm text-neutral-500">
+          {/* Visible at 390px too — the phone-first app was hiding its only
+              library-growth graphic on the phone (final council). */}
           {growth.length > 1 && (growth[growth.length - 1] ?? 0) > (growth[0] ?? 0) && (
-            <span title="volumes collected — last 12 weeks" className="hidden sm:inline-flex">
+            <span title="volumes collected — last 12 weeks" className="inline-flex max-w-[90px] sm:max-w-none">
               <SparkLine values={growth} width={110} height={30} />
             </span>
           )}

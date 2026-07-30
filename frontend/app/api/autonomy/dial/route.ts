@@ -52,11 +52,22 @@ export async function GET(request: Request) {
         actionClass: ((s.actions as any[]) ?? []).find((a) => a?.action === "undo_action")?.payload?.actionClass ?? null,
       }));
 
+    // The autonomy week-flow (final council graphic): every resolved signal
+    // of the last 14 days, bucketed client-side in Cole's timezone.
+    const flow = await prisma.bridgeSignal.findMany({
+      where: {
+        status: { in: ["acted", "confirmed", "undone"] },
+        createdAt: { gte: new Date(Date.now() - 14 * 24 * 3600 * 1000) },
+      },
+      select: { status: true, createdAt: true },
+    });
+
     return NextResponse.json({
       active: active.map((g: any) => ({ actionClass: g.actionClass, grantedAt: g.grantedAt })),
       classes,
       suggestions,
       recentActions,
+      flow,
     });
   } catch (error: any) {
     console.error("Autonomy dial error:", error);

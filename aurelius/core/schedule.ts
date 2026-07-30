@@ -42,7 +42,9 @@ const DISABLED_KEY = "schedule_disabled";
 // before running; only the winner runs. A claim stuck "running" >30 min is a
 // dead process — the next contender takes it over. Interval jobs (calendar
 // sync, pollers) are NOT here; they're meant to repeat.
-const ONCE_PER_DAY = new Set([
+// Exported for the cockpit's spine-health strip (final council): the roster
+// of claimed jobs IS the list of rows the instrument draws.
+export const ONCE_PER_DAY = new Set([
   "rss_ingest", "market_pulse", "schedule_protection", "morning_briefing",
   "initiative_pulse", "midday_check", "nightly_debrief", "weekend_pulse",
   "persona_observer", "weekly_planning", "freshness_sweep", "weekly_scoreboard",
