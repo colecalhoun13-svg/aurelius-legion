@@ -66,6 +66,8 @@ export default function TracesPanel() {
   const [threads, setThreads] = useState<Thread[] | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Set by tapping a spine-health dot — the grid filters the list to that job.
+  const [jobFilter, setJobFilter] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -91,8 +93,16 @@ export default function TracesPanel() {
         Every step of one decision, threaded by a shared id — a turn from request to action.
       </p>
 
-      {/* The aggregate the thread list lacks: did every scheduled job fire? */}
-      <SpineHealth />
+      {/* The aggregate the thread list lacks: did every scheduled job fire?
+          Tapping a dot filters the thread list to that job. */}
+      <SpineHealth onPick={(j) => setJobFilter((cur) => (cur === j ? null : j))} />
+
+      {jobFilter && (
+        <p className="text-xs text-neutral-400">
+          Showing threads for <span className="text-aurelius-gold">{jobFilter.replace(/_/g, " ")}</span>{" "}
+          <button onClick={() => setJobFilter(null)} className="text-neutral-500 hover:text-aurelius-gold ml-1">✕ clear</button>
+        </p>
+      )}
 
       {err && <p className="text-red-400 text-sm">Couldn't load traces: {err}</p>}
       {threads && threads.length === 0 && (
@@ -103,7 +113,9 @@ export default function TracesPanel() {
       )}
 
       <ul className="space-y-3">
-        {(threads ?? []).map((t) => {
+        {(threads ?? [])
+          .filter((t) => !jobFilter || t.label.toLowerCase().replace(/[^a-z0-9]/g, "").includes(jobFilter.toLowerCase().replace(/[^a-z0-9]/g, "")))
+          .map((t) => {
           const isOpen = open === t.traceId;
           return (
             <li key={t.traceId} className={`aurelius-panel-frame border ${t.hadError ? "border-red-400/40" : "border-aurelius-gold/20"}`}>

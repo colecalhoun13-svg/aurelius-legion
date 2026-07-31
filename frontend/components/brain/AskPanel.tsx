@@ -25,16 +25,8 @@ type AskResult = {
   recallCount: number;
 };
 
-const SOURCE_GLYPH: Record<string, string> = {
-  note: "✎",
-  url: "⛓",
-  upload: "▲",
-  research: "☄",
-};
-
 export default function CorpusPage() {
   const [docs, setDocs] = useState<CorpusDoc[] | null>(null);
-  const [domainFilter, setDomainFilter] = useState<string>("");
 
   // Ask
   const [question, setQuestion] = useState("");
@@ -126,17 +118,15 @@ export default function CorpusPage() {
     }
   };
 
-  const domains = Array.from(new Set((docs ?? []).map((d) => d.domain))).sort();
-  const visible = (docs ?? []).filter((d) => !domainFilter || d.domain === domainFilter);
+  // (The Library listing that used to live here duplicated Shelves/Catalog
+  // one tab over — de-duplicated on the alignment council's ruling. This
+  // panel is the ASK and the FEED; browsing lives on the Shelves.)
 
   return (
-    <main className="text-aurelius-text max-w-5xl mx-auto space-y-6 aurelius-stagger">
-      <header className="flex items-baseline justify-between aurelius-rule">
-        <h1 className="aurelius-heading text-4xl">Second Brain</h1>
-        <span className="text-sm text-neutral-500">
-          {docs === null ? "…" : `${docs.length} documents · ${docs.reduce((n, d) => n + d.chunkCount, 0)} chunks in recall`}
-        </span>
-      </header>
+    <main className="text-aurelius-text max-w-3xl mx-auto space-y-6 aurelius-stagger">
+      <p className="text-right text-xs text-neutral-500">
+        {docs === null ? "" : `${docs.length} documents · ${docs.reduce((n, d) => n + d.chunkCount, 0)} chunks in recall`}
+      </p>
 
       {/* ASK — the front door */}
       <section className={`aurelius-panel-frame p-5 space-y-3 ${asking ? "aurelius-working" : ""}`}>
@@ -192,61 +182,8 @@ export default function CorpusPage() {
         )}
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        {/* LIBRARY */}
-        <section className="lg:col-span-2 space-y-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="aurelius-heading text-base mr-2">Library</span>
-            <button
-              onClick={() => setDomainFilter("")}
-              className={`text-xs px-2.5 py-1 rounded-full border ${!domainFilter ? "border-aurelius-gold/60 text-aurelius-gold" : "border-aurelius-gold/20 text-neutral-500"}`}
-            >
-              all
-            </button>
-            {domains.map((d) => (
-              <button
-                key={d}
-                onClick={() => setDomainFilter(d === domainFilter ? "" : d)}
-                className={`text-xs px-2.5 py-1 rounded-full border ${domainFilter === d ? "border-aurelius-gold/60 text-aurelius-gold" : "border-aurelius-gold/20 text-neutral-500"}`}
-              >
-                {d}
-              </button>
-            ))}
-          </div>
-
-          {docs !== null && visible.length === 0 && (
-            <div className="aurelius-panel-frame p-8 text-center text-neutral-500 text-sm">
-              The library is empty. Feed it — every document becomes part of recall,
-              and Aurelius stays aware of everything it holds.
-            </div>
-          )}
-
-          <div className="space-y-3">
-            {visible.map((d) => (
-              <div key={d.id} className="aurelius-panel-frame p-4">
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-sm font-medium flex-1">
-                    <span className="text-aurelius-gold/70 mr-2">{SOURCE_GLYPH[d.sourceType] ?? "◆"}</span>
-                    {d.sourceUrl ? (
-                      <a href={d.sourceUrl} target="_blank" rel="noreferrer" className="hover:text-aurelius-gold">
-                        {d.title}
-                      </a>
-                    ) : (
-                      d.title
-                    )}
-                  </span>
-                  <span className="text-[11px] text-neutral-600 whitespace-nowrap">
-                    {d.domain} · {d.chunkCount} chunks · {new Date(d.createdAt).toLocaleDateString()}
-                  </span>
-                </div>
-                {d.summary && <p className="text-xs text-neutral-400 mt-1.5 leading-relaxed">{d.summary}</p>}
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* FEED IT */}
-        <section className="aurelius-panel-frame p-5 space-y-3 self-start border-dashed">
+      {/* FEED IT */}
+      <section className="aurelius-panel-frame p-5 space-y-3 border-dashed">
           <span className="aurelius-heading text-base">Feed the brain</span>
           <div className="flex gap-2">
             {(["note", "url"] as const).map((m) => (
@@ -308,10 +245,10 @@ export default function CorpusPage() {
 
           <p className="text-[11px] text-neutral-600 leading-relaxed border-t border-aurelius-gold/15 pt-2">
             Every ingestion: indexed for recall, remembered, registered in
-            Aurelius&apos;s awareness, and surfaced on the Bridge.
+            Aurelius&apos;s awareness, and surfaced on the Bridge. Browse the
+            collection on the Shelves tab.
           </p>
         </section>
-      </div>
     </main>
   );
 }

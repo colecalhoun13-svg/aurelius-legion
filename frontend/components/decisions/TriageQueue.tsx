@@ -41,7 +41,7 @@ export default function InboxPage() {
   return (
     <main className="text-aurelius-text max-w-3xl mx-auto space-y-6 aurelius-stagger">
       <header className="flex items-baseline justify-between aurelius-rule">
-        <h1 className="aurelius-heading text-4xl">Inbox</h1>
+        <h1 className="aurelius-heading text-4xl">Triage</h1>
         <span className="text-sm text-neutral-500">{tasks?.length ?? "…"} to triage</span>
       </header>
       {err && <p className="text-sm text-amber-300/90">{err}</p>}

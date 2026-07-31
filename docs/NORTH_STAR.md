@@ -628,3 +628,63 @@ points at the NAS with one env var); (3) the trust flywheel — `suggestNextGran
 pushed into the briefing/scoreboard so grants widen on evidence; and (4) the
 outward/income engines (still correctly parked pending Cole's real business
 data; the draft→gate→confirm rails already exist).
+
+## State update — 2026-07-30 (launch hardening · the pushing system · queue justice)
+
+Five councils ran back-to-back ahead of the Railway deploy (go-live bug sweep →
+fix PRs #48-50 · final pre-launch → PRs #51-55 · alignment). Everything below is
+LIVE and smoke-covered (**232/0**, `tsc` clean both sides, prod build green).
+
+**Security & always-on**: the app lock (`APP_UNLOCK_SECRET` — edge middleware,
+one unlock per device per year) joins the backend `AURELIUS_API_KEY` lock; OAuth
+login-CSRF state; atomic once-per-day **JobRun claims** on every spine job (no
+double briefings on redeploy); prompt caching (static prefix above `CACHE_BREAK`,
+90%-discounted reads); per-domain wiki-synthesis debounce; hot-table indexes.
+
+**The Jarvis core** (the identity upgrades): the **NOW layer** (2.4 — every
+prompt knows the clock, the next events with countdowns, today's load, the
+standing grants); the **bounded agentic loop** (chat may chain up to 3 tool
+rounds — deduped canonically, gated actions never re-staged, final round
+synthesis-only; every act-shaped call still hits the executor's grant/gate, so
+§2.5 holds by construction — read this before modifying the loop); the **`self`
+tool** (read-only status + receipt trail — this closes the DoD line "What are
+you working on right now and why?"); earned-trust surfacing in `/grants` +
+Sunday planning. Undocumented-no-more: the **operator council tribunal**
+("council this" convenes the lenses visibly), the **mirror/mailbox** trust
+front-door ("why?" shows the rules behind the last decision; a reply IS the
+correction), and the **shadow short-circuit** (decision cases + precedent
+vectors for the Sunday judge; real skips stay off until earned).
+
+**Queue justice** (Cole's ruling on the 365-deep backlog — this consciously
+narrows "proposals wait for Cole" to "proposals wait 30 days"): the nightly
+21:15 **queue sweep** applies keyhole-eligible backlog through the granted
+executor path (receipts + undo, 25/night cap, autonomy/persona never), expires
+proposals at 30d and stale notices at 14d (expired ≠ denied — nothing written,
+nothing learned), and archives week-ignored mission proposals at 14d after one
+Sunday second-look — ending the bug where an ignored proposal silenced its own
+topic forever.
+
+**The pushing system** (alignment council: "5/10 — speaks on schedule, takes
+silence for an answer"; Cole's bar: "thinking ahead and pushing me"): the
+morning briefing now carries the **biggest-risk line** (deterministic footer —
+the most confrontational computed sentence finally reaches the phone) and
+checks last night's commitment (**debrief→dawn thread**); the debrief carries
+**tomorrow-watch** (overload + first event) and names **tomorrow's opening
+move**; the **streak sentinel** pushes a ≥7-day streak still unbroken at 21:30
+through the salience gate while it's saveable. The cockpit gained trajectory:
+Home's **"Up next" windshield** (next event countdown · free hours · Aurelius's
+own next move), spine-health dots that click through to their trace threads,
+pace-vs-clock beside every goal's +1, the load ribbon anchored to absolute
+hours, and **⌘K verbs** ("brief" · "task: …" · "mission: …" · "undo") — the
+palette became a command line. Naming unified (one name per surface), the
+Ask-tab's duplicate library removed, honest dead-backend states everywhere.
+
+**Parked reconciled**: the gated content lane (content.draft → gated
+content.publish + Instagram engine) shipped deliberately per §6 Block 7 —
+the full Content Engine buildout remains parked for Cole's business session.
+
+**The frontier now**: deploy (Railway runbook is certified; TZ =
+America/Phoenix), the two-week soak proving "runs for days", then the
+reconvene: Workflows v1 (Cole-defined pipelines + mission tool-steps), the
+horizon watcher (event-driven prep + due-task firing), and market threshold
+alerts through the salience gate.

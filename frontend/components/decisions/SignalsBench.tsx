@@ -165,7 +165,9 @@ export default function BridgePage() {
   return (
     <main className="text-aurelius-text max-w-3xl mx-auto space-y-6 aurelius-stagger">
       <header className="flex items-baseline justify-between aurelius-rule">
-        <h1 className="aurelius-heading text-4xl">The Bridge</h1>
+        {/* One name per surface (alignment council): the nav calls this
+            "From Aurelius" — the h1 must not answer to a different name. */}
+        <h1 className="aurelius-heading text-4xl">From Aurelius</h1>
         <span className="text-sm text-neutral-500">
           {signals === null && proposals === null ? "…" : `${pendingCount} pending`}
         </span>

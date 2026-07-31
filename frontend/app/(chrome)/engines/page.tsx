@@ -11,17 +11,20 @@ type Data = { engines: EngineInfo[]; routing: Routing[]; embeddings: { provider:
 
 export default function EnginesPage() {
   const [data, setData] = useState<Data | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    fetch("/api/engines").then(async (r) => r.ok && setData(await r.json()));
+    fetch("/api/engines")
+      .then(async (r) => (r.ok ? setData(await r.json()) : setFailed(true)))
+      .catch(() => setFailed(true));
   }, []);
 
   return (
     <main className="text-aurelius-text max-w-4xl mx-auto space-y-6 aurelius-stagger">
       <header className="flex items-baseline justify-between aurelius-rule">
         <h1 className="aurelius-heading text-4xl">Engines</h1>
-        <span className="text-sm text-neutral-500">
-          {data ? `${data.routing.filter((r) => r.configured).length}/${data.routing.length} minds armed` : "…"}
+        <span className={`text-sm ${failed ? "text-amber-300/90" : "text-neutral-500"}`}>
+          {failed ? "couldn't reach the brain" : data ? `${data.routing.filter((r) => r.configured).length}/${data.routing.length} minds armed` : "…"}
         </span>
       </header>
 
@@ -32,7 +35,8 @@ export default function EnginesPage() {
         </p>
         <div className="space-y-2.5">
           {(data?.routing ?? []).map((r) => (
-            <div key={r.tier} className="flex items-center gap-3 border border-aurelius-gold/15 rounded-lg px-4 py-2.5 bg-black/30">
+            // Wraps at 390px (alignment council) — fixed 32+64 widths overflowed the phone.
+            <div key={r.tier} className="flex flex-wrap items-center gap-x-3 gap-y-1 border border-aurelius-gold/15 rounded-lg px-4 py-2.5 bg-black/30">
               <span
                 className={`w-2 h-2 rounded-full shrink-0 ${
                   r.configured
@@ -41,12 +45,12 @@ export default function EnginesPage() {
                 }`}
                 title={r.configured ? "key configured" : "no key — dormant"}
               />
-              <span className="aurelius-heading text-sm w-32 shrink-0">{r.tier}</span>
-              <span className="text-sm text-neutral-300 w-64 shrink-0 truncate">
+              <span className="aurelius-heading text-sm w-28 shrink-0">{r.tier}</span>
+              <span className="text-sm text-neutral-300 min-w-0 flex-1 truncate">
                 {r.model}
                 <span className="text-neutral-600"> · {r.provider}</span>
               </span>
-              <span className="text-xs text-neutral-500 flex-1">{r.when}</span>
+              <span className="text-xs text-neutral-500 basis-full sm:basis-0 sm:flex-1 sm:min-w-[180px]">{r.when}</span>
             </div>
           ))}
         </div>

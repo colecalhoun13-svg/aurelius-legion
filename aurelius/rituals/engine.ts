@@ -167,7 +167,56 @@ then close with a single directive sentence. Under 180 words. No headers, no bul
     // prep is a bonus, never a briefing blocker
   }
 
-  const fullBriefing = briefing + prepFooter;
+  // ── THE RISK LINE RIDES THE BRIEFING (alignment council): the single most
+  // confrontational computed line in the system was web-only — now the
+  // guaranteed daily phone touch carries it. Deterministic footer, so the
+  // voice pass can't soften it. Calm days stay calm (no false alarms).
+  let riskFooter = "";
+  try {
+    const { getBiggestRisk } = await import("../productivity/service.ts");
+    const risk = await getBiggestRisk(today as any);
+    if (risk && !risk.startsWith("Nothing's on fire")) riskFooter = `\n\n⚔ ${risk}`;
+  } catch {
+    // the risk line is a bonus, never a briefing blocker
+  }
+
+  // ── DEBRIEF→DAWN THREAD: last night's "tomorrow starts with X" gets
+  // CHECKED, not forgotten. Quiet when honored (on the deck or already done);
+  // one confronting line when the promise vanished overnight.
+  let dawnFooter = "";
+  try {
+    const lastDebrief = await prisma.ritualInstance.findFirst({
+      where: {
+        ritual: { name: "nightly_debrief" },
+        firedAt: { gte: new Date(Date.now() - 20 * 3600_000) },
+      },
+      orderBy: { firedAt: "desc" },
+      select: { outputStructured: true },
+    });
+    const committed = (lastDebrief?.outputStructured as any)?.tomorrowStarts as
+      | { title: string; taskId: string }
+      | undefined;
+    if (committed?.taskId) {
+      const task = await prisma.task.findUnique({
+        where: { id: committed.taskId },
+        select: { status: true, scheduledFor: true },
+      });
+      const honored =
+        !task ||
+        task.status === "done" ||
+        task.status === "today" ||
+        (task.scheduledFor !== null &&
+          task.scheduledFor >= new Date(`${today.date}T00:00:00.000Z`) &&
+          task.scheduledFor <= new Date(`${today.date}T23:59:59.999Z`));
+      if (!honored) {
+        dawnFooter = `\n\n☙ Last night you said today starts with "${committed.title}" — it's not on the deck. Put it there, or tell me what changed.`;
+      }
+    }
+  } catch {
+    // the dawn thread is a bonus, never a briefing blocker
+  }
+
+  const fullBriefing = briefing + prepFooter + riskFooter + dawnFooter;
   const instance = await fileInstance("morning_briefing", fullBriefing, {
     date: today.date,
     taskCount: today.tasks.length,
@@ -197,13 +246,101 @@ name what moved and what didn't, one observation about the pattern if there is o
 and one sentence on how tomorrow starts. Under 120 words.`
   );
 
-  const instance = await fileInstance("nightly_debrief", debrief, {
+  // ── TOMORROW-WATCH (alignment council): tomorrow's shape, deterministic,
+  // spoken tonight while tonight can still fix it. Rides as a footer so the
+  // voice pass's word budget can never compress it away.
+  const footerLines: string[] = [];
+  try {
+    const { detectOverload } = await import("../planning/tools.ts");
+    const overload = await detectOverload();
+    const tm = overload.days[1];
+    if (tm && tm.overloaded) {
+      footerLines.push(`Tomorrow holds ${tm.due} due against capacity ${tm.capacity} — tonight is when to cut.`);
+    } else if (tm && tm.due > 0) {
+      footerLines.push(`Tomorrow: ${tm.due} due, capacity ${tm.capacity}.`);
+    }
+    const tmStr = tm?.date ?? new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
+    const firstEvent = await prisma.calendarEvent.findFirst({
+      where: { startAt: { gte: new Date(`${tmStr}T00:00:00.000Z`), lte: new Date(`${tmStr}T23:59:59.999Z`) } },
+      orderBy: { startAt: "asc" },
+      select: { title: true, startAt: true, raw: true },
+    });
+    if (firstEvent) {
+      const t = (firstEvent.raw as any)?.allDay ? "all day" : localClock(firstEvent.startAt);
+      footerLines.push(`Tomorrow opens ${t} with ${firstEvent.title}.`);
+    }
+  } catch {
+    // tomorrow-watch is a bonus, never a debrief blocker
+  }
+
+  // ── DEBRIEF→DAWN COMMITMENT: name tomorrow's opening move tonight, store
+  // it, and let the morning briefing CHECK it. Deterministic pick: the oldest
+  // overdue debt first, else the top open task on the deck.
+  let tomorrowStarts: { title: string; taskId: string } | null = null;
+  try {
+    const pick =
+      (await prisma.task.findFirst({
+        where: { dueDate: { lt: new Date() }, status: { notIn: ["done", "abandoned"] } },
+        orderBy: { dueDate: "asc" },
+        select: { id: true, title: true },
+      })) ??
+      (await prisma.task.findFirst({
+        where: { status: "today" },
+        orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+        select: { id: true, title: true },
+      }));
+    if (pick) {
+      tomorrowStarts = { title: pick.title, taskId: pick.id };
+      footerLines.push(`Tomorrow starts with: "${pick.title}". I'll hold you to it at dawn.`);
+    }
+  } catch {
+    // commitment is a bonus, never a debrief blocker
+  }
+
+  const fullDebrief = footerLines.length > 0 ? `${debrief}\n\n${footerLines.map((l) => `☙ ${l}`).join("\n")}` : debrief;
+
+  const instance = await fileInstance("nightly_debrief", fullDebrief, {
     date: pulse.date,
     gapScore: pulse.gapScore,
+    ...(tomorrowStarts ? { tomorrowStarts } : {}),
   });
 
+  // ── STREAK SENTINEL (alignment council): a long streak breaking is pushed
+  // WHILE it's still saveable, not eulogized at 07:00. Reports Cole's own
+  // habit state, prescribes nothing (signals-only discipline). dueAt tonight
+  // feeds the salience gate's urgency term so it earns the phone.
+  try {
+    const { listHabits } = await import("../productivity/service.ts");
+    const habits = await listHabits(pulse.date);
+    const atRisk = (habits as any[]).filter((h) => h.streak >= 7 && !h.doneToday);
+    for (const h of atRisk.slice(0, 3)) {
+      const already = await prisma.bridgeSignal.findFirst({
+        where: {
+          sourceType: "streak_sentinel",
+          title: { contains: h.name },
+          createdAt: { gte: new Date(`${pulse.date}T00:00:00.000Z`) },
+        },
+        select: { id: true },
+      });
+      if (already) continue;
+      const { surfaceSignal } = await import("../core/bridge.ts");
+      const midnight = new Date(`${pulse.date}T23:59:00.000Z`);
+      await surfaceSignal({
+        kind: "gap_alert",
+        domain: "personal",
+        sourceType: "streak_sentinel",
+        severity: "attention",
+        title: `"${h.name}" — ${h.streak}-day streak breaks at midnight`,
+        body: `Still open today. ${h.streak} days is real capital; one tap keeps it.`,
+        dueAt: midnight,
+      });
+    }
+  } catch {
+    // the sentinel is a bonus, never a debrief blocker
+  }
+
   console.log(`[rituals] nightly debrief generated (${instance.id})`);
-  return { instance, debrief };
+  return { instance, debrief: fullDebrief };
 }
 
 // ── Reads ────────────────────────────────────────────────────────────

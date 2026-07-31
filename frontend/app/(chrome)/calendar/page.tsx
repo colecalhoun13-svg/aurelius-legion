@@ -62,16 +62,25 @@ export default function CalendarPage() {
 
   useEffect(() => setBackend(backendUrl()), []);
 
+  const [unreachable, setUnreachable] = useState(false);
+
   const load = useCallback(async () => {
     const from = weekStart.toISOString();
     const to = new Date(weekStart.getTime() + 7 * 86400000).toISOString();
-    const res = await fetch(`/api/calendar?from=${from}&to=${to}`);
-    if (res.ok) {
-      const d = await res.json();
-      setEvents(d.events ?? []);
-      setTasks(d.tasks ?? []);
-      setConnected(d.connected ?? false);
-      setConfigured(d.configured ?? false);
+    try {
+      const res = await fetch(`/api/calendar?from=${from}&to=${to}`);
+      if (res.ok) {
+        const d = await res.json();
+        setEvents(d.events ?? []);
+        setTasks(d.tasks ?? []);
+        setConnected(d.connected ?? false);
+        setConfigured(d.configured ?? false);
+        setUnreachable(false);
+      } else {
+        setUnreachable(true);
+      }
+    } catch {
+      setUnreachable(true); // an empty week and a dead backend must not look alike
     }
   }, [weekStart]);
 
@@ -149,12 +158,18 @@ export default function CalendarPage() {
         </div>
       </header>
 
+      {unreachable && (
+        <p className="text-xs text-amber-300/90 italic">
+          Couldn't reach the brain — this week may not be the whole picture.
+        </p>
+      )}
+
       {/* The week's load ribbon (final council graphic): busy hours per day —
           a 7-meeting Tuesday and an empty Friday no longer look identical at
           a glance, and schedule-protection's choices become legible. */}
       {events.length > 0 && (
         <div className="flex items-center gap-3">
-          <span className="text-[11px] text-neutral-500 shrink-0">load · busy h/day</span>
+          <span className="text-[11px] text-neutral-500 shrink-0">load · busy h/day <span className="text-neutral-700">(of 12)</span></span>
           <SparkBars
             values={days.map((d) =>
               Math.min(
@@ -167,6 +182,7 @@ export default function CalendarPage() {
             labels={DAYS.map((d) => d[0]!)}
             width={340}
             height={44}
+            max={12} // absolute anchor — a light week must LOOK light (alignment council)
           />
         </div>
       )}

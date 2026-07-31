@@ -63,17 +63,23 @@ Assembled in two halves for prompt caching (the Anthropic adapter marks
 everything above `CACHE_BREAK` with cache_control): STATIC prefix — 1 persona ·
 2 identity · 3–4 operators · 6 tool catalog (skipped when
 `omitToolCatalog`) — then LIVE context — 1.5 operator state · 2.4 NOW
-(clock/calendar/load/grants) · 5 memory · 5.5 semantic recall · 5.75
-corpus+wiki awareness · 7 task · 7.5 pending proposals. Semantic layer
-numbers are unchanged; only assembly order moved.
+(clock/calendar/load/grants) · 5 memory · 5.25 recent conversation ·
+5.4 compiled patterns (primary + secondary lenses, fired-rule audit) ·
+5.45 field synthesis (the wiki page, injected directly) · 5.5 semantic
+recall · 5.75 corpus awareness · 7 task · 7.5 pending proposals ·
+decision-mode tail when Cole is making a real call. `noReuse` keeps
+internal synthesis jobs out of the semantic reuse cache, both sides.
 
 ## Scheduled spine (all traced via core/trace.ts)
 
-06:00 RSS · 06:30 market pulse · 06:45 schedule-protection (acts if granted,
-else proposes) · 07:00 morning briefing · 08:00 initiative ·
+02:00 db backup · 06:00 RSS · 06:30 market pulse · 06:45 schedule-protection
+(acts if granted, else proposes) · 07:00 morning briefing (carries the risk
+line + checks last night's "tomorrow starts with") · 08:00 initiative ·
 13:00 midday check (silent when on pace) · 21:15 queue sweep (keyhole
 backlog applies under grant; proposals expire at 30d, stale notices at
-14d) · 21:30 debrief · Sun 09:00 weekend
+14d; ignored missions archive at 14d and may re-propose) · 21:30 debrief
+(tomorrow-watch + names tomorrow's opening move + streak sentinel) ·
+Sun 09:00 weekend
 sweep → wiki · Sun 17:00 persona observer · Sun 18:00 weekly planning ·
 Sun 19:00 freshness sweep ·
 Sun 19:30 capability gaps (repeated tool failures → one deduped fix signal) ·
@@ -87,3 +93,7 @@ every 15 min calendar sync · every 10 min Paperless.
 
 Business Engine buildout (Offer/LeadGen/Content/SOP/Workflow/Client/
 Analytics/Brand) — needs Cole's real business data, marked in NORTH_STAR.
+One deliberate exception shipped (NORTH_STAR §6 Block 7, "light ONE
+outward engine first"): the gated content lane — `content.draft` (inward)
+→ `content.publish` (outward, always Cole's confirm) + the Instagram
+engine, dormant until configured. The full Content Engine stays parked.

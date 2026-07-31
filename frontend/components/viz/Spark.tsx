@@ -56,14 +56,19 @@ export function SparkBars({
   labels,
   width = 240,
   height = 56,
+  max,
 }: {
   values: number[];
   labels?: string[];
   width?: number;
   height?: number;
+  /** Absolute scale anchor — without it bars scale to the set's own max,
+   *  which makes a light week look identical to a heavy one. Pass it for
+   *  LOAD instruments; omit for pure shape/trend charts. */
+  max?: number;
 }) {
   if (values.length === 0) return null;
-  const hi = Math.max(...values, 1);
+  const hi = Math.max(max ?? 0, ...values, 1);
   const gap = 3;
   const bw = Math.max(4, (width - gap * (values.length - 1)) / values.length);
   const chartH = labels ? height - 14 : height;

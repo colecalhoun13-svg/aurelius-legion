@@ -317,10 +317,22 @@ export async function planWeekLite() {
     .filter(Boolean)
     .join("\n");
 
+  // Ignored-proposal second look (alignment council): missions Cole hasn't
+  // answered in a week get ONE Sunday mention, then the nightly sweep
+  // archives them at 14 days — one follow-up, one honest close, never a nag.
+  let skeletonWithTrust = skeleton;
+  try {
+    const waiting = await prisma.mission.count({
+      where: { status: "proposed", createdAt: { lt: new Date(Date.now() - 7 * 86400_000) } },
+    });
+    if (waiting > 0) {
+      skeletonWithTrust += `\n${waiting} of my mission proposal(s) have waited a week+ — launch or decline them (Aurelius → Missions); at 14 days they archive and may resurface later.`;
+    }
+  } catch { /* second look is a bonus */ }
+
   // Earned-trust nudge (final council): the Sunday planning session is where
   // Cole decides the week — surface any keyhole whose record has earned the
   // ask, on the same once-per-cooldown discipline as the morning briefing.
-  let skeletonWithTrust = skeleton;
   try {
     const { freshGrantSuggestions, markSuggestionsSurfaced } = await import("../autonomy/trustLedger.ts");
     const sugg = (await freshGrantSuggestions()).slice(0, 2);

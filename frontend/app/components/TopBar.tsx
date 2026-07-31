@@ -33,6 +33,13 @@ export default function TopBar() {
   const [focused, setFocused] = useState(false);
   const [sel, setSel] = useState(0);
   const needsYou = useNeedsYou();
+  // Command receipts — one quiet line under the bar, self-clearing.
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice || notice === "…") return;
+    const t = setTimeout(() => setNotice(null), 5000);
+    return () => clearTimeout(t);
+  }, [notice]);
 
   // ⌘K / Ctrl+K focuses the ask bar from anywhere
   useEffect(() => {
@@ -53,7 +60,73 @@ export default function TopBar() {
   const matches = navigable
     ? DESTINATIONS.filter((d) => `${d.name} ${d.alias}`.toLowerCase().includes(q)).slice(0, 6)
     : [];
-  const rows: Array<{ kind: "nav"; name: string; path: string; glyph: string } | { kind: "ask" }> = [
+
+  // ⌘K VERBS (alignment council): the cockpit's fastest input can DO, not
+  // just jump. "brief" · "task: …" · "mission: …" · "undo" — each rides an
+  // existing API; nothing new is reachable from here that wasn't already.
+  type Cmd = { kind: "cmd"; label: string; glyph: string; exec: () => Promise<string> };
+  const cmds: Cmd[] = [];
+  const raw = query.trim();
+  if (/^brief( me)?( now)?$/i.test(raw)) {
+    cmds.push({
+      kind: "cmd", label: "Brief me now", glyph: "✦",
+      exec: async () => {
+        const r = await fetch("/api/rituals", { method: "POST" });
+        if (!r.ok) throw new Error();
+        router.push("/home");
+        return "✦ Briefing composed — it's on Home.";
+      },
+    });
+  }
+  const taskM = raw.match(/^task[:\s]\s*(.+)$/i);
+  if (taskM?.[1]) {
+    const title = taskM[1].trim();
+    cmds.push({
+      kind: "cmd", label: `File task: “${title}”`, glyph: "❂",
+      exec: async () => {
+        const r = await fetch("/api/today/actions", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "createTask", title, status: "today" }),
+        });
+        if (!r.ok) throw new Error();
+        return `❂ Filed for today: “${title}”`;
+      },
+    });
+  }
+  const missionM = raw.match(/^mission[:\s]\s*(.+)$/i);
+  if (missionM?.[1]) {
+    const objective = missionM[1].trim();
+    cmds.push({
+      kind: "cmd", label: `Launch mission: “${objective}”`, glyph: "♛",
+      exec: async () => {
+        const r = await fetch("/api/missions", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ objective }),
+        });
+        if (!r.ok) throw new Error();
+        return `♛ Mission launched — it plans and reports on its own.`;
+      },
+    });
+  }
+  if (/^undo( last)?$/i.test(raw)) {
+    cmds.push({
+      kind: "cmd", label: "Undo the last autonomous action", glyph: "↺",
+      exec: async () => {
+        const d = await fetch("/api/autonomy/dial?days=7").then((r) => (r.ok ? r.json() : null));
+        const last = d?.recentActions?.[0];
+        if (!last) return "↺ Nothing reversible in the last 7 days.";
+        const r = await fetch("/api/autonomy/undo", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ signalId: last.id }),
+        });
+        if (!r.ok) throw new Error();
+        return `↺ Undone: “${last.title}”`;
+      },
+    });
+  }
+
+  const rows: Array<Cmd | { kind: "nav"; name: string; path: string; glyph: string } | { kind: "ask" }> = [
+    ...cmds,
     ...matches.map((m) => ({ kind: "nav" as const, name: m.name, path: m.path, glyph: m.glyph })),
     { kind: "ask" },
   ];
@@ -70,6 +143,13 @@ export default function TopBar() {
 
   const run = (row: (typeof rows)[number]) => {
     if (row.kind === "ask") return ask();
+    if (row.kind === "cmd") {
+      setQuery("");
+      inputRef.current?.blur();
+      setNotice("…");
+      row.exec().then(setNotice).catch(() => setNotice("Couldn't do that — the brain may be napping. Try again."));
+      return;
+    }
     setQuery("");
     inputRef.current?.blur();
     router.push(row.path);
@@ -110,18 +190,25 @@ export default function TopBar() {
             onBlur={() => setTimeout(() => setFocused(false), 150)}
             onKeyDown={onInputKey}
             className="flex-1 bg-transparent outline-none text-sm text-aurelius-text placeholder:text-neutral-600"
-            placeholder="Jump anywhere, or ask the second brain…"
+            placeholder="Jump, ask, or command — try “task: …”, “mission: …”, “brief”, “undo”"
           />
           <span className="hidden md:inline text-[11px] text-aurelius-gold/70 border border-aurelius-gold/30 rounded px-1.5 py-0.5 tracking-wide">
             CMD ⌘ K
           </span>
         </div>
 
+        {/* Command receipt — the verb's result, one quiet self-clearing line */}
+        {notice && !open && (
+          <div className="absolute left-0 right-0 top-10 z-40 text-xs text-aurelius-gold/90 bg-black/95 border border-aurelius-gold/30 rounded-lg px-4 py-2">
+            {notice}
+          </div>
+        )}
+
         {open && (
           <div className="absolute left-0 right-0 top-10 z-50 border border-aurelius-gold/40 rounded-lg bg-black/95 backdrop-blur shadow-[0_8px_30px_rgba(0,0,0,0.8)] overflow-hidden">
             {rows.map((row, i) => (
               <button
-                key={row.kind === "nav" ? row.path : "__ask"}
+                key={row.kind === "nav" ? row.path : row.kind === "cmd" ? `cmd:${row.label}` : "__ask"}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   run(row);
@@ -131,7 +218,13 @@ export default function TopBar() {
                   i === selClamped ? "bg-aurelius-gold/15 text-aurelius-gold" : "text-neutral-300"
                 }`}
               >
-                {row.kind === "nav" ? (
+                {row.kind === "cmd" ? (
+                  <>
+                    <span className="text-aurelius-gold/60 w-5 text-center">{row.glyph}</span>
+                    <span className="flex-1 truncate">{row.label}</span>
+                    <span className="text-[10px] uppercase tracking-widest text-aurelius-gold/60">do</span>
+                  </>
+                ) : row.kind === "nav" ? (
                   <>
                     <span className="text-aurelius-gold/60 w-5 text-center">{row.glyph}</span>
                     <span className="flex-1">{row.name}</span>

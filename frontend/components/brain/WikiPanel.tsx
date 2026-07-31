@@ -39,13 +39,20 @@ export default function WikiPage() {
   const [pages, setPages] = useState<PageMeta[] | null>(null);
   const [active, setActive] = useState<FullPage | null>(null);
   const [rebuilding, setRebuilding] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/wiki");
-    if (res.ok) {
-      const list = (await res.json()).pages as PageMeta[];
-      setPages(list);
-      return list;
+    try {
+      const res = await fetch("/api/wiki");
+      if (res.ok) {
+        const list = (await res.json()).pages as PageMeta[];
+        setPages(list);
+        setFailed(false);
+        return list;
+      }
+      setFailed(true);
+    } catch {
+      setFailed(true); // an empty wiki and a dead backend must not look alike
     }
     return [];
   }, []);
@@ -85,8 +92,8 @@ export default function WikiPage() {
     <main className="text-aurelius-text max-w-5xl mx-auto space-y-6 aurelius-stagger">
       <header className="flex items-baseline justify-between aurelius-rule">
         <h1 className="aurelius-heading text-4xl">The Wiki</h1>
-        <span className="text-sm text-neutral-500">
-          {pages === null ? "…" : `${pages.length} living pages`}
+        <span className={`text-sm ${failed ? "text-amber-300/90" : "text-neutral-500"}`}>
+          {failed ? "couldn't reach the brain" : pages === null ? "…" : `${pages.length} living pages`}
         </span>
       </header>
 

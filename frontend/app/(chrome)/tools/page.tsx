@@ -38,16 +38,17 @@ const ORDER = ["live", "partial", "config", "deploy", "planned", "parked"];
 export default function ToolsPage() {
   const [registered, setRegistered] = useState<ToolInfo[] | null>(null);
   const [integrations, setIntegrations] = useState<Integration[]>([]);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     fetch("/api/tools")
       .then(async (r) => {
-        if (!r.ok) return;
+        if (!r.ok) { setFailed(true); return; }
         const d = await r.json();
         setRegistered(d.registered ?? []);
         setIntegrations(d.integrations ?? []);
       })
-      .catch(() => {});
+      .catch(() => setFailed(true)); // a dead backend must not spin "…" forever
   }, []);
 
   const sorted = [...integrations].sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status));
@@ -63,6 +64,7 @@ export default function ToolsPage() {
             <span className="text-neutral-400"> · {liveCount} live, {integrations.length - liveCount} waiting on a key or the Mini.</span>
           )}
         </p>
+        {failed && <p className="text-xs text-amber-300/90 mt-1">Couldn't reach the brain — statuses can't be shown right now.</p>}
       </header>
 
       {registered && registered.length > 0 && (

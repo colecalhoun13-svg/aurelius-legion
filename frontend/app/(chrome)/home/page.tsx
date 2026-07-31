@@ -28,6 +28,20 @@ type Deck = {
 type Task = { id: string; title: string; status: string; priority: string; domain: string };
 type Habit = { id: string; name: string; streak: number; doneToday: boolean };
 type TodayData = { tasks: Task[]; overdue: Task[]; habits: Habit[]; doneToday: number };
+type UpNext = {
+  nextEvent: { title: string; startAt: string; allDay: boolean } | null;
+  freeHours: number;
+  nextMove: { time: string; label: string; tomorrow: boolean };
+};
+
+// "in 40 min" / "in 3 h" — trajectory, not timestamps.
+function untilLabel(iso: string): string {
+  const min = Math.round((new Date(iso).getTime() - Date.now()) / 60_000);
+  if (min <= 0) return "now";
+  if (min < 60) return `in ${min} min`;
+  const h = Math.floor(min / 60);
+  return min % 60 >= 30 ? `in ${h}½ h` : `in ${h} h`;
+}
 
 const confirmable = (s: Signal) => (s.actions ?? []).find((a) => a?.action === "confirm_action");
 const undoable = (s: Signal) => (s.actions ?? []).find((a) => a?.action === "undo_action");
@@ -78,6 +92,17 @@ export default function HomePage() {
   const [briefingBusy, setBriefingBusy] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const taskInputRef = useRef<HTMLInputElement | null>(null);
+  // The windshield (alignment council): what's coming, not just what is.
+  const [upnext, setUpnext] = useState<UpNext | null>(null);
+  const [, setTick] = useState(0); // 60s re-render so countdowns stay honest
+  useEffect(() => {
+    fetch("/api/upnext")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j && !j.error && setUpnext(j))
+      .catch(() => {});
+    const t = setInterval(() => setTick((n) => n + 1), 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -226,6 +251,23 @@ export default function HomePage() {
           <p className="mt-2 text-sm text-neutral-300">
             <span className="text-aurelius-gold/70 aurelius-heading text-xs mr-2">Focus</span>
             {deck.plan.focus}
+          </p>
+        )}
+        {/* Up next — the windshield: position is everywhere, this is trajectory */}
+        {upnext && (
+          <p className="mt-2.5 text-xs text-neutral-500">
+            {upnext.nextEvent ? (
+              <>
+                ◷ <span className="text-neutral-300">{upnext.nextEvent.title}</span>{" "}
+                {upnext.nextEvent.allDay ? "(all day)" : untilLabel(upnext.nextEvent.startAt)}
+              </>
+            ) : (
+              <>◷ calendar clear ahead</>
+            )}
+            {" · "}~{upnext.freeHours}h free today{" · "}
+            <span title="Aurelius's next scheduled move">
+              ♛ {upnext.nextMove.tomorrow ? "tomorrow " : ""}{upnext.nextMove.time} {upnext.nextMove.label}
+            </span>
           </p>
         )}
         {/* The day's quote — the ritual survives the merge */}

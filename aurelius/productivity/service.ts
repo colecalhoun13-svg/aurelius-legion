@@ -530,11 +530,37 @@ export async function getDeck(dateStr?: string) {
     ).length,
   };
 
-  // The biggest risk right now — ONE line, computed, ranked worst-first. The
-  // deck's whole job is to confront, so it names the single thing most likely
-  // to cost Cole, not a wall of stats. Order matters: a project about to slip
-  // its deadline outranks a pile of overdue tasks outranks a broken follow-
-  // through streak. When nothing's on fire, say so plainly (no false alarms).
+  const biggestRisk = riskLineFrom(today, behindProjects, overdueTotal);
+
+  return {
+    date: dstr,
+    hero,
+    biggestRisk,
+    plan: today.plan,
+    tasks: today.tasks,
+    overdue: today.overdue,
+    habits: today.habits,
+    goals: today.goals,
+    stats: today.stats,
+    projects,
+    bridge: pendingSignals,
+    overnight,
+    activity: today.activity,
+  };
+}
+
+// The biggest risk right now — ONE line, computed, ranked worst-first. Its
+// whole job is to confront: it names the single thing most likely to cost
+// Cole, not a wall of stats. Order matters: a project about to slip its
+// deadline outranks a pile of overdue tasks outranks a broken follow-through
+// streak. When nothing's on fire, say so plainly (no false alarms).
+// Exported (alignment council): the deck AND the morning briefing speak it —
+// the most confrontational line in the system now reaches the phone.
+export function riskLineFrom(
+  today: { tasks: any[]; overdue: any[]; plan: any; stats: { followThrough: number | null } },
+  behindProjects: Array<{ name: string; progressPct: number; daysToTarget: number | null }>,
+  overdueTotal: number
+): string {
   let biggestRisk: string;
   if (behindProjects.length > 0) {
     // Worst = closest to target with least progress. Sort by slack (days left
@@ -561,22 +587,24 @@ export async function getDeck(dateStr?: string) {
   } else {
     biggestRisk = `Nothing's on fire. Protect the focus block and do the work you already named.`;
   }
+  return biggestRisk;
+}
 
-  return {
-    date: dstr,
-    hero,
-    biggestRisk,
-    plan: today.plan,
-    tasks: today.tasks,
-    overdue: today.overdue,
-    habits: today.habits,
-    goals: today.goals,
-    stats: today.stats,
-    projects,
-    bridge: pendingSignals,
-    overnight,
-    activity: today.activity,
-  };
+/** The risk line, self-contained — for callers (the briefing) that don't
+ *  assemble the whole deck. Reuses an already-fetched getToday() when given. */
+export async function getBiggestRisk(
+  todayData?: Awaited<ReturnType<typeof getToday>>
+): Promise<string> {
+  const today = todayData ?? (await getToday());
+  const projects = await listProjectsWithProgress();
+  const behind = projects.filter(
+    (p) => p.daysToTarget !== null && p.daysToTarget < 7 && p.progressPct < 80
+  );
+  const { start } = dayRange(today.date);
+  const overdueTotal = await prisma.task.count({
+    where: { dueDate: { lt: start }, status: { notIn: ["done", "abandoned"] } },
+  });
+  return riskLineFrom(today, behind, overdueTotal);
 }
 
 // ── Aurelius activity (what the background is doing) ─────────────────
