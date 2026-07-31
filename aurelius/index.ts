@@ -1099,6 +1099,13 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
               id: resolved.id,
               decision: resolved.status,
             });
+            // Honest failure to COLE, not just the log (post-sweep council):
+            // if the proposal expired or was resolved elsewhere between prompt
+            // assembly and this turn, the reply text already claims success —
+            // correct it, because nothing was written by this confirm.
+            if (resolved.status !== d.decision) {
+              cleanedText += `\n\n_(that proposal was already ${resolved.status} — this turn changed nothing; re-propose if it still matters)_`;
+            }
           }
         } catch (err) {
           console.error("[aurelius] resolveProposal failed:", err);

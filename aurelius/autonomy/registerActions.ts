@@ -49,7 +49,7 @@ export function registerAllActions(): void {
   // executor cycle. Provenance stays honest: research_ingestion by aurelius.
   registerActionFinalizer("knowledge.apply_proposal", async (payload: any) => {
     const { resolveProposal } = await import("../knowledge/proposals.ts");
-    return resolveProposal({
+    const resolved = await resolveProposal({
       operatorId: payload?.operatorId,
       proposalId: payload?.proposalId,
       decision: "confirmed",
@@ -57,6 +57,17 @@ export function registerAllActions(): void {
       sourceType: "research_ingestion",
       updatedBy: "aurelius",
     });
+    // Claim lost (post-sweep council): resolveProposal returns the fresh row
+    // WITHOUT throwing when someone else — Cole denying it at 21:15, or a
+    // concurrent keyhole — resolved it first. Filing an "acted" receipt with
+    // a live Undo for a write that never happened would let that Undo clobber
+    // state the sweep never touched. Throw so the executor files nothing.
+    if (!resolved || !(resolved as any).claimWon) {
+      throw new Error(
+        `apply claim lost — proposal ${payload?.proposalId} is ${resolved?.status ?? "missing"}, nothing was written by this call`
+      );
+    }
+    return resolved;
   });
   // Real undo: restore the prior value (or deactivate the entry the apply
   // created) and mark the proposal denied so it can't silently re-apply.

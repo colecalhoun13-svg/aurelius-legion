@@ -321,6 +321,11 @@ export async function resolveProposal(
 
   proposal.status = input.decision;
   proposal.resolvedAt = resolvedAt;
+  // Winner marker (post-sweep council): the atomic claim's LOSER gets the
+  // fresh row back without this flag — callers that must not double-file
+  // receipts (the keyhole finalizer) check it instead of guessing by status
+  // (two concurrent confirms would both read "confirmed").
+  (proposal as any).claimWon = true;
 
   // Log resolution to cache
   const resolutionSignature: TaggedSignature = {

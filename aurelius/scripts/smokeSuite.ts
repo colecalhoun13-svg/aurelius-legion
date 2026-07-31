@@ -1003,6 +1003,10 @@ async function main() {
     const { undoAction } = await import("../autonomy/executor.ts");
     const khOp = await resolveOperatorId("training");
     if (khOp) {
+      // Preserve a pre-existing real grant (grantAutonomy upserts — post-sweep).
+      const khPreexisting = await prisma.autonomyGrant.findFirst({
+        where: { actionClass: "knowledge.apply_proposal", status: "active" },
+      });
       // Ungranted → a research-born proposal stays pending (the confirm loop).
       const gatedProp = await createProposal({
         operatorId: khOp, operatorName: "training", intentClassId: "rep_band_update",
@@ -1056,18 +1060,29 @@ async function main() {
         chatProp.status === "pending" && personaProp.status === "pending"
       );
 
-      await revokeAutonomy("knowledge.apply_proposal");
+      if (!khPreexisting) await revokeAutonomy("knowledge.apply_proposal");
       // cleanup this block's artifacts
       await prisma.bridgeSignal.deleteMany({ where: { sourceId: { in: [gatedProp.id, autoProp.id, chatProp.id, personaProp.id] } } });
       await prisma.knowledgeProposal.deleteMany({ where: { key: { contains: TAG } } });
       await prisma.knowledgeEntry.deleteMany({ where: { key: { contains: TAG } } });
-      await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
+      if (khPreexisting) {
+        await prisma.autonomyGrant.update({
+          where: { id: khPreexisting.id },
+          data: { note: khPreexisting.note, grantedBy: khPreexisting.grantedBy },
+        }).catch(() => {});
+      } else {
+        await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
+      }
     } else {
       check("ingestion keyhole (skipped — no training operator)", true);
     }
   }
 
   console.log("── queue sweep: backlog keyhole + expiry (Cole's ruling on the 365) ──");
+  // NOTE: sweepQueues() operates DB-WIDE (it will expire/apply/archive any
+  // real stale rows present) — this suite is sandbox-only by contract. The
+  // grant handling below preserves a pre-existing real grant instead of
+  // clobbering it (post-sweep council).
   {
     const { registerAllActions } = await import("../autonomy/registerActions.ts");
     registerAllActions();
@@ -1075,6 +1090,10 @@ async function main() {
     const { sweepQueues } = await import("../knowledge/queueSweep.ts");
     const qsOp = await resolveOperatorId("training");
     if (qsOp) {
+      const sweepBlockStart = new Date();
+      const preexistingGrant = await prisma.autonomyGrant.findFirst({
+        where: { actionClass: "knowledge.apply_proposal", status: "active" },
+      });
       // A research-born proposal filed BEFORE the grant exists = the backlog.
       const backlogProp = await createProposal({
         operatorId: qsOp, operatorName: "training", intentClassId: "rep_band_update",
@@ -1106,10 +1125,17 @@ async function main() {
           createdAt: new Date(Date.now() - 20 * 86400_000),
         },
       });
+      // A week-ignored mission proposal (20d) → the sweep must archive it.
+      const staleMission = await prisma.mission.create({
+        data: {
+          title: `${TAG} stale mission`, objective: "smoke", domain: "personal",
+          status: "proposed", createdAt: new Date(Date.now() - 20 * 86400_000),
+        },
+      });
 
       await grantAutonomy({ actionClass: "knowledge.apply_proposal", note: "smoke" });
       await sweepQueues();
-      await revokeAutonomy("knowledge.apply_proposal");
+      if (!preexistingGrant) await revokeAutonomy("knowledge.apply_proposal");
 
       const backlogAfter = await prisma.knowledgeProposal.findUnique({ where: { id: backlogProp.id } });
       check("sweep applies the pre-grant research backlog through the keyhole", backlogAfter?.status === "confirmed");
@@ -1125,13 +1151,25 @@ async function main() {
         "14-day notice expires; a 20-day live decision survives",
         noticeAfter?.status === "expired" && decisionAfter?.status === "pending"
       );
+      const missionAfter = await prisma.mission.findUnique({ where: { id: staleMission.id } });
+      check("14-day-ignored mission proposal archives (topic can re-propose)", missionAfter?.status === "archived");
 
-      // cleanup
-      await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["smoke_qsweep", "queue_sweep"] } } });
+      // cleanup — digest deletion scoped to THIS block's run, never real nightly digests
+      await prisma.bridgeSignal.deleteMany({ where: { sourceType: "smoke_qsweep" } });
+      await prisma.bridgeSignal.deleteMany({ where: { sourceType: "queue_sweep", createdAt: { gte: sweepBlockStart } } });
       await prisma.bridgeSignal.deleteMany({ where: { sourceId: { in: [backlogProp.id, staleProp.id] } } });
+      await prisma.mission.deleteMany({ where: { id: staleMission.id } });
       await prisma.knowledgeProposal.deleteMany({ where: { key: { contains: TAG } } });
       await prisma.knowledgeEntry.deleteMany({ where: { key: { contains: TAG } } });
-      await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
+      if (preexistingGrant) {
+        // Restore the real grant's note (grantAutonomy upserted over it).
+        await prisma.autonomyGrant.update({
+          where: { id: preexistingGrant.id },
+          data: { note: preexistingGrant.note, grantedBy: preexistingGrant.grantedBy },
+        }).catch(() => {});
+      } else {
+        await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
+      }
     } else {
       check("queue sweep (skipped — no training operator)", true);
     }
