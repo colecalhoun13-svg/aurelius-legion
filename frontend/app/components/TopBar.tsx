@@ -78,7 +78,10 @@ export default function TopBar() {
       },
     });
   }
-  const taskM = raw.match(/^task[:\s]\s*(.+)$/i);
+  // Colon REQUIRED (post-sweep council): "task priorities for tomorrow?" is a
+  // question for the brain, not an order — a bare space must never hijack
+  // Enter into a real action.
+  const taskM = raw.match(/^task:\s*(.+)$/i);
   if (taskM?.[1]) {
     const title = taskM[1].trim();
     cmds.push({
@@ -93,7 +96,7 @@ export default function TopBar() {
       },
     });
   }
-  const missionM = raw.match(/^mission[:\s]\s*(.+)$/i);
+  const missionM = raw.match(/^mission:\s*(.+)$/i);
   if (missionM?.[1]) {
     const objective = missionM[1].trim();
     cmds.push({

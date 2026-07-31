@@ -44,22 +44,29 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
   const now = Date.now();
   const result: QueueSweepResult = { applied: 0, proposalsExpired: 0, noticesExpired: 0, decisionsExpired: 0, missionsArchived: 0 };
 
+  // The keyhole-eligibility predicate, shared by the apply pass AND the
+  // expiry exclusion below (post-sweep council: without the exclusion, night
+  // one applied 25 and expired the rest of the eligible backlog unapplied —
+  // the two policies in one function defeated each other).
+  const ELIGIBLE = {
+    scope: { notIn: ["autonomy", "persona"] }, // hard rule 1 + one voice
+    OR: [
+      { origin: { in: ["research", "ingestion"] } },
+      // Backlog rows predate the origin column — the research engine's
+      // deterministic rationale prefix is the provable marker. Anything
+      // unprovable stays for Cole's eyes (or expiry).
+      { origin: null as string | null, rationale: { startsWith: "Research-derived from query:" } },
+    ],
+  };
+  let grantLive = false;
+
   // ── 1. Keyhole backlog — only when Cole's grant is live ──────────────
   try {
     const { decideAction } = await import("../autonomy/grants.ts");
-    if ((await decideAction("knowledge.apply_proposal")).finalize) {
+    grantLive = (await decideAction("knowledge.apply_proposal")).finalize;
+    if (grantLive) {
       const eligible = await prisma.knowledgeProposal.findMany({
-        where: {
-          status: "pending",
-          scope: { notIn: ["autonomy", "persona"] }, // hard rule 1 + one voice
-          OR: [
-            { origin: { in: ["research", "ingestion"] } },
-            // Backlog rows predate the origin column — the research engine's
-            // deterministic rationale prefix is the provable marker. Anything
-            // unprovable stays for Cole's eyes (or expiry).
-            { origin: null, rationale: { startsWith: "Research-derived from query:" } },
-          ],
-        },
+        where: { status: "pending", ...ELIGIBLE },
         orderBy: { createdAt: "asc" },
         take: KEYHOLE_CAP_PER_SWEEP,
       });
@@ -84,7 +91,10 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
           });
           if (res.finalized) result.applied++;
         } catch (err) {
-          console.warn(`[queueSweep] backlog apply failed for ${p.id} (stays pending):`, (err as any)?.message ?? err);
+          // "claim lost" = someone else resolved it (fine, no receipt filed);
+          // a receipt-write failure means it APPLIED without a receipt — the
+          // executor already logged the reconstruction payload.
+          console.warn(`[queueSweep] backlog apply for ${p.id} did not complete cleanly:`, (err as any)?.message ?? err);
         }
       }
     }
@@ -93,10 +103,17 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
   }
 
   // ── 2. Proposal expiry ───────────────────────────────────────────────
+  // While the grant is live, keyhole-eligible rows are EXCLUDED from expiry:
+  // they're queued for the 25/night trickle, not clutter. Grant revoked →
+  // they age out like everything else.
   try {
     const cutoff = new Date(now - PROPOSAL_EXPIRY_DAYS * 86400_000);
     const expired = await prisma.knowledgeProposal.updateMany({
-      where: { status: "pending", createdAt: { lt: cutoff } },
+      where: {
+        status: "pending",
+        createdAt: { lt: cutoff },
+        ...(grantLive ? { NOT: ELIGIBLE } : {}),
+      },
       data: { status: "expired", resolvedAt: new Date() },
     });
     result.proposalsExpired = expired.count;
@@ -109,6 +126,10 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
     const stale = await prisma.bridgeSignal.findMany({
       where: {
         status: { in: ["pending", "surfaced"] },
+        // Critical never auto-expires (post-sweep council): the boot reaper's
+        // "may have already shipped — verify before re-confirming" warnings
+        // must outlive any clock; only Cole closes those.
+        severity: { not: "critical" },
         createdAt: { lt: new Date(now - NOTICE_EXPIRY_DAYS * 86400_000) },
       },
       select: { id: true, createdAt: true, actions: true },
@@ -165,6 +186,10 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
           domain: "personal",
           sourceType: "queue_sweep",
           severity: "info",
+          // A receipt, not a decision: pre-acknowledged so the clutter
+          // sweep's own digest never inflates the needs-you bell it exists
+          // to protect (post-sweep council). It stays on the record.
+          status: "acknowledged",
           title: `Queue swept: ${result.applied} applied under your grant · ${result.proposalsExpired + result.noticesExpired + result.decisionsExpired} expired`,
           body:
             `${result.applied} eligible proposal(s) auto-applied through the knowledge keyhole (receipts + undo on the Bridge).\n` +

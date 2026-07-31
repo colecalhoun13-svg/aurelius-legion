@@ -193,10 +193,14 @@ then close with a single directive sentence. Under 180 words. No headers, no bul
       orderBy: { firedAt: "desc" },
       select: { outputStructured: true },
     });
-    const committed = (lastDebrief?.outputStructured as any)?.tomorrowStarts as
-      | { title: string; taskId: string }
-      | undefined;
-    if (committed?.taskId) {
+    const structured = lastDebrief?.outputStructured as any;
+    const committed = structured?.tomorrowStarts as { title: string; taskId: string } | undefined;
+    // Same-night guard (post-sweep council): a 21:45 "brief me" tap must not
+    // confront a commitment made fifteen minutes earlier FOR TOMORROW. The
+    // debrief stores its local date — only confront commitments from a
+    // PRIOR day.
+    const commitmentIsTonights = typeof structured?.date === "string" && structured.date >= today.date;
+    if (committed?.taskId && !commitmentIsTonights) {
       const task = await prisma.task.findUnique({
         where: { id: committed.taskId },
         select: { status: true, scheduledFor: true },
@@ -231,7 +235,11 @@ then close with a single directive sentence. Under 180 words. No headers, no bul
 // Wraps the deterministic nightly pulse (gap math) and voices the close.
 
 export async function generateNightlyDebrief(dateStr?: string) {
-  const pulse = await runNightlyPulse(dateStr);
+  // OPERATOR-LOCAL date, always (post-sweep council): at 21:30 Phoenix the
+  // UTC date has already rolled — the default UTC date made listHabits
+  // window TOMORROW (every streak read "unbroken" → nightly false alarms)
+  // and shifted every date-keyed line by a day.
+  const pulse = await runNightlyPulse(dateStr ?? operatorToday());
 
   const skeleton = [
     `Done today: ${pulse.doneToday} · left open: ${pulse.openToday} · overdue: ${pulse.overdue}`,
@@ -239,27 +247,36 @@ export async function generateNightlyDebrief(dateStr?: string) {
     pulse.missedHabits.length > 0 ? `Habits missed: ${pulse.missedHabits.join(", ")}` : "All habits hit.",
   ].join("\n");
 
+  // (The voice pass no longer narrates "how tomorrow starts" — the
+  // deterministic footers below own tomorrow, so one artifact can't state
+  // it three ways and disagree with itself.)
   const debrief = await voiceOver(
     skeleton,
     `Write Cole's nightly debrief from the ground truth below. Honest, no flattery:
-name what moved and what didn't, one observation about the pattern if there is one,
-and one sentence on how tomorrow starts. Under 120 words.`
+name what moved and what didn't, and one observation about the pattern if
+there is one. Under 100 words.`
   );
 
   // ── TOMORROW-WATCH (alignment council): tomorrow's shape, deterministic,
   // spoken tonight while tonight can still fix it. Rides as a footer so the
   // voice pass's word budget can never compress it away.
   const footerLines: string[] = [];
+  // Tomorrow = the day after the OPERATOR-LOCAL date, found by key — not
+  // days[1], which at 21:30 Phoenix (UTC already rolled) was the day AFTER
+  // tomorrow (post-sweep council). Noon-UTC anchor keeps +24h on the next
+  // local day for any timezone within ±12h.
+  const tmStr = new Date(new Date(`${pulse.date}T12:00:00.000Z`).getTime() + 86400_000)
+    .toISOString()
+    .slice(0, 10);
   try {
     const { detectOverload } = await import("../planning/tools.ts");
     const overload = await detectOverload();
-    const tm = overload.days[1];
+    const tm = overload.days.find((d) => d.date === tmStr);
     if (tm && tm.overloaded) {
       footerLines.push(`Tomorrow holds ${tm.due} due against capacity ${tm.capacity} — tonight is when to cut.`);
     } else if (tm && tm.due > 0) {
       footerLines.push(`Tomorrow: ${tm.due} due, capacity ${tm.capacity}.`);
     }
-    const tmStr = tm?.date ?? new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
     const firstEvent = await prisma.calendarEvent.findFirst({
       where: { startAt: { gte: new Date(`${tmStr}T00:00:00.000Z`), lte: new Date(`${tmStr}T23:59:59.999Z`) } },
       orderBy: { startAt: "asc" },
@@ -313,18 +330,29 @@ and one sentence on how tomorrow starts. Under 120 words.`
     const { listHabits } = await import("../productivity/service.ts");
     const habits = await listHabits(pulse.date);
     const atRisk = (habits as any[]).filter((h) => h.streak >= 7 && !h.doneToday);
+    // Local midnight tonight, computed from the operator clock — the UTC-keyed
+    // "${date}T23:59Z" was 16:59 Phoenix, so the urgency window never applied
+    // and "breaks at midnight" pointed at the wrong midnight (post-sweep).
+    const nowLocal = new Date().toLocaleTimeString("en-GB", {
+      hour: "2-digit", minute: "2-digit", hour12: false,
+      timeZone: process.env.AURELIUS_TZ?.trim() || undefined,
+    });
+    const minutesLeftToday = 24 * 60 - (Number(nowLocal.slice(0, 2)) * 60 + Number(nowLocal.slice(3, 5)));
+    const midnight = new Date(Date.now() + minutesLeftToday * 60_000);
     for (const h of atRisk.slice(0, 3)) {
+      // One fire per nightly cycle: a 20h window is TZ-proof (yesterday's
+      // 21:30 sentinel is 24h out), and the quoted-name-plus-dash match
+      // can't collide "Read" with "Read fiction".
       const already = await prisma.bridgeSignal.findFirst({
         where: {
           sourceType: "streak_sentinel",
-          title: { contains: h.name },
-          createdAt: { gte: new Date(`${pulse.date}T00:00:00.000Z`) },
+          title: { contains: `"${h.name}" —` },
+          createdAt: { gte: new Date(Date.now() - 20 * 3600_000) },
         },
         select: { id: true },
       });
       if (already) continue;
       const { surfaceSignal } = await import("../core/bridge.ts");
-      const midnight = new Date(`${pulse.date}T23:59:00.000Z`);
       await surfaceSignal({
         kind: "gap_alert",
         domain: "personal",

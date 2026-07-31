@@ -578,7 +578,7 @@ model Mission {
   operatorName String? // lens the mission runs under (strategy default)
   origin       String    @default("cole") // "cole" | "aurelius_proposed" | "schedule"
   priority     String    @default("normal") // "low" | "normal" | "high"
-  status       String    @default("proposed") // "proposed" | "planned" | "running" | "completed" | "failed" | "cancelled"
+  status       String    @default("proposed") // "proposed" | "planned" | "running" | "completed" | "failed" | "cancelled" | "archived" (14d-ignored proposal, may re-propose)
   planSummary  String? // one-line restatement of the approach
   report       String? // final report (markdown)
   corpusDocId  String? // report's home in the second brain

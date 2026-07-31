@@ -101,6 +101,12 @@ export default function TracesPanel() {
         <p className="text-xs text-neutral-400">
           Showing threads for <span className="text-aurelius-gold">{jobFilter.replace(/_/g, " ")}</span>{" "}
           <button onClick={() => setJobFilter(null)} className="text-neutral-500 hover:text-aurelius-gold ml-1">✕ clear</button>
+          {threads &&
+            threads.filter((t) => t.label.toLowerCase().replace(/[^a-z0-9]/g, "").includes(jobFilter.toLowerCase().replace(/[^a-z0-9]/g, ""))).length === 0 && (
+              <span className="block mt-1 text-neutral-600 italic">
+                No threads for this job in the recent window — weekly jobs often scroll out of the last 25.
+              </span>
+            )}
         </p>
       )}
 

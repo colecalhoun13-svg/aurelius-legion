@@ -581,7 +581,10 @@ export function riskLineFrom(
   } else if (typeof today.stats.followThrough === "number" && today.stats.followThrough < 50) {
     biggestRisk = `Follow-through is ${today.stats.followThrough}% this week — you're stating more than you're finishing. Pick fewer, finish them.`;
   } else if (overdueTotal > 0) {
-    biggestRisk = `1 task is overdue: "${today.overdue[0].title}" — close it before it becomes a habit.`;
+    biggestRisk =
+      overdueTotal === 1
+        ? `1 task is overdue: "${today.overdue[0].title}" — close it before it becomes a habit.`
+        : `${overdueTotal} tasks are overdue — oldest: "${today.overdue[0].title}". Close them before they become a habit.`;
   } else if (today.tasks.length === 0 && today.plan?.focus == null) {
     biggestRisk = `No focus set and nothing on the deck — the risk is drift. Name one thing that matters today.`;
   } else {
