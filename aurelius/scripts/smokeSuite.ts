@@ -1067,6 +1067,76 @@ async function main() {
     }
   }
 
+  console.log("── queue sweep: backlog keyhole + expiry (Cole's ruling on the 365) ──");
+  {
+    const { registerAllActions } = await import("../autonomy/registerActions.ts");
+    registerAllActions();
+    const { grantAutonomy, revokeAutonomy } = await import("../autonomy/grants.ts");
+    const { sweepQueues } = await import("../knowledge/queueSweep.ts");
+    const qsOp = await resolveOperatorId("training");
+    if (qsOp) {
+      // A research-born proposal filed BEFORE the grant exists = the backlog.
+      const backlogProp = await createProposal({
+        operatorId: qsOp, operatorName: "training", intentClassId: "rep_band_update",
+        scope: "smoke_qsweep", key: `${TAG}_backlog`, proposedValue: "backlog value",
+        rationale: "smoke", coleNaturalLanguage: "smoke", origin: "research",
+      });
+      // A chat-born proposal 40 days stale → expiry, never keyhole.
+      const staleProp = await createProposal({
+        operatorId: qsOp, operatorName: "training", intentClassId: "rep_band_update",
+        scope: "smoke_qsweep", key: `${TAG}_stale`, proposedValue: "v",
+        rationale: "smoke", coleNaturalLanguage: "smoke", origin: "chat",
+      });
+      await prisma.knowledgeProposal.update({
+        where: { id: staleProp.id }, data: { createdAt: new Date(Date.now() - 40 * 86400_000) },
+      });
+      // A 20-day notice (no confirm) → expires; a 20-day DECISION → survives.
+      const staleNotice = await prisma.bridgeSignal.create({
+        data: {
+          kind: "background_result", domain: "personal", sourceType: "smoke_qsweep",
+          severity: "notice", title: `${TAG} stale notice`, body: "smoke",
+          createdAt: new Date(Date.now() - 20 * 86400_000),
+        },
+      });
+      const youngDecision = await prisma.bridgeSignal.create({
+        data: {
+          kind: "action_proposal", domain: "personal", sourceType: "smoke_qsweep",
+          severity: "attention", title: `${TAG} young decision`, body: "smoke",
+          actions: [{ label: "Confirm", action: "confirm_action", payload: { actionClass: "x" } }],
+          createdAt: new Date(Date.now() - 20 * 86400_000),
+        },
+      });
+
+      await grantAutonomy({ actionClass: "knowledge.apply_proposal", note: "smoke" });
+      await sweepQueues();
+      await revokeAutonomy("knowledge.apply_proposal");
+
+      const backlogAfter = await prisma.knowledgeProposal.findUnique({ where: { id: backlogProp.id } });
+      check("sweep applies the pre-grant research backlog through the keyhole", backlogAfter?.status === "confirmed");
+      const backlogEntry = await prisma.knowledgeEntry.findFirst({
+        where: { operatorId: qsOp, scope: "smoke_qsweep", key: `${TAG}_backlog` },
+      });
+      check("backlog apply lands with honest provenance", backlogEntry?.sourceType === "research_ingestion");
+      const staleAfter = await prisma.knowledgeProposal.findUnique({ where: { id: staleProp.id } });
+      check("30-day-stale proposal expires (not applied, not denied)", staleAfter?.status === "expired");
+      const noticeAfter = await prisma.bridgeSignal.findUnique({ where: { id: staleNotice.id } });
+      const decisionAfter = await prisma.bridgeSignal.findUnique({ where: { id: youngDecision.id } });
+      check(
+        "14-day notice expires; a 20-day live decision survives",
+        noticeAfter?.status === "expired" && decisionAfter?.status === "pending"
+      );
+
+      // cleanup
+      await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["smoke_qsweep", "queue_sweep"] } } });
+      await prisma.bridgeSignal.deleteMany({ where: { sourceId: { in: [backlogProp.id, staleProp.id] } } });
+      await prisma.knowledgeProposal.deleteMany({ where: { key: { contains: TAG } } });
+      await prisma.knowledgeEntry.deleteMany({ where: { key: { contains: TAG } } });
+      await prisma.autonomyGrant.deleteMany({ where: { note: "smoke" } });
+    } else {
+      check("queue sweep (skipped — no training operator)", true);
+    }
+  }
+
   // ── command deck: the confronting home screen (master-class #5) ──
   console.log("── command deck: biggest-risk line + inline bridge ──");
   const deck = await getDeck();

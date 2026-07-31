@@ -1586,6 +1586,16 @@ scheduleNamed("db_backup", "0 2 * * *", "nightly database backup", () => {
     return runDbBackup();
   }).catch((err) => console.error("[backup] failed:", err));
 });
+// Queue sweep — nightly 21:15: the pending queue maintains itself. Backlog
+// proposals born keyhole-eligible apply under the grant (receipts + undo),
+// proposals unanswered 30 days expire, stale Bridge notices clear at 14.
+// A queue that only grows is a backlog wearing a badge (Cole's ruling).
+scheduleNamed("queue_sweep", "15 21 * * *", "queue sweep", () => {
+  runTraced("schedule", "queue_sweep", async () => {
+    const { sweepQueues } = await import("./knowledge/queueSweep.ts");
+    return sweepQueues();
+  }).catch((err) => console.error("[queueSweep] failed:", err));
+});
 // Curriculum ingest — Sunday 22:00: Aurelius studies the next unit of each
 // field's canon (strategy → Sun Tzu, Musashi, …; wealth → Buffett, Taleb, …;
 // identity → the Stoics), ingests the synthesis into the second brain, and

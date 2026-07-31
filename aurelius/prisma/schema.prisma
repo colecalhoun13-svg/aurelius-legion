@@ -547,7 +547,11 @@ model KnowledgeProposal {
   priorValue          Json?
   rationale           String    @default("")
   coleNaturalLanguage String    @default("")
-  status              String    @default("pending") // "pending" | "confirmed" | "denied" | "corrected"
+  status              String    @default("pending") // "pending" | "confirmed" | "denied" | "corrected" | "expired"
+  // Where the proposal was born ("chat"|"research"|"ingestion"|"observer"|
+  // "freshness") — decides keyhole eligibility, incl. for the nightly
+  // queue sweep. Null = predates the column (backlog rows).
+  origin              String?
   cacheEntryId        String?
   createdAt           DateTime  @default(now())
   resolvedAt          DateTime?
