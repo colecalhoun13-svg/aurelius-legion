@@ -60,6 +60,12 @@ const JOBS: CatchUpJob[] = [
     run: async () => (await import("../planning/tools.ts")).runMiddayCheck(),
   },
   {
+    name: "queue_sweep",
+    hour: 21,
+    minute: 15,
+    run: async () => (await import("../knowledge/queueSweep.ts")).sweepQueues().then(() => undefined),
+  },
+  {
     name: "nightly_debrief",
     hour: 21,
     minute: 30,

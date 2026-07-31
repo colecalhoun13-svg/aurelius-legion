@@ -32,7 +32,8 @@ export type ProposalStatus =
   | "pending"
   | "confirmed"
   | "denied"
-  | "corrected";
+  | "corrected"
+  | "expired"; // 30 days unanswered → the nightly queue sweep retires it
 
 export type KnowledgeProposal = {
   id: string;
@@ -106,6 +107,9 @@ export async function createProposal(
       priorValue: priorValue ?? undefined,
       rationale: input.rationale,
       coleNaturalLanguage: input.coleNaturalLanguage,
+      // Persisted so the nightly queue sweep can prove keyhole eligibility
+      // for rows the grant wasn't live to catch at creation time.
+      origin: input.origin ?? null,
     },
   });
 

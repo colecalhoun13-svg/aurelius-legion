@@ -49,6 +49,7 @@ export const ONCE_PER_DAY = new Set([
   "initiative_pulse", "midday_check", "nightly_debrief", "weekend_pulse",
   "persona_observer", "weekly_planning", "freshness_sweep", "weekly_scoreboard",
   "capability_gaps", "decision_curriculum", "curriculum_ingest", "db_backup",
+  "queue_sweep",
 ]);
 
 export function localDayKey(): string {

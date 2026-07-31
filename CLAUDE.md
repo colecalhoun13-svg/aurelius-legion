@@ -71,7 +71,9 @@ numbers are unchanged; only assembly order moved.
 
 06:00 RSS · 06:30 market pulse · 06:45 schedule-protection (acts if granted,
 else proposes) · 07:00 morning briefing · 08:00 initiative ·
-13:00 midday check (silent when on pace) · 21:30 debrief · Sun 09:00 weekend
+13:00 midday check (silent when on pace) · 21:15 queue sweep (keyhole
+backlog applies under grant; proposals expire at 30d, stale notices at
+14d) · 21:30 debrief · Sun 09:00 weekend
 sweep → wiki · Sun 17:00 persona observer · Sun 18:00 weekly planning ·
 Sun 19:00 freshness sweep ·
 Sun 19:30 capability gaps (repeated tool failures → one deduped fix signal) ·
