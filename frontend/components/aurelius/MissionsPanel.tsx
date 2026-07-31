@@ -36,6 +36,7 @@ const STATUS_COLOR: Record<string, string> = {
   completed: "text-emerald-400",
   failed: "text-red-400",
   cancelled: "text-neutral-600",
+  archived: "text-neutral-600", // unanswered 14 days → the sweep retired it
 };
 
 const STEP_GLYPH: Record<string, string> = { recall: "❈", research: "☄", synthesize: "✒" };
@@ -276,14 +277,17 @@ export default function MissionsPanel() {
         )}
       </section>
 
+      {/* The old hardcoded 3-item "Pulse" card was a static under-truth about
+          a ~16-job spine (alignment council) — the honest instrument is the
+          spine-health grid, one tab over. Point there; state truth nowhere twice. */}
       <section className="aurelius-panel-frame p-6">
-        <h2 className="aurelius-heading text-lg mb-3">The Pulse</h2>
-        <ul className="text-sm text-neutral-400 space-y-1.5">
-          <li>• <span className="text-neutral-300">Morning briefing</span> — 07:00 · the day opens with a push, not a blank page</li>
-          <li>• <span className="text-neutral-300">Nightly debrief</span> — 21:30 · intent vs action, voiced honestly</li>
-          <li>• <span className="text-neutral-300">Weekend research</span> — Sun 09:00 · ingests the field, proposes knowledge updates</li>
-        </ul>
-        <p className="text-xs text-neutral-600 mt-3">Schedules run inside the backend server.</p>
+        <h2 className="aurelius-heading text-lg mb-2">The Pulse</h2>
+        <p className="text-sm text-neutral-400">
+          The scheduled spine — briefings, sweeps, the Sunday learning cycle — runs inside the backend around the clock.{" "}
+          <a href="/aurelius?tab=traces" className="text-aurelius-gold hover:underline underline-offset-2">
+            Watch every job fire, day by day →
+          </a>
+        </p>
       </section>
     </main>
   );

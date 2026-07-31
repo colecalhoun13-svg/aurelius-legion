@@ -24,7 +24,7 @@ function label(name: string): string {
   return name.replace(/_/g, " ");
 }
 
-export default function SpineHealth() {
+export default function SpineHealth({ onPick }: { onPick?: (job: string) => void }) {
   const [feed, setFeed] = useState<SpineFeed | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -82,11 +82,15 @@ export default function SpineHealth() {
                 <td className="text-[10px] text-neutral-500 pr-3 whitespace-nowrap leading-none">{label(j.name)}</td>
                 {feed.days.map((d) => {
                   const kind = dotFor(j, d);
+                  // A dot is a DOOR, not a dot (alignment council): tap a
+                  // fired/failed cell and land on that job's trace threads.
                   return (
                     <td key={d} className="px-[5px]">
-                      <span
-                        className={`block w-2 h-2 rounded-[3px] ${DOT[kind]}`}
-                        title={`${label(j.name)} · ${d} · ${kind === "blank" ? "not scheduled" : kind}`}
+                      <button
+                        onClick={() => onPick?.(j.name)}
+                        disabled={!onPick || kind === "blank"}
+                        className={`block w-2 h-2 rounded-[3px] ${DOT[kind]} ${onPick && kind !== "blank" ? "cursor-pointer hover:scale-150 transition-transform" : "cursor-default"}`}
+                        title={`${label(j.name)} · ${d} · ${kind === "blank" ? "not scheduled" : kind}${onPick && kind !== "blank" ? " — tap for its traces" : ""}`}
                       />
                     </td>
                   );

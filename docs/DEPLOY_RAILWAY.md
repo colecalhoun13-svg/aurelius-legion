@@ -124,8 +124,14 @@ is the live confirmation.)*
 
 ## The first-week soak (this is the point)
 
-- Day 1: 07:00 briefing arrives on Telegram with the codespace **closed**.
-- Any day: `Aurelius → Traces` shows scheduled runs firing on time.
+- Day 1: 07:00 briefing arrives on Telegram with the codespace **closed** —
+  carrying the risk line, and holding you to last night's "tomorrow starts
+  with" if you dropped it.
+- Any night: the 21:15 queue sweep files its digest when it worked (backlog
+  applied under your grant, stale items expired) — the pending count starts
+  falling on its own.
+- Any day: `Aurelius → Traces` shows scheduled runs firing on time (the
+  spine-health grid — every dot a day, tap one for its thread).
 - Sunday: the full learning loop (persona 17:00 → planning 18:00 → freshness
   19:00 → gaps 19:30 → scoreboard 20:00 → decision curriculum 21:00 →
   curriculum ingest 22:00) runs unattended.

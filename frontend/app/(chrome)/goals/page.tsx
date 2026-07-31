@@ -9,7 +9,23 @@ import { useSearchParams } from "next/navigation";
 import ProjectsSection from "../../../components/ProjectsSection";
 import ScoreboardPanel from "../../../components/goals/ScoreboardPanel";
 
-type Goal = { id: string; name: string; domain: string; horizon: string; progressPct: number; measure: any };
+type Goal = {
+  id: string; name: string; domain: string; horizon: string; progressPct: number; measure: any;
+  targetDate?: string | null; createdAt?: string;
+};
+
+// Pace vs the clock — the Scoreboard's judgment, moved to where the +1
+// happens (alignment council: anticipation belongs at the point of action).
+function paceNote(g: Goal): { text: string; cls: string } | null {
+  if (!g.targetDate || !g.createdAt) return null;
+  const total = new Date(g.targetDate).getTime() - new Date(g.createdAt).getTime();
+  if (total <= 0) return null;
+  const timePct = Math.min(100, Math.round(((Date.now() - new Date(g.createdAt).getTime()) / total) * 100));
+  const pct = g.progressPct ?? 0;
+  return pct >= timePct
+    ? { text: `on pace — ${pct}% done, ${timePct}% of time`, cls: "text-emerald-400" }
+    : { text: `behind — ${pct}% done, ${timePct}% of time`, cls: "text-amber-300" };
+}
 
 function localDate(): string {
   const d = new Date();
@@ -89,6 +105,7 @@ function GoalsBody() {
                   <div className="h-2.5 bg-black/60 rounded-full overflow-hidden border border-aurelius-gold/15">
                     <div className="h-full rounded-full aurelius-bar-fill transition-all duration-500" style={{ width: `${g.progressPct}%` }} />
                   </div>
+                  {(() => { const p = paceNote(g); return p ? <p className={`text-[11px] mt-1 ${p.cls}`}>{p.text}</p> : null; })()}
                 </div>
               );
             })}

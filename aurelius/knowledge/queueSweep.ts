@@ -35,11 +35,14 @@ export type QueueSweepResult = {
   proposalsExpired: number;
   noticesExpired: number;
   decisionsExpired: number;
+  missionsArchived: number;
 };
+
+const MISSION_ARCHIVE_DAYS = 14;
 
 export async function sweepQueues(): Promise<QueueSweepResult> {
   const now = Date.now();
-  const result: QueueSweepResult = { applied: 0, proposalsExpired: 0, noticesExpired: 0, decisionsExpired: 0 };
+  const result: QueueSweepResult = { applied: 0, proposalsExpired: 0, noticesExpired: 0, decisionsExpired: 0, missionsArchived: 0 };
 
   // ── 1. Keyhole backlog — only when Cole's grant is live ──────────────
   try {
@@ -136,8 +139,24 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
     console.warn("[queueSweep] signal expiry failed (non-fatal):", (err as any)?.message ?? err);
   }
 
+  // ── 4. Ignored-mission archive (alignment council: an ignored proposal
+  // used to silence its own topic FOREVER — alreadyInFlight blocked
+  // re-proposal while the mission sat "proposed" and nothing ever moved it).
+  // After the Sunday second-look window, archive it: the topic may
+  // re-propose when conditions persist, and the archive is honest history,
+  // not a denial. ──────────────────────────────────────────────────────
+  try {
+    const archived = await prisma.mission.updateMany({
+      where: { status: "proposed", createdAt: { lt: new Date(now - MISSION_ARCHIVE_DAYS * 86400_000) } },
+      data: { status: "archived" },
+    });
+    result.missionsArchived = archived.count;
+  } catch (err) {
+    console.warn("[queueSweep] mission archive failed (non-fatal):", (err as any)?.message ?? err);
+  }
+
   // ── Digest — one line of receipts, only when work happened ───────────
-  const total = result.applied + result.proposalsExpired + result.noticesExpired + result.decisionsExpired;
+  const total = result.applied + result.proposalsExpired + result.noticesExpired + result.decisionsExpired + result.missionsArchived;
   if (total > 0) {
     try {
       await prisma.bridgeSignal.create({
@@ -152,7 +171,10 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
             `${result.proposalsExpired} proposal(s) expired at ${PROPOSAL_EXPIRY_DAYS} days unanswered.\n` +
             `${result.noticesExpired} stale notice(s) cleared at ${NOTICE_EXPIRY_DAYS} days.\n` +
             (result.decisionsExpired > 0
-              ? `${result.decisionsExpired} unanswered decision(s) expired at ${DECISION_EXPIRY_DAYS} days — nothing was executed.`
+              ? `${result.decisionsExpired} unanswered decision(s) expired at ${DECISION_EXPIRY_DAYS} days — nothing was executed.\n`
+              : "") +
+            (result.missionsArchived > 0
+              ? `${result.missionsArchived} unanswered mission proposal(s) archived at ${MISSION_ARCHIVE_DAYS} days — their topics may resurface if conditions persist.`
               : ""),
         },
       });
@@ -162,7 +184,7 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
   }
 
   console.log(
-    `[queueSweep] applied ${result.applied} · expired ${result.proposalsExpired} proposals, ${result.noticesExpired} notices, ${result.decisionsExpired} decisions`
+    `[queueSweep] applied ${result.applied} · expired ${result.proposalsExpired} proposals, ${result.noticesExpired} notices, ${result.decisionsExpired} decisions · archived ${result.missionsArchived} missions`
   );
   return result;
 }
