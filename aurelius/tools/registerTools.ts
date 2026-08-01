@@ -16,6 +16,7 @@ import { contentAdapter } from "./adapters/content.ts";
 import { learningAdapter } from "./adapters/learning.ts";
 import { corpusAdapter } from "./adapters/corpus.ts";
 import { selfAdapter } from "./adapters/self.ts";
+import { businessAdapter } from "./adapters/business.ts";
 
 export function registerAllTools(): void {
   registerTool(googleSheetsAdapter);
@@ -30,4 +31,5 @@ export function registerAllTools(): void {
   registerTool(learningAdapter);     // curriculum: study the canon on demand / progress
   registerTool(corpusAdapter);       // library inventory: what landed recently
   registerTool(selfAdapter);         // honest mirror: what am I doing / what did I do
+  registerTool(businessAdapter);     // the business foundation: facts, gaps, offer drafts
 }
