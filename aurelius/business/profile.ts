@@ -72,11 +72,25 @@ export const CONFIRMED_FACTS: BusinessFact[] = [
       "Held as EXPLORATION so Aurelius never speaks about it as if it exists. Online changes the business shape (product, distribution, retention, proof) — it is a separate decision, not an extension of in-person.",
   },
   {
+    key: "market_posture",
+    value:
+      "Cole is NOT a promise/guarantee coach and does not want to be. His posture is the standard-setter: 'this is what's required for physical competency, to stay uninjured, and to be able to achieve what you're after.' He states the requirement and holds it — he does not guarantee an outcome, because the athlete owns the outcome.",
+    note:
+      "Cole's own words, and the correct read of his whole method. Guaranteeing outcomes would CONTRADICT the competency edge — it moves agency back onto the coach, when the entire point is transferring it to the athlete. Never write him promise-style marketing ('we'll get you X'); write requirement and capability ('here's what it takes, here's why, here's how you'll know'). Trade-off he should know and has accepted: this converts slower than guarantee marketing and creates less urgency, but it earns better-fit athletes, survives contact with reality, and carries no blame risk when a coach's decision goes the other way.",
+  },
+  {
     key: "online_proof_model",
     value:
-      "Cole's ruling: an online offer sells OUTCOMES, not numbers. The test battery stays the local proof model (Cole holds the timer, the numbers are trustworthy). Online promises what the athlete and parent can verify themselves without instruments — made the team, earned the starting spot, played a full season healthy, moved to a more demanding role, and knows how to train without being told.",
+      "The test battery stays the LOCAL proof model — Cole holds the timer, so those numbers are trustworthy and belong to the in-person offer. Online is not sold on numbers. What travels online is capability and requirement, tracked through the athlete's own sheet numbers and the videos they send in.",
     note:
-      "Cole's own call, and it resolves the online measurement problem rather than working around it. Two proof models for two channels, one method underneath: numbers where they're trustworthy, outcomes where they're self-evident. It also lands closer to the buyer's real job than numbers ever did — a parent doesn't buy 0.15s, they buy their kid making varsity. And Cole's differentiator (an athlete who understands and can leverage their own body) is itself an outcome, not a metric, so online finally sells the actual edge.",
+      "Refined by Cole after the first pass: he rejected outcome-PROMISES as not who he is (see market_posture), so online sells the requirement and the competency, not a guaranteed result. Two proof models, one method: coach-measured numbers locally, athlete-recorded numbers and video remotely.",
+  },
+  {
+    key: "progress_tracking_online",
+    value:
+      "For remote athletes, Cole would track progress through the numbers going up on their sheet and the videos they send him. Athlete-recorded, coach-reviewed.",
+    note:
+      "The numbers don't vanish online — their JOB changes. They stop being the sales claim and become (a) Cole's coaching instrument and (b) the athlete's own feedback loop. That second one is the method working: an athlete watching their own numbers is building exactly the self-awareness Cole is trying to transfer. Marketing must not quote self-recorded times as proof (measurement_constraint), but coaching absolutely uses them.",
   },
   {
     key: "measurement_constraint",
@@ -162,20 +176,12 @@ export const OPEN_QUESTIONS: OpenQuestion[] = [
     priority: 8,
   },
   {
-    key: "outcomes_owned",
+    key: "the_standard",
     question:
-      "Online sells outcomes — so which ones will you actually stand behind? Making the team, earning a starting spot, a healthy full season, training without being told? Name the one or two you'd put your name on.",
+      "You're a standard-setter, not a promise guy — so say the standard out loud. What does an athlete have to be able to DO to be physically competent and hard to injure in their sport? Three or four things is plenty.",
     blocks:
-      "The online promise itself. An outcome offer needs a specific outcome, and Cole has to choose which ones he's willing to be accountable for.",
+      "The entire message. A requirement-based offer lives or dies on the requirement being specific: 'get stronger' is nothing; 'decelerate under control off either leg' is a standard an athlete can be held to and a parent can understand.",
     priority: 9,
-  },
-  {
-    key: "outcome_checkin",
-    question:
-      "If the promise is an outcome, you have to know whether it happened. How would you find out — a season-end check-in, a message when they get the news, a parent call?",
-    blocks:
-      "Whether the online offer can prove itself. An outcome nobody records is a promise that never becomes proof for the next buyer.",
-    priority: 10,
   },
 ];
 
