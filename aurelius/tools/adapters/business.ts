@@ -35,9 +35,16 @@ export const businessAdapter: ToolAdapter = {
     {
       name: "draft_offer",
       description:
-        "Draft an offer from the confirmed facts and file it as a proposal for Cole to confirm/correct/deny. Refuses honestly (naming what to ask first) while blocking gaps are open.",
+        "Draft an offer from the confirmed facts and file it as a proposal for Cole to confirm/correct/deny. Unknowns are marked as assumptions in the draft — never a reason to refuse.",
       dataSchema: "{}",
       example: "[TOOL: tool=business action=draft_offer data={}]",
+    },
+    {
+      name: "options",
+      description:
+        "THE DEFAULT for any marketing/growth/positioning question. Runs live research, then gives THREE genuinely different approaches grounded in Cole's facts — what each demands, where each fails, how to test it cheap. Deliberately does not converge on one recommendation: Cole decides, Aurelius informs. Use this instead of prescribing an answer.",
+      dataSchema: '{ "question": string (what he\'s weighing — e.g. "how do I get more high school athletes into the gym") }',
+      example: '[TOOL: tool=business action=options data={"question": "how should I get more varsity athletes in the door"}]',
     },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
@@ -76,6 +83,18 @@ export const businessAdapter: ToolAdapter = {
         return {
           ok: true,
           output: { offer: r.proposal, proposalId: r.proposalId, summary: "Offer drafted — it's on the Bridge for your confirm, correction, or bin." },
+        };
+      }
+      if (action === "options") {
+        const r: any = await P.marketingOptions((data?.question ?? "").toString());
+        if (!r?.ok) return { ok: false, output: null, error: r?.error ?? "could not explore that" };
+        return {
+          ok: true,
+          output: {
+            options: r.options,
+            grounding: r.grounding,
+            summary: `Three approaches, ${r.grounding === "external" ? "research-grounded" : "from Aurelius's own knowledge (no external source retrieved)"} — Cole's call.`,
+          },
         };
       }
       return { ok: false, output: null, error: `unknown business action: ${action}` };

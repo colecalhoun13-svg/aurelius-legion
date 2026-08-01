@@ -124,21 +124,15 @@ export async function businessContextBlock(): Promise<string> {
   return lines.join("\n");
 }
 
-/** Where the business actually stands — facts, gaps, and what's blocked. */
+/** Where the business actually stands — facts, and what would sharpen them. */
 export async function businessSnapshot() {
   const [facts, gaps] = await Promise.all([knownFacts(), openGaps()]);
   return {
     facts,
-    openGaps: gaps.map((g) => ({ key: g.key, question: g.question, blocks: g.blocks })),
-    readyForOffer: gaps.filter((g) => g.priority <= 3).length === 0,
+    openGaps: gaps.map((g) => ({ key: g.key, question: g.question, sharpens: g.blocks })),
     summary:
-      `${facts.length} confirmed fact(s), ${gaps.length} open question(s). ` +
-      (gaps.filter((g) => g.priority <= 3).length === 0
-        ? "Enough is known to draft a real offer."
-        : `Offer construction is blocked until these are answered: ${gaps
-            .filter((g) => g.priority <= 3)
-            .map((g) => g.key)
-            .join(", ")}.`),
+      `${facts.length} confirmed fact(s), ${gaps.length} thing(s) that would sharpen the picture. ` +
+      "Work proceeds either way — unknowns are marked as assumptions, never used as a reason to stall.",
   };
 }
 
@@ -151,18 +145,17 @@ export async function businessSnapshot() {
 export async function proposeOffer(): Promise<
   { ok: true; proposal: string; proposalId?: string } | { ok: false; error: string; askFirst?: string[] }
 > {
+  // No gate (Cole's modularity ruling): unknowns get marked as assumptions
+  // in the draft, they never stop the work. The open questions ride along
+  // so the model knows exactly what it's assuming.
   const snap = await businessSnapshot();
-  if (!snap.readyForOffer) {
-    return {
-      ok: false,
-      error: snap.summary,
-      askFirst: snap.openGaps.filter((g) => OPEN_QUESTIONS.find((q) => q.key === g.key)!.priority <= 3).map((g) => g.question),
-    };
-  }
   const opId = await businessOperatorId();
   if (!opId) return { ok: false, error: "no business operator" };
 
   const factBlock = snap.facts.map((f) => `- ${f.key}: ${f.value}`).join("\n");
+  const unknownBlock = snap.openGaps.length
+    ? `\n\n═══ NOT KNOWN — assume, mark it, and move on ═══\n${snap.openGaps.map((g) => `- ${g.key}`).join("\n")}`
+    : "";
   const response = await runLLM({
     taskType: "chat",
     operators: { primary: "business", secondaries: ["content"] },
@@ -188,7 +181,7 @@ WHY HIM — the one line no competing gym can copy
 ASSUMPTIONS — anything you had to guess
 
 ═══ CONFIRMED FACTS ═══
-${factBlock}
+${factBlock}${unknownBlock}
 `.trim(),
   });
 
@@ -219,4 +212,78 @@ ${factBlock}
     console.warn("[business] offer proposal filing failed (draft still returned):", (err as any)?.message ?? err);
   }
   return { ok: true, proposal: clean, proposalId };
+}
+
+/**
+ * MARKETING OPTIONS — the anti-funnel (Cole's modularity ruling).
+ *
+ * Not "here is your offer." Several genuinely different approaches to a
+ * marketing question, each grounded in live research AND in Cole's
+ * confirmed facts, each with what it would actually demand of him and
+ * where it fails. He picks, adapts, or bins — the point is an informed
+ * decision, not a prescribed path.
+ *
+ * Research-first by design: it runs the research lane on the question so
+ * the options carry evidence rather than the model's priors, and says so
+ * honestly when nothing external came back.
+ */
+export async function marketingOptions(
+  question: string
+): Promise<{ ok: boolean; options?: string; grounding?: string; error?: string }> {
+  const q = question.trim();
+  if (!q) return { ok: false, error: "ask a marketing question to explore" };
+
+  // Live research first — the whole point is informed, not improvised.
+  let evidence = "";
+  let grounding = "none";
+  try {
+    const { runResearch } = await import("../research/researchEngine.ts");
+    const res: any = await runResearch({
+      query: `${q} — for a youth/high-school athletic performance coach growing a local in-person practice`,
+      operator: "business",
+      depth: "deep",
+      subject: q.slice(0, 80),
+      kind: "topic",
+    });
+    const body = [res?.synthesis, ...(res?.insights ?? [])].filter(Boolean).join("\n\n");
+    if (body && !engineUnavailableText(body)) {
+      evidence = body.slice(0, 6000);
+      grounding = res?.grounding ?? "internal";
+    }
+  } catch (err) {
+    console.warn("[business] research pass failed — options will be model-only:", (err as any)?.message ?? err);
+  }
+
+  const snap = await businessSnapshot();
+  const factBlock = snap.facts.map((f) => `- ${f.key}: ${f.value}`).join("\n");
+
+  const response = await runLLM({
+    taskType: "chat",
+    operators: { primary: "business", secondaries: ["content"] },
+    noReuse: true,
+    omitToolCatalog: true,
+    input: `
+Cole is thinking about: "${q}"
+
+Give him THREE genuinely different approaches — not three flavours of the same idea. He decides; you inform.
+
+For each: a name, what it actually is, why it fits (or strains against) his confirmed facts, what it would demand of him in time/skill/money, where it typically fails, and the smallest way to test it cheaply.
+
+Hard rules:
+- He is a STANDARD-SETTER, not a promise/guarantee coach. Never write him guarantee-style marketing.
+- Ground claims in the research below where it applies; where you're reasoning from priors instead, say so.
+- Do not converge on a recommendation at the end. Name the trade-off he's actually choosing between and stop.
+- Under 450 words total.
+
+═══ COLE'S CONFIRMED FACTS ═══
+${factBlock}
+
+═══ RESEARCH (${grounding === "external" ? "external sources" : "no external source retrieved — model knowledge only"}) ═══
+${evidence || "(nothing retrieved)"}
+`.trim(),
+  });
+
+  const text = (response.text ?? "").trim();
+  if (!text || engineUnavailableText(text)) return { ok: false, error: "no LLM engine available" };
+  return { ok: true, options: extractDirectives(text).cleanedText || text, grounding };
 }
