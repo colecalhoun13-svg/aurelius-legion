@@ -72,6 +72,13 @@ export const CONFIRMED_FACTS: BusinessFact[] = [
       "Held as EXPLORATION so Aurelius never speaks about it as if it exists. Online changes the business shape (product, distribution, retention, proof) — it is a separate decision, not an extension of in-person.",
   },
   {
+    key: "online_proof_model",
+    value:
+      "Cole's ruling: an online offer sells OUTCOMES, not numbers. The test battery stays the local proof model (Cole holds the timer, the numbers are trustworthy). Online promises what the athlete and parent can verify themselves without instruments — made the team, earned the starting spot, played a full season healthy, moved to a more demanding role, and knows how to train without being told.",
+    note:
+      "Cole's own call, and it resolves the online measurement problem rather than working around it. Two proof models for two channels, one method underneath: numbers where they're trustworthy, outcomes where they're self-evident. It also lands closer to the buyer's real job than numbers ever did — a parent doesn't buy 0.15s, they buy their kid making varsity. And Cole's differentiator (an athlete who understands and can leverage their own body) is itself an outcome, not a metric, so online finally sells the actual edge.",
+  },
+  {
     key: "measurement_constraint",
     value:
       "The performance battery is COACH-measured in person — that's what makes the numbers trustworthy. Online, Cole can't hold the timer: the athlete would have to self-test. Broad jump and vertical survive self-testing with a strict protocol (tape measure, phone video, standardised setup). The 10-yard dash, 5-10-5 and top speed do NOT — hand-timing error (±0.2s) is larger than real improvement, so those numbers become noise without timing gates or GPS.",
@@ -155,12 +162,20 @@ export const OPEN_QUESTIONS: OpenQuestion[] = [
     priority: 8,
   },
   {
-    key: "self_test_tolerance",
+    key: "outcomes_owned",
     question:
-      "For a remote athlete: would you accept jump numbers they measure themselves (broad jump with a tape, vertical on video) as real progress markers — or does a result only count when you measured it?",
+      "Online sells outcomes — so which ones will you actually stand behind? Making the team, earning a starting spot, a healthy full season, training without being told? Name the one or two you'd put your name on.",
     blocks:
-      "The entire online proof model. If self-tested jumps count, an online offer can promise measurable progress honestly; if not, online has to sell something other than numbers.",
+      "The online promise itself. An outcome offer needs a specific outcome, and Cole has to choose which ones he's willing to be accountable for.",
     priority: 9,
+  },
+  {
+    key: "outcome_checkin",
+    question:
+      "If the promise is an outcome, you have to know whether it happened. How would you find out — a season-end check-in, a message when they get the news, a parent call?",
+    blocks:
+      "Whether the online offer can prove itself. An outcome nobody records is a promise that never becomes proof for the next buyer.",
+    priority: 10,
   },
 ];
 
