@@ -22,6 +22,18 @@ import { generateMorningBriefing } from "../rituals/engine.ts";
 import { ask } from "../corpus/ask.ts";
 import { launchMission } from "../missions/engine.ts";
 import { quickCapture, getToday } from "../productivity/service.ts";
+
+/** Headers for the bot's own loopback call into /api/aurelius.
+ *  THE LOCK APPLIES TO LOOPBACK TOO — it's an exact-path allowlist, not a
+ *  network-position rule. Without the key header an always-on deploy 401s its
+ *  own bridge and every Telegram message silently degrades to "Captured to
+ *  your inbox" (found on Cole's first Railway boot). The bot runs INSIDE the
+ *  backend process, so it reads the key from the same env the lock reads.
+ *  Exported so the smoke suite can prove the header is present. */
+export function internalApiHeaders(): Record<string, string> {
+  const key = process.env.AURELIUS_API_KEY?.trim();
+  return { "Content-Type": "application/json", ...(key ? { "x-aurelius-key": key } : {}) };
+}
 import { localClock } from "../planning/sessionPrep.ts";
 
 const API = "https://api.telegram.org";
@@ -379,12 +391,26 @@ async function handleCommand(chatId: string | number, text: string) {
         try {
           const res = await fetch(`http://localhost:${port}/api/aurelius`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: internalApiHeaders(),
             body: JSON.stringify({ message: text }),
             signal: ctrl.signal,
           });
           const data: any = await res.json().catch(() => ({}));
           reply = (data?.reply ?? "").toString().trim();
+          // Honest failure (hard rule 3): a REJECTED call is a broken bridge,
+          // not a quiet capture. Say so once, with the fix, instead of letting
+          // Cole think silent note-taking is normal behavior.
+          if (!res.ok && !reply) {
+            console.error(`[telegram] chat pipeline returned ${res.status} — bridge degraded to capture`);
+            await quickCapture({ content: text, captureContext: "telegram" });
+            await send(
+              chatId,
+              res.status === 401
+                ? "I saved that to your inbox — but my own chat pipeline refused me (401). AURELIUS_API_KEY is set and the bridge isn't sending it. Restart the backend; if it persists, the bot's loopback call needs the x-aurelius-key header."
+                : `I saved that to your inbox — but my chat pipeline answered ${res.status}, so I couldn't think about it properly. Check the backend logs.`
+            );
+            return;
+          }
         } finally {
           clearTimeout(timer);
         }
