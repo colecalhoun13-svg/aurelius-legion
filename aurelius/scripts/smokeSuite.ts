@@ -1113,6 +1113,20 @@ async function main() {
       check("snapshot reports without gating (unknowns sharpen, never block)", /never used as a reason to stall/i.test(snap.summary));
       check("no readyForOffer gate survives (Cole's modularity ruling)", !("readyForOffer" in (snap as any)));
 
+      // The research pipe must aim at HIS situation, not the stock fallbacks.
+      const { getKnowledge } = await import("../knowledge/store.ts");
+      const topics = await getKnowledge(bizOp, "research", "standing_topics");
+      const topicList = Array.isArray(topics?.value) ? (topics!.value as string[]) : [];
+      check(
+        "seeding aims the Sunday research sweep at Cole's real situation",
+        topicList.length >= 4 && topicList.some((t) => /high-school athlete enrollment/i.test(t))
+      );
+      // resolveTopicsFor is what the weekend pulse actually calls — prove the
+      // derived topics beat the generic fallbacks through the real path.
+      const { resolveTopicsFor } = await import("../autonomy/pulse.ts");
+      const resolved = await resolveTopicsFor("business", ["FALLBACK_TOPIC"]);
+      check("the weekend pulse picks up the aimed topics over its fallbacks", !resolved.includes("FALLBACK_TOPIC"));
+
       // cleanup — the sandbox must not keep a half-seeded profile
       await prisma.knowledgeEntry.deleteMany({ where: { operatorId: bizOp, scope: BUSINESS_SCOPE } });
       await prisma.vectorEmbedding.deleteMany({ where: { sourceType: "knowledge" } }).catch(() => {});

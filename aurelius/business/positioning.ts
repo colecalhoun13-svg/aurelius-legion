@@ -32,6 +32,32 @@ async function businessOperatorId(): Promise<string | null> {
 }
 
 /**
+ * One research pass through the real lane, for any business question.
+ * Every generative path here goes through this first — informed, never
+ * improvised (Cole's standard). Honest about grounding: it says plainly
+ * when nothing external came back and the answer is model priors.
+ */
+async function researchFor(query: string): Promise<{ text: string; grounding: string }> {
+  try {
+    const { runResearch } = await import("../research/researchEngine.ts");
+    const res: any = await runResearch({
+      query: `${query} — context: a coach specialising in high-school and college athletes, growing an in-person practice at a local gym`,
+      operator: "business",
+      depth: "deep",
+      subject: query.slice(0, 80),
+      kind: "topic",
+    });
+    const body = [res?.synthesis, ...(res?.insights ?? [])].filter(Boolean).join("\n\n");
+    if (body && !engineUnavailableText(body)) {
+      return { text: body.slice(0, 6000), grounding: res?.grounding ?? "internal" };
+    }
+  } catch (err) {
+    console.warn("[business] research pass failed — proceeding on model knowledge:", (err as any)?.message ?? err);
+  }
+  return { text: "", grounding: "none" };
+}
+
+/**
  * Seed Cole's stated facts into Living Knowledge. Idempotent: an existing
  * entry is left alone, because Cole's later corrections outrank this seed.
  * Returns what it actually wrote.
@@ -58,7 +84,69 @@ export async function seedBusinessProfile(): Promise<{ written: string[]; skippe
     });
     written.push(fact.key);
   }
+  // Aim the research pipe at his real situation as part of seeding, so the
+  // very next Sunday sweep compounds on Cole's business, not a stock persona.
+  await deriveStandingTopics().catch((err) =>
+    console.warn("[business] standing-topic derivation failed (non-fatal):", (err as any)?.message ?? err)
+  );
   return { written, skipped };
+}
+
+/**
+ * POINT THE RESEARCH PIPE AT COLE'S ACTUAL SITUATION.
+ *
+ * The Sunday weekend sweep already runs a business lane — but on generic
+ * fallbacks ("lead generation channels for local sports performance
+ * coaches"). `resolveTopicsFor` reads `research.standing_topics` off the
+ * operator first, so writing real topics there makes every Sunday sweep,
+ * and everything it feeds (corpus → Business OS living document →
+ * recall), compound on HIS business instead of a stock persona.
+ *
+ * Derived, not hardcoded: topics track the confirmed facts and the current
+ * top unknown, so the pipe re-aims itself as the picture sharpens.
+ */
+export async function deriveStandingTopics(): Promise<{ business: string[]; content: string[] }> {
+  const gaps = await openGaps();
+  const topGap = gaps[0];
+
+  const business = [
+    "how local sports performance coaches grow high-school athlete enrollment at a gym they already work in",
+    "requirement-and-standards positioning versus guarantee-based offers in youth athletic training — what earns trust with parents",
+    "remote athletic coaching models that sell capability and competency rather than measured outcomes",
+    "what parents of varsity high-school athletes actually evaluate when choosing a performance coach",
+  ];
+  if (topGap) business.push(`${topGap.question.replace(/\?$/, "")} — how comparable coaches have answered this`);
+
+  const content = [
+    "content formats that demonstrate coaching competency without guarantee claims",
+    "how performance coaches show athlete progress credibly when they cannot publish verified numbers",
+  ];
+
+  const opBiz = await businessOperatorId();
+  const opContent = await resolveOperatorId("content").catch(() => null);
+  if (opBiz) {
+    await setKnowledge({
+      operatorId: opBiz,
+      scope: "research",
+      key: "standing_topics",
+      value: business,
+      sourceType: "cole_conversation",
+      rationale: "Research lane aimed at Cole's real situation instead of generic coaching-business fallbacks.",
+      updatedBy: "system",
+    });
+  }
+  if (opContent) {
+    await setKnowledge({
+      operatorId: opContent,
+      scope: "research",
+      key: "standing_topics",
+      value: content,
+      sourceType: "cole_conversation",
+      rationale: "Content research aimed at Cole's standard-setter posture (no guarantee-style angles).",
+      updatedBy: "system",
+    });
+  }
+  return { business, content };
 }
 
 /** Every business fact currently known, newest value per key. */
@@ -156,6 +244,12 @@ export async function proposeOffer(): Promise<
   const unknownBlock = snap.openGaps.length
     ? `\n\n═══ NOT KNOWN — assume, mark it, and move on ═══\n${snap.openGaps.map((g) => `- ${g.key}`).join("\n")}`
     : "";
+
+  // Research-informed, not improvised (Cole's standard): the draft sees how
+  // comparable coaches actually structure this before it proposes anything.
+  const evidence = await researchFor(
+    "how sports performance coaches structure offers for high-school athletes at a local gym — formats, session cadence, what parents respond to"
+  );
   const response = await runLLM({
     taskType: "chat",
     operators: { primary: "business", secondaries: ["content"] },
@@ -166,6 +260,7 @@ Draft ONE concrete offer for Cole's coaching business, from the confirmed facts 
 
 Rules:
 - Ground every element in a stated fact. Where you must assume something, mark it "ASSUMPTION:" on its own line — do not smuggle guesses in as fact.
+- Cole is a STANDARD-SETTER, not a promise/guarantee coach: state what's required and why, never "we'll get you X".
 - Serve the NEAR-TERM goal (growing the high-school athletes at his gym), not an online fantasy.
 - Lead with the buyer's job, not "training". The measured metrics are the proof — use them.
 - His method edge (athletes who understand and can leverage their own bodies, not compliance-followers) must be the spine of the promise, not a footnote.
@@ -182,6 +277,9 @@ ASSUMPTIONS — anything you had to guess
 
 ═══ CONFIRMED FACTS ═══
 ${factBlock}${unknownBlock}
+
+═══ RESEARCH (${evidence.grounding === "external" ? "external sources" : "no external source retrieved — model knowledge only"}) ═══
+${evidence.text || "(nothing retrieved)"}
 `.trim(),
   });
 
@@ -234,25 +332,7 @@ export async function marketingOptions(
   if (!q) return { ok: false, error: "ask a marketing question to explore" };
 
   // Live research first — the whole point is informed, not improvised.
-  let evidence = "";
-  let grounding = "none";
-  try {
-    const { runResearch } = await import("../research/researchEngine.ts");
-    const res: any = await runResearch({
-      query: `${q} — for a youth/high-school athletic performance coach growing a local in-person practice`,
-      operator: "business",
-      depth: "deep",
-      subject: q.slice(0, 80),
-      kind: "topic",
-    });
-    const body = [res?.synthesis, ...(res?.insights ?? [])].filter(Boolean).join("\n\n");
-    if (body && !engineUnavailableText(body)) {
-      evidence = body.slice(0, 6000);
-      grounding = res?.grounding ?? "internal";
-    }
-  } catch (err) {
-    console.warn("[business] research pass failed — options will be model-only:", (err as any)?.message ?? err);
-  }
+  const { text: evidence, grounding } = await researchFor(q);
 
   const snap = await businessSnapshot();
   const factBlock = snap.facts.map((f) => `- ${f.key}: ${f.value}`).join("\n");

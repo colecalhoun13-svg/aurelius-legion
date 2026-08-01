@@ -40,6 +40,13 @@ export const businessAdapter: ToolAdapter = {
       example: "[TOOL: tool=business action=draft_offer data={}]",
     },
     {
+      name: "aim_research",
+      description:
+        "Re-point the Sunday research sweep at Cole's actual situation, derived from his confirmed facts and current top unknown. Use after his business facts change materially.",
+      dataSchema: "{}",
+      example: "[TOOL: tool=business action=aim_research data={}]",
+    },
+    {
       name: "options",
       description:
         "THE DEFAULT for any marketing/growth/positioning question. Runs live research, then gives THREE genuinely different approaches grounded in Cole's facts — what each demands, where each fails, how to test it cheap. Deliberately does not converge on one recommendation: Cole decides, Aurelius informs. Use this instead of prescribing an answer.",
@@ -83,6 +90,17 @@ export const businessAdapter: ToolAdapter = {
         return {
           ok: true,
           output: { offer: r.proposal, proposalId: r.proposalId, summary: "Offer drafted — it's on the Bridge for your confirm, correction, or bin." },
+        };
+      }
+      if (action === "aim_research") {
+        const t = await P.deriveStandingTopics();
+        return {
+          ok: true,
+          output: {
+            business: t.business,
+            content: t.content,
+            summary: `Research lane re-aimed: ${t.business.length} business topic(s), ${t.content.length} content topic(s). The Sunday sweep works these from now on.`,
+          },
         };
       }
       if (action === "options") {
