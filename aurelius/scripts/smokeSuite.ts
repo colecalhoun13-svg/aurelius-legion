@@ -1078,6 +1078,22 @@ async function main() {
     }
   }
 
+  console.log("── telegram bridge: the lock must not lock out its own bridge ──");
+  {
+    // Cole's first Railway boot: every message answered "Captured to your
+    // inbox" because the bot's loopback call carried no x-aurelius-key and
+    // the lock 401'd it. The header must be present whenever the key is set.
+    const { internalApiHeaders } = await import("../telegram/bot.ts");
+    const priorKey = process.env.AURELIUS_API_KEY;
+    process.env.AURELIUS_API_KEY = "smoke-lock-key";
+    const locked = internalApiHeaders();
+    delete process.env.AURELIUS_API_KEY;
+    const dormant = internalApiHeaders();
+    if (priorKey !== undefined) process.env.AURELIUS_API_KEY = priorKey;
+    check("bridge sends x-aurelius-key when the lock is armed", locked["x-aurelius-key"] === "smoke-lock-key");
+    check("bridge stays header-free when the lock is dormant", dormant["x-aurelius-key"] === undefined);
+  }
+
   console.log("── queue sweep: backlog keyhole + expiry (Cole's ruling on the 365) ──");
   // NOTE: sweepQueues() operates DB-WIDE (it will expire/apply/archive any
   // real stale rows present) — this suite is sandbox-only by contract. The
