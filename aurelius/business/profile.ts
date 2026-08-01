@@ -105,17 +105,26 @@ export type OpenQuestion = {
   key: string;
   /** Asked in Cole's register — direct, answerable in one line, no consultant fog. */
   question: string;
-  /** What stays impossible while this is unknown. */
+  /** What this SHARPENS if answered. Never a gate. */
   blocks: string;
-  /** Lower runs first — ordered by what unblocks the most. */
+  /** Lower = more useful to know early. Not a sequence he must march through. */
   priority: number;
 };
 
 /**
- * What Aurelius genuinely does NOT know. Asked one at a time (weekly
- * planning, or on demand); answering any of these is an explicit Cole
- * action and writes straight to knowledge — no confirm round-trip needed
- * for his own stated truth.
+ * What Aurelius genuinely does NOT know — held as SHARPENERS, not a funnel.
+ *
+ * Cole's ruling (2026-07-31): "the whole goal of Aurelius is to be modular
+ * and adaptable to what I need and leverage. To use research as a tool to
+ * make the best informed decisions and not be stuck in one way of
+ * thinking." So this list is NOT an interrogation script and NOT a gate on
+ * doing work. Nothing here blocks a draft, an option, or an answer —
+ * unknowns get marked as assumptions and the work proceeds. Answering one
+ * makes the next pass sharper; ignoring all of them costs precision, never
+ * capability.
+ *
+ * Answering is an explicit Cole action and writes straight to knowledge —
+ * no confirm round-trip for his own stated truth.
  */
 export const OPEN_QUESTIONS: OpenQuestion[] = [
   {
