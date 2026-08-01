@@ -1078,6 +1078,45 @@ async function main() {
     }
   }
 
+  console.log("── business foundation: Cole's truth, seeded and gap-aware ──");
+  {
+    const { seedBusinessProfile, businessSnapshot, openGaps, recordGapAnswer, knownFacts } =
+      await import("../business/positioning.ts");
+    const { CONFIRMED_FACTS, BUSINESS_SCOPE } = await import("../business/profile.ts");
+    const bizOp = await resolveOperatorId("business");
+    if (bizOp) {
+      const first = await seedBusinessProfile();
+      check("seeds Cole's stated facts into Living Knowledge", first.written.length === CONFIRMED_FACTS.length);
+      const again = await seedBusinessProfile();
+      check("re-seeding is idempotent (never overwrites Cole's later truth)", again.written.length === 0);
+
+      const facts = await knownFacts();
+      const measured = facts.find((f) => f.key === "measured_outcomes");
+      check("the measured-outcomes asset is present and specific", !!measured && /5-10-5|vertical/i.test(measured.value));
+
+      const gapsBefore = await openGaps();
+      check("open questions are ranked by what they unblock", gapsBefore.length > 0 && gapsBefore[0]!.priority === 1);
+
+      // Cole answering his own business question applies immediately.
+      const target = gapsBefore[0]!.key;
+      const rec = await recordGapAnswer(target, `${TAG} answered`);
+      const gapsAfter = await openGaps();
+      check(
+        "Cole's answer closes the gap without a confirm round-trip",
+        rec.ok && gapsAfter.length === gapsBefore.length - 1
+      );
+
+      const snap = await businessSnapshot();
+      check("snapshot names what's blocked while priority gaps are open", typeof snap.summary === "string" && snap.summary.length > 0);
+
+      // cleanup — the sandbox must not keep a half-seeded profile
+      await prisma.knowledgeEntry.deleteMany({ where: { operatorId: bizOp, scope: BUSINESS_SCOPE } });
+      await prisma.vectorEmbedding.deleteMany({ where: { sourceType: "knowledge" } }).catch(() => {});
+    } else {
+      check("business foundation (skipped — no business operator)", true);
+    }
+  }
+
   console.log("── telegram bridge: the lock must not lock out its own bridge ──");
   {
     // Cole's first Railway boot: every message answered "Captured to your

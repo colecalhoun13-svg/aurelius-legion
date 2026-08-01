@@ -464,6 +464,20 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     }
   }
 
+  // Layer 5.35: COLE'S BUSINESS FACTS — injected whenever the business or
+  // content lens is in play, so those turns reason from what Cole actually
+  // said (and can SEE what's still unknown) instead of re-deriving a generic
+  // youth-performance persona every time. Never fatal, empty until seeded.
+  if ([operators.primary, ...(operators.secondaries ?? [])].some((o) => o === "business" || o === "content")) {
+    try {
+      const { businessContextBlock } = await import("../business/positioning.ts");
+      const bizBlock = await businessContextBlock();
+      if (bizBlock) parts.push("\n" + bizBlock);
+    } catch (err) {
+      console.warn("[ROUTER] business context layer failed (non-fatal):", err);
+    }
+  }
+
   // Layer 5.45: the primary operator's FIELD SYNTHESIS — its best current
   // understanding of the domain (the wiki page the curriculum keeps rewriting),
   // injected directly so it's ALWAYS reasoned from, not left to chance whether a

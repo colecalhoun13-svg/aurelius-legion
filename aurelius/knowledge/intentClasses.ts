@@ -102,6 +102,18 @@ export const GENERAL_INTENT_CLASSES: IntentClass[] = [
     ],
   },
   {
+    id: "business_offer",
+    operator: "business",
+    scope: "business",
+    description:
+      "Aurelius drafted an offer from Cole's confirmed business facts. An offer is Cole's call by definition — confirming adopts it as the current offer, correcting rewrites it, denying bins it. Never auto-applies.",
+    examplePhrasings: [
+      "yeah that's the offer",
+      "close, but it's small group not 1:1",
+      "no, that's not what I'm selling",
+    ],
+  },
+  {
     id: "manual_correction",
     operator: "any",
     scope: "any",
