@@ -106,13 +106,30 @@ process, so it works from any host with no inbound config.
      above. **Set it BEFORE the first deploy** — it bakes into the build (the
      phone's Connect buttons point there); adding it later needs a Redeploy,
      not a restart
-   - engine/embeddings keys the API routes use: `ANTHROPIC_API_KEY`,
-     `EMBEDDINGS_PROVIDER` + its key
+   - engine/embeddings keys the API routes use: `ANTHROPIC_API_KEY`, plus
+     `EMBEDDINGS_PROVIDER` and its matching key — **`openai` → `OPENAI_API_KEY`,
+     `gemini` → `GEMINI_API_KEY`, and it must be the SAME pair as the backend**
+     (different models embed differently; a mismatch breaks recall silently)
+   - `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` — the easily-missed pair.
+     The app's `/api/calendar` route refreshes expired Google tokens itself,
+     and the refresh call needs the client credentials — without them the
+     calendar goes blank in the app once the first access token ages out.
+     (`GOOGLE_REDIRECT_URI` stays backend-only: the OAuth dance runs there.)
    - `TZ=America/Phoenix` **and** `AURELIUS_TZ=America/Phoenix` — same values
      as the backend. The app's API routes (spine health, day buckets) compute
      local day keys in THIS container; without these, every Arizona evening
      the cockpit shows phantom "missed" dots (post-sweep council finding)
-4. **Settings → Networking → Generate Domain.** That domain is THE APP:
+   - optional: `TAVILY_API_KEY` (or the `GEMINI_API_KEY` you may already have)
+     — web search for missions/curriculum launched from the WEB app; without
+     it those paths fail honestly. Telegram-launched missions use the backend.
+   - **Do NOT set `PORT` here.** `PORT=3001` is the backend's. `next start`
+     listens on 3000 and Railway routes to 3000 — a stray `PORT=3001` on this
+     service serves a blank page that looks like a build failure and isn't.
+   - Not needed on this service: `TELEGRAM_*`, `FRED_API_KEY`,
+     `GOOGLE_REDIRECT_URI`, `INSTAGRAM_*`, `AURELIUS_BACKUP_DIR` — backend-only.
+4. **Settings → Networking → Generate Domain — answer `3000` when it asks
+   which port the app listens on** (the Dockerfile exposes 3000; `next start`
+   binds there). That domain is THE APP:
    `https://<something>.up.railway.app`. Open it on your phone → share menu →
    **Add to Home Screen** → the crest on your home screen now opens Aurelius
    from anywhere, forever, codespace closed.
