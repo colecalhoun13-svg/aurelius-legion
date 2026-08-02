@@ -122,9 +122,12 @@ process, so it works from any host with no inbound config.
    - optional: `TAVILY_API_KEY` (or the `GEMINI_API_KEY` you may already have)
      — web search for missions/curriculum launched from the WEB app; without
      it those paths fail honestly. Telegram-launched missions use the backend.
-   - **Do NOT set `PORT` here.** `PORT=3001` is the backend's. `next start`
-     listens on 3000 and Railway routes to 3000 — a stray `PORT=3001` on this
-     service serves a blank page that looks like a build failure and isn't.
+   - `PORT=3000` — set it EXPLICITLY (never 3001, that's the backend's).
+     `next start` honours an injected PORT, so leaving it to the platform can
+     bind a port the proxy isn't routing to: a green build that answers
+     "Application failed to respond" (hit on the first real deploy). Pinning
+     3000 here + answering 3000 at Generate Domain makes app and proxy agree.
+     The image also binds `-H 0.0.0.0` so the proxy can reach it at all.
    - Not needed on this service: `TELEGRAM_*`, `FRED_API_KEY`,
      `GOOGLE_REDIRECT_URI`, `INSTAGRAM_*`, `AURELIUS_BACKUP_DIR` — backend-only.
 4. **Settings → Networking → Generate Domain — answer `3000` when it asks
