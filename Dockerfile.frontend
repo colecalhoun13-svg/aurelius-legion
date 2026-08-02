@@ -36,4 +36,9 @@ RUN cd frontend && npm run build
 WORKDIR /app/frontend
 ENV NODE_ENV=production
 EXPOSE 3000
-CMD ["npm", "run", "start"]
+# Bind DETERMINISTICALLY (Cole's first Railway deploy: "Application failed to
+# respond"). `next start` silently honours an injected PORT, so the container
+# could bind a port the proxy wasn't routing to — a green build serving
+# nothing. Honour PORT when the platform sets one, fall back to 3000, and
+# always bind 0.0.0.0 so the proxy can reach it from outside the container.
+CMD ["sh", "-c", "npx next start -p ${PORT:-3000} -H 0.0.0.0"]
