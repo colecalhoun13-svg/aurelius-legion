@@ -17,7 +17,7 @@ let cachedModel: string | null = null;
 export const geminiAdapter: EngineAdapter = {
   name: "gemini",
   async run(req: EngineRequest): Promise<EngineResponse> {
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+    const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || "").trim().replace(/^["']|["']$/g, "");
     if (!GEMINI_API_KEY) {
       return { text: "GEMINI_API_KEY is not configured.", tokensUsed: 0 };
     }
