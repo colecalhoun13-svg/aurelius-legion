@@ -22,7 +22,12 @@ async function runAnthropic({
   maxTokens = 8192,
   tools,
 }: RunAnthropicInput): Promise<{ text: string; tokensUsed: number; raw: any }> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  // TRIM (Cole's Railway deploy: Anthropic silently failing over to OpenAI).
+  // Pasting a key into a hosting dashboard picks up a trailing newline or
+  // stray space astonishingly often; sending it verbatim yields a 401
+  // "invalid x-api-key" that looks exactly like a dead provider. Strip
+  // whitespace and any wrapping quotes before it can cost a failover.
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim().replace(/^["']|["']$/g, "");
   if (!apiKey) {
     return {
       text: "Anthropic engine is not configured. Missing ANTHROPIC_API_KEY.",

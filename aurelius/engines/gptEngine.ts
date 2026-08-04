@@ -5,7 +5,7 @@ import type { EngineAdapter, EngineRequest, EngineResponse } from "./engineAdapt
 export const gptAdapter: EngineAdapter = {
   name: "gpt",
   async run(req: EngineRequest): Promise<EngineResponse> {
-    const apiKey = process.env.OPENAI_API_KEY || "";
+    const apiKey = (process.env.OPENAI_API_KEY || "").trim().replace(/^["']|["']$/g, "");
     if (!apiKey) {
       return { text: "OPENAI_API_KEY is not configured.", tokensUsed: 0 };
     }

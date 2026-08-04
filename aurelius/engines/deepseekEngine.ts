@@ -6,7 +6,7 @@ const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
 export const deepseekAdapter: EngineAdapter = {
   name: "deepseek",
   async run(req: EngineRequest): Promise<EngineResponse> {
-    const apiKey = process.env.DEEPSEEK_API_KEY || "";
+    const apiKey = (process.env.DEEPSEEK_API_KEY || "").trim().replace(/^["']|["']$/g, "");
     if (!apiKey) {
       return { text: "DEEPSEEK_API_KEY is not configured.", tokensUsed: 0 };
     }

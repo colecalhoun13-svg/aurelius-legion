@@ -6,7 +6,7 @@ const XAI_ENDPOINT = "https://api.x.ai/v1/chat/completions";
 export const xaiAdapter: EngineAdapter = {
   name: "xai",
   async run(req: EngineRequest): Promise<EngineResponse> {
-    const XAI_API_KEY = process.env.XAI_API_KEY || "";
+    const XAI_API_KEY = (process.env.XAI_API_KEY || "").trim().replace(/^["']|["']$/g, "");
     if (!XAI_API_KEY) {
       return { text: "XAI_API_KEY is not configured.", tokensUsed: 0 };
     }

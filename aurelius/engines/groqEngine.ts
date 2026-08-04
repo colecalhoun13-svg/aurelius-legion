@@ -6,7 +6,7 @@ const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 export const groqAdapter: EngineAdapter = {
   name: "groq",
   async run(req: EngineRequest): Promise<EngineResponse> {
-    const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
+    const GROQ_API_KEY = (process.env.GROQ_API_KEY || "").trim().replace(/^["']|["']$/g, "");
     if (!GROQ_API_KEY) {
       return { text: "GROQ_API_KEY is not configured.", tokensUsed: 0 };
     }
