@@ -1,7 +1,10 @@
 // aurelius/research/researchTypes.ts
 
 export type ResearchSource =
-  | "bing" | "serpapi" | "llm" | "embedding"
+  // "bing" is gone — Microsoft retired the Bing Search APIs in Aug 2025, so
+  // that adapter could never work again. "web" is the live tier that replaced
+  // it (Tavily, or Gemini's Google Search grounding).
+  | "web" | "serpapi" | "llm" | "embedding"
   | "arxiv" | "pubmed" | "semanticscholar" | "openalex"
   | "wikipedia" | "openlibrary" | "gutenberg";
 

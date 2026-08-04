@@ -152,16 +152,39 @@ const mockEmbeddingAdapter: EmbeddingAdapter = {
  * has credentials. Callers must treat null as "skip silently" — the
  * system runs fine without recall; it just doesn't remember semantically.
  */
+/**
+ * The worst failure this system had: a provider selected with no key returned
+ * null and logged NOTHING. Every caller treats null as "skip silently", so
+ * semantic recall, /ask sources, semantic reuse, pattern retrieval and decision
+ * precedent all went dark at once and Aurelius simply looked forgetful. Say it
+ * once, loudly, per process.
+ */
+let keylessWarned = false;
+function warnKeyless(provider: string, keyName: string): null {
+  if (!keylessWarned) {
+    keylessWarned = true;
+    console.error(
+      `[embeddings] DISABLED — EMBEDDINGS_PROVIDER=${provider} but ${keyName} is not set. ` +
+        `Semantic recall, /ask sources, semantic reuse, compiled-pattern retrieval and ` +
+        `decision precedent are ALL off until you set ${keyName} (or switch EMBEDDINGS_PROVIDER ` +
+        `to the provider you do have a key for).`
+    );
+  }
+  return null;
+}
+
 export function getEmbeddingAdapter(): EmbeddingAdapter | null {
   if (process.env.RETRIEVAL_EMBEDDINGS_ENABLED === "false") return null;
 
   const provider = (process.env.EMBEDDINGS_PROVIDER ?? "openai").trim().toLowerCase();
   if (provider === "mock") return mockEmbeddingAdapter;
   if (provider === "openai") {
-    return process.env.OPENAI_API_KEY ? openaiEmbeddingAdapter : null;
+    if (process.env.OPENAI_API_KEY) return openaiEmbeddingAdapter;
+    return warnKeyless("openai", "OPENAI_API_KEY");
   }
   if (provider === "gemini") {
-    return process.env.GEMINI_API_KEY ? geminiEmbeddingAdapter : null;
+    if (process.env.GEMINI_API_KEY) return geminiEmbeddingAdapter;
+    return warnKeyless("gemini", "GEMINI_API_KEY");
   }
   // Future: "ollama" adapter slots in here (Mac Mini phase).
   console.warn(`[embeddings] unknown EMBEDDINGS_PROVIDER "${provider}" — retrieval disabled`);

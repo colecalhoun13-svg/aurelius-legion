@@ -21,13 +21,15 @@ export const researchConfig = {
   contradictionThreshold: 0.4,
 
   providers: {
-    bing: {
-      enabled: true,
-      apiKey: process.env.BING_API_KEY || "",
-    },
+    // Bing is gone: Microsoft retired the Search APIs in Aug 2025 and no key
+    // can revive them. Live web now runs through web/webSearch.ts (Tavily or
+    // Gemini grounding) as research Tier 2.
     serpapi: {
       enabled: true,
-      apiKey: process.env.SERP_API_KEY || "",
+      // BOTH spellings. The engine read SERPAPI_KEY and this file read
+      // SERP_API_KEY, so the tier was unsatisfiable: set the documented name
+      // and it enabled itself with an empty key, returning nothing forever.
+      apiKey: (process.env.SERPAPI_KEY || process.env.SERP_API_KEY || "").trim(),
     },
   },
 };

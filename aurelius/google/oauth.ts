@@ -43,6 +43,13 @@ export type GoogleOAuth = {
   buildAuthUrl(state?: string): string | null;
   handleCallback(code: string): Promise<{ ok: boolean; error?: string }>;
   isConnected(): Promise<boolean>;
+  /**
+   * Does the stored token still WORK? `isConnected()` only proves a row
+   * exists — after an OAuth client swap the row is there and every call
+   * fails. This mints an access token (refreshing when stale), so a dead
+   * refresh token reports false instead of a cheerful "live".
+   */
+  isHealthy(): Promise<boolean>;
   disconnect(): Promise<void>;
   fetch(url: string, init?: RequestInit): Promise<Response>;
 };
@@ -188,6 +195,9 @@ export function makeGoogleOAuth(cfg: {
     async isConnected() {
       try { return (await loadTokens()) !== null; } catch { return false; }
     },
+    async isHealthy() {
+      try { return (await getAccessToken()) !== null; } catch { return false; }
+    },
     disconnect,
     async fetch(url: string, init: RequestInit = {}) {
       let token = await getAccessToken();
@@ -197,7 +207,13 @@ export function makeGoogleOAuth(cfg: {
       let res = await doFetch(token);
       if (res.status === 401) {
         token = await getAccessToken(true);
-        if (!token) throw new Error(`Google ${cfg.service} auth expired — re-authorize`);
+        if (!token) {
+          // Name the door. "re-authorize" with no URL was the difference
+          // between a two-minute fix and an evening of guessing.
+          throw new Error(
+            `Google ${cfg.service} auth expired — re-connect at ${cfg.callbackPath.replace("/callback", "/auth")}`
+          );
+        }
         res = await doFetch(token);
       }
       return res;

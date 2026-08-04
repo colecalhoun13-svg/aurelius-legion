@@ -1,5 +1,6 @@
 // aurelius/engines/groqEngine.ts
 import type { EngineAdapter, EngineRequest, EngineResponse } from "./engineAdapter.ts";
+import { REQUEST_TIMEOUT_MS } from "./engineAdapter.ts";
 
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 
@@ -27,6 +28,9 @@ export const groqAdapter: EngineAdapter = {
           Authorization: `Bearer ${GROQ_API_KEY}`,
         },
         body: JSON.stringify(body),
+        // TIMEOUT — see anthropicEngine: no signal meant a stalled socket hung
+        // the whole router with no failover and no log line.
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       if (!res.ok) {

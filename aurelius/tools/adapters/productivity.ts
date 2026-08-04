@@ -24,6 +24,11 @@ const PRIORITIES = new Set(["critical", "high", "normal", "low"]);
 
 export const productivityAdapter: ToolAdapter = {
   name: "productivity",
+  // NON-IDEMPOTENT — never auto-retry. The engine's default retry re-runs the
+  // call on failure, and its timeout does NOT cancel the in-flight promise: a
+  // slow write that trips the ceiling would land AND be retried, duplicating
+  // tasks and goals. Fail once, honestly, and let Cole decide.
+  maxRetries: 0,
   description:
     "Cole's tasks, goals, and daily focus. Add or complete tasks, add goals, list what's open, see today's snapshot, or set today's focus — all from chat. Everything is reversible; nothing is sent or published.",
   actions: [

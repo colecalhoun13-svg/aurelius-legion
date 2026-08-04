@@ -1,5 +1,6 @@
 // aurelius/engines/xaiClient.ts
 import type { EngineAdapter, EngineRequest, EngineResponse } from "./engineAdapter.ts";
+import { REQUEST_TIMEOUT_MS } from "./engineAdapter.ts";
 
 const XAI_ENDPOINT = "https://api.x.ai/v1/chat/completions";
 
@@ -27,6 +28,8 @@ export const xaiAdapter: EngineAdapter = {
           Authorization: `Bearer ${XAI_API_KEY}`,
         },
         body: JSON.stringify(body),
+        // TIMEOUT — see anthropicEngine.
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       if (!res.ok) {

@@ -13,6 +13,11 @@ const NOT_CONNECTED = "Gmail not connected — open /api/gmail/auth once to auth
 
 export const gmailAdapter: ToolAdapter = {
   name: "gmail",
+  // NON-IDEMPOTENT — never auto-retry. The engine's default retry re-runs the
+  // call on failure, and its timeout does NOT cancel the in-flight promise: a
+  // slow write that trips the ceiling would land AND be retried, duplicating
+  // drafts. Fail once, honestly, and let Cole decide.
+  maxRetries: 0,
   description:
     "Gmail (read + draft only, never sends): scan the inbox for what needs Cole, read a message, draft a reply for his review.",
   actions: [

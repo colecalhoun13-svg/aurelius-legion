@@ -22,6 +22,11 @@ const NOT_CONNECTED = "Google Calendar not connected — open /api/calendar/auth
 
 export const googleCalendarAdapter: ToolAdapter = {
   name: "google_calendar",
+  // NON-IDEMPOTENT — never auto-retry. The engine's default retry re-runs the
+  // call on failure, and its timeout does NOT cancel the in-flight promise: a
+  // slow write that trips the ceiling would land AND be retried, duplicating
+  // created events. Fail once, honestly, and let Cole decide.
+  maxRetries: 0,
   description:
     "Google Calendar: read upcoming events, find free time blocks, create events, delete events, force a sync. The calendar is ground truth for Cole's time.",
   actions: [

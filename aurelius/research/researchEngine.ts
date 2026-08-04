@@ -39,8 +39,17 @@ import { resolveOperatorId } from "../knowledge/store.ts";
 // ═══════════════════════════════════════════════════════════════════
 
 const FEATURES = {
-  bing: !!process.env.BING_API_KEY,
-  serp: !!process.env.SERPAPI_KEY,
+  // LIVE WEB — the gap deploy triage found: the engine's only web sources
+  // were a retired Bing API and a SerpAPI tier whose key was read from two
+  // different env var names, so research quietly ran model-only for every
+  // non-academic topic. web/webSearch.ts already did this properly (Tavily,
+  // or Gemini's Google Search grounding on the key we already have) and was
+  // simply never imported here.
+  web: !!(process.env.TAVILY_API_KEY?.trim() || process.env.GEMINI_API_KEY?.trim()),
+  // One name, matching .env.example. It used to be SERPAPI_KEY here and
+  // SERP_API_KEY in researchConfig — impossible to satisfy both, so the tier
+  // either never turned on or turned on with an empty key and returned [].
+  serp: !!(process.env.SERPAPI_KEY?.trim() || process.env.SERP_API_KEY?.trim()),
   embedding: !!process.env.OPENAI_API_KEY && !!process.env.RESEARCH_EMBEDDINGS_ENABLED,
 };
 
@@ -290,17 +299,35 @@ export async function runResearch(task: ResearchTask): Promise<ResearchOutput> {
     }
   }
 
-  // ── Tier 2: external adapters (feature-flagged) ──
-  if (FEATURES.bing) {
+  // ── Tier 2: the live web ──
+  // Runs for EVERY research task, not just academic domains — this is the
+  // tier that makes "what's actually happening now" answerable, and its
+  // absence is what left `grounding: "model-only"` on most runs.
+  if (FEATURES.web) {
     try {
-      const { bingSearch } = await import("./researchAdapters/webSearchAdapter.ts");
-      const uncertainty = detectUncertainty(results);
-      if (uncertainty > researchConfig.uncertaintyThreshold) {
-        const bing = await bingSearch(task.query);
-        results.push(...bing.slice(0, limit));
+      const { webSearch } = await import("../web/webSearch.ts");
+      const hit = await webSearch(searchTerm);
+      if (hit.answer) {
+        results.push({
+          title: `Live web search — ${hit.provider}`,
+          snippet: hit.answer.slice(0, 2000),
+          source: "web",
+          confidence: 0.68,
+        });
+      }
+      for (const src of hit.sources.slice(0, Math.max(3, Math.floor(limit / 2)))) {
+        results.push({
+          title: src.title || src.url,
+          snippet: src.title || src.url,
+          url: src.url,
+          source: "web",
+          confidence: 0.55,
+        });
       }
     } catch (err) {
-      console.warn("[research] bingSearch unavailable:", err);
+      // Honest failure, not a crash: the run continues on the other tiers and
+      // reports grounding accordingly.
+      console.warn("[research] live web search unavailable:", (err as any)?.message ?? err);
     }
   }
 

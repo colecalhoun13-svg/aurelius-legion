@@ -41,7 +41,10 @@ process, so it works from any host with no inbound config.
      `openssl rand -hex 32`. **Set the same value in the frontend's env** so
      the chat proxy can talk to the backend.
    - `ANTHROPIC_API_KEY` (+ any other engine keys you use)
-   - `EMBEDDINGS_PROVIDER` + its key (switch off `mock` — this is the moment)
+   - `EMBEDDINGS_PROVIDER` + its key (switch off `mock` — this is the moment).
+     `openai` → `OPENAI_API_KEY`, `gemini` → `GEMINI_API_KEY`. A provider with
+     no key **disables all semantic recall** — it logs loudly at boot now, but
+     don't ship it that way
    - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
    - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
    - `GOOGLE_REDIRECT_URI=https://<backend-domain>/api/calendar/callback` —
@@ -56,7 +59,11 @@ process, so it works from any host with no inbound config.
    - `PORT=3001` — pins the private-network URL so
      `…railway.internal:3001` stays true for the app service
    - `AURELIUS_BACKUP_DIR=/data/backups`
-   - optional: `FRED_API_KEY`, `TAVILY_API_KEY`, `FRONTEND_ORIGIN`
+   - optional but high-value: `TAVILY_API_KEY` — this is what gives research
+     a **live web tier**. Without it (and without `GEMINI_API_KEY`, which also
+     works via Google Search grounding) research runs on model knowledge only
+     and labels itself `model-only`
+   - optional: `FRED_API_KEY`, `FRONTEND_ORIGIN`
 3. **Volume**: service → Settings → Volumes → mount at **`/data`** (1 GB is
    plenty). This is where nightly dumps live; without it they vanish on
    redeploy.
@@ -64,11 +71,24 @@ process, so it works from any host with no inbound config.
    two-service setup you WANT this one public too: the phone's Connect links
    (Google/Gmail/Instagram OAuth) go straight to the backend. The API key
    makes this safe; OAuth callbacks are the only open routes.
-5. **Google OAuth redirect**: add
-   `https://<backend-domain>/api/calendar/callback` (and the gmail/instagram
-   equivalents you use) to the OAuth client's authorized redirects in Google
-   Cloud Console. Existing tokens keep working — they refresh from any host;
-   this matters only for FUTURE re-connects.
+5. **Google OAuth — the part that bit us.** Read all four lines:
+   - The client must be a **Web application** client, not "Desktop". A desktop
+     client can't register an `https` redirect at all.
+   - **A refresh token is bound to the client that minted it.** If you switch
+     clients (desktop → web), every stored token dies with `invalid_grant`.
+     That is a re-connect, not a bug — Aurelius detects it, clears the dead
+     token, and tells you where to go.
+   - Register **both** redirect URIs in the Console, exactly:
+     `https://<backend-domain>/api/calendar/callback` and
+     `https://<backend-domain>/api/gmail/callback`. They're separate env vars
+     (`GOOGLE_REDIRECT_URI`, `GOOGLE_GMAIL_REDIRECT_URI`) — setting only the
+     first leaves Gmail unable to re-connect.
+   - **Publish the OAuth consent screen.** While it's in "Testing", Google
+     expires refresh tokens after **7 days** — which presents as "the calendar
+     randomly stopped working" a week after launch.
+
+   Then connect once at `https://<backend-domain>/api/calendar/auth` (and
+   `/api/gmail/auth` if you want inbox triage).
 6. **STOP THE CODESPACE BACKEND FIRST.** Two backends polling the same
    Telegram bot token fight over messages (random splits, 409s in logs).
    From the moment Railway is live, the codespace backend stays off unless
@@ -141,6 +161,31 @@ process, so it works from any host with no inbound config.
 *(Build recipe verified against the identical native sequence — two `npm ci`,
 `prisma generate`, prod `next build`, all green; the first Railway build log
 is the live confirmation.)*
+
+## When something isn't working — ask, don't guess
+
+Config presence is not health: a key can be set and rejected, a token stored
+and dead. Three ways to get the truth, all the same check:
+
+- **Phone:** `/doctor` in Telegram. Live calls to every provider and
+  integration, ~15s, each failure printed with its fix.
+- **Curl:** `curl -H "x-aurelius-key: <AURELIUS_API_KEY>" \
+  https://<backend-domain>/api/health/doctor`
+- **In chat:** "run a health check" — Aurelius has it as a tool
+  (`self.diagnose`).
+
+It distinguishes the three states that used to look identical: **live**
+(probed, working), **dormant** (deliberately not configured — a choice, not a
+fault), and **broken** (configured and REJECTED — with the reason and the fix).
+
+The boot log also prints one `[preflight]` line per subsystem — LLM failover
+order, embeddings provider, web-search backend, Google redirect, API lock,
+timezone. Read it on the first deploy; a silently-disabled subsystem is the
+failure mode that costs a week.
+
+**One Google caveat worth knowing:** re-connecting Google fixes Calendar,
+Sheets and Gmail together *if* you re-connect all of them — Gmail holds its
+own token at `/api/gmail/auth`.
 
 ## The first-week soak (this is the point)
 

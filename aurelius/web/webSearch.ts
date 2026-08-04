@@ -14,6 +14,11 @@
 // per-account Instagram analytics still needs the Meta Graph API (parked) —
 // this won't scrape private IG data, and shouldn't.
 
+// Every outbound call here is bounded. Without a signal a stalled search or a
+// page that accepts the connection and never finishes streaming hangs the
+// caller (a mission, the curriculum, a chat turn) with no error and no log.
+const WEB_TIMEOUT_MS = Math.max(5_000, Number(process.env.WEB_TIMEOUT_MS) || 30_000);
+
 export type WebSource = { title: string; url: string };
 export type WebSearchResult = { provider: string; answer: string; sources: WebSource[] };
 
@@ -43,6 +48,7 @@ async function tavilySearch(query: string): Promise<WebSearchResult> {
       max_results: 8,
       include_answer: "advanced",
     }),
+    signal: AbortSignal.timeout(WEB_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Tavily search failed (${res.status}): ${(await res.text()).slice(0, 150)}`);
   const j: any = await res.json();
@@ -77,6 +83,7 @@ async function geminiSearch(query: string): Promise<WebSearchResult> {
           contents: [{ parts: [{ text: query }] }],
           tools: [{ google_search: {} }],
         }),
+        signal: AbortSignal.timeout(WEB_TIMEOUT_MS),
       }
     );
     if (res.status === 404) { lastErr = `model ${model} unavailable (404)`; cachedSearchModel = null; res = null; continue; }
@@ -113,7 +120,10 @@ export function htmlToText(html: string): string {
 }
 
 export async function webFetch(url: string): Promise<{ title: string; text: string; url: string }> {
-  const res = await fetch(url, { headers: { "User-Agent": "AureliusOS/1.0" } });
+  const res = await fetch(url, {
+    headers: { "User-Agent": "AureliusOS/1.0" },
+    signal: AbortSignal.timeout(WEB_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`fetch failed (${res.status})`);
   const html = await res.text();
   const title = html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim() ?? url;

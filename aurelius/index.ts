@@ -61,6 +61,8 @@ registerAllTools();
 
 // Routers
 import { engineTestRouter } from "./router/index.ts";
+import healthRouter from "./router/healthRouter.ts";
+import { preflight } from "./core/preflight.ts";
 import { autonomyRouter } from "./router/autonomyRouter.ts";
 import { productivityRouter } from "./router/productivityRouter.ts";
 import { corpusRouter } from "./router/corpusRouter.ts";
@@ -138,17 +140,19 @@ app.get("/health", (_req, res) => res.json({ ok: true, service: "aurelius-backen
 
 app.use("/api", requestTracer("/api"));
 
-console.log("ENV CHECK — Aurelius OS");
-console.log("OPENAI_API_KEY:", !!process.env.OPENAI_API_KEY);
-console.log("ANTHROPIC_API_KEY:", !!process.env.ANTHROPIC_API_KEY);
-console.log("GROQ_API_KEY:", !!process.env.GROQ_API_KEY);
-console.log("GEMINI_API_KEY:", !!process.env.GEMINI_API_KEY);
-console.log("DEEPSEEK_API_KEY:", !!process.env.DEEPSEEK_API_KEY);
-console.log("XAI_API_KEY:", !!process.env.XAI_API_KEY);
-console.log("DATABASE_URL:", !!process.env.DATABASE_URL);
+// A list of booleans told us which keys were PRESENT and nothing about what
+// the process could actually do — the deploy that was broken in four places
+// printed a clean one. preflight() names each subsystem's real state.
+console.log("=== Aurelius OS — preflight ===");
+console.log("[preflight] database:", process.env.DATABASE_URL ? "url set" : "NO DATABASE_URL — nothing will work");
+preflight();
 console.log("===================================================");
 
 app.use("/api", engineTestRouter);
+// The doctor + truthful integration status, behind the same lock as everything
+// under /api. Reachable from the app, the phone, or a curl — the diagnosis
+// used to require a shell inside the container.
+app.use("/api", healthRouter);
 app.use("/api/autonomy", autonomyRouter);
 app.use("/api/productivity", productivityRouter);
 app.use("/api/corpus", corpusRouter);
@@ -224,14 +228,21 @@ async function executeToolDirectives(
         data.sheetId = sheetId;
         resolvedClientId = data.client;
       } else {
+        // Name the REAL cause. The fallback path searches Drive, and a dead
+        // Google token makes that search fail silently — which surfaced here
+        // as "no registered sheet", sending Cole off to register a sheet that
+        // was already registered.
+        let why = `No registered sheet for client "${data.client}". Use POST /api/aurelius/register-sheet to register one first.`;
+        try {
+          const { driveSearchProblem } = await import("./tools/adapters/googleSheets.ts");
+          const problem = driveSearchProblem();
+          if (problem) why = `Couldn't resolve "${data.client}" — ${problem}`;
+        } catch {
+          /* adapter unavailable — keep the plain message */
+        }
         executed.push({
           directive,
-          result: {
-            ok: false,
-            output: null,
-            error: `No registered sheet for client "${data.client}". Use POST /api/aurelius/register-sheet to register one first.`,
-            durationMs: 0,
-          },
+          result: { ok: false, output: null, error: why, durationMs: 0 },
         });
         continue;
       }
@@ -1306,9 +1317,20 @@ app.post("/api/aurelius/research", async (req: Request, res: Response) => {
       synthesis: result.synthesis,
       insights: result.insights,
       contradictions: result.contradictions,
+      // Say where this came from. A run with no external source is a
+      // legitimate answer, but it must never READ like a sourced one.
+      grounding: result.grounding,
+      sources: result.rawResults
+        .filter((r) => r.source !== "llm" && r.url)
+        .slice(0, 10)
+        .map((r) => ({ title: r.title, url: r.url, source: r.source })),
       meta: {
         rawResultCount: result.rawResults.length,
         memoriesSaved: result.savedMemoryIds.length,
+        note:
+          result.grounding === "external"
+            ? undefined
+            : "no external source retrieved — this is model knowledge only",
       },
     });
   } catch (err: any) {

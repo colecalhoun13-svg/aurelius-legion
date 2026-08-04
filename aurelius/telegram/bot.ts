@@ -216,7 +216,7 @@ async function handleCommand(chatId: string | number, text: string) {
     case "/help":
       await send(
         chatId,
-        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\n/grants — what I can act on for you (grant/revoke keyholes)\n/protect — hold deep-work time on your calendar\n/triage — draft replies to what needs one\nA voice note transcribes and captures the same as text.\nAnything else you type goes straight to the inbox."
+        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\n/grants — what I can act on for you (grant/revoke keyholes)\n/protect — hold deep-work time on your calendar\n/triage — draft replies to what needs one\n/doctor — what is actually working right now (live check, with fixes)\nA voice note transcribes and captures the same as text.\nAnything else you type goes straight to the inbox."
       );
       return;
 
@@ -325,6 +325,25 @@ async function handleCommand(chatId: string | number, text: string) {
       const { revokeAutonomy } = await import("../autonomy/grants.ts");
       const r = await revokeAutonomy(arg);
       await send(chatId, r ? `Revoked: ${arg}. Back to proposing, not acting.` : `No active grant for "${arg}".`);
+      return;
+    }
+
+    // THE DOCTOR, FROM THE PHONE. This command exists because both times
+    // something broke on the deploy ("Google isn't working", "Anthropic isn't
+    // coming up"), the only way to find out why was a shell inside the
+    // container — the one place Cole never is.
+    case "/doctor": {
+      await send(chatId, "Checking everything — live calls to each provider, ~15s…");
+      try {
+        const { runDoctor, formatDoctor } = await import("../core/doctor.ts");
+        const result = await runDoctor();
+        const report = formatDoctor(result);
+        // Telegram caps a message at 4096 chars. The fixes sit at the bottom
+        // and are the part worth keeping, so trim from the top if it runs long.
+        await send(chatId, report.length > 3900 ? `…\n${report.slice(-3900)}` : report);
+      } catch (err: any) {
+        await send(chatId, `The check itself failed: ${err?.message ?? err}`);
+      }
       return;
     }
 
