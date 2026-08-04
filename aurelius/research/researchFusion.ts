@@ -16,7 +16,8 @@ export function fuseResearchResults(
   // --- 1) Weight sources based on operator domain ----------------------------
   const sourceWeights: Record<string, number> = {
     llm: decision?.correctnessPriority === "strict" ? 0.8 : 1.0,
-    bing: 1.0,
+    // Live web outranks the model's own recall: it is grounded and dated.
+    web: 1.15,
     serpapi: 1.1,
     embedding: 0.7,
   };

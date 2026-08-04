@@ -17,9 +17,12 @@ import fs from "fs";
 import path from "path";
 
 // Cache the clients across calls — service account auth doesn't expire mid-process.
+// NOTE: building these makes no network call, so a client holding a DEAD
+// refresh token caches just fine and outlives a re-connect. calendar/
+// googleAuth.ts calls resetSheetsClient() on every token transition
+// (connect, disconnect, invalid_grant) — that is what keeps this honest.
 let cachedClient: sheets_v4.Sheets | null = null;
 let cachedDrive: drive_v3.Drive | null = null;
-let attemptedInit = false;
 
 // Two ways to authenticate, preferred in order:
 //   1. Cole's own Google login (OAuth) — reads/writes HIS sheets as HIM, so
@@ -80,9 +83,13 @@ export async function getDriveClient(): Promise<drive_v3.Drive | null> {
   return cachedDrive;
 }
 
-// For testing — clear the cached clients so we can re-init after env changes.
+/**
+ * Drop the cached clients so the next call rebuilds from current credentials.
+ * Called by calendar/googleAuth.ts on connect / disconnect / dead-token — not
+ * just a test hook. Without it, re-authorizing Google fixed the calendar and
+ * left Sheets broken until the process restarted.
+ */
 export function resetSheetsClient(): void {
   cachedClient = null;
   cachedDrive = null;
-  attemptedInit = false;
 }

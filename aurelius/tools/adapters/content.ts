@@ -17,11 +17,17 @@
 import type { ToolAdapter, ToolAdapterResult } from "../types.ts";
 import { runLLM } from "../../llm/runLLM.ts";
 import { extractDirectives } from "../../llm/directiveParser.ts";
+import { engineUnavailableText } from "../../llm/nonAnswer.ts";
 import { executeAction } from "../../autonomy/executor.ts";
 import { instagramConfigured } from "../../outward/instagram.ts";
 
 export const contentAdapter: ToolAdapter = {
   name: "content",
+  // NON-IDEMPOTENT — never auto-retry. The engine's default retry re-runs the
+  // call on failure, and its timeout does NOT cancel the in-flight promise: a
+  // slow write that trips the ceiling would land AND be retried, duplicating
+  // staged publish proposals on the Bridge. Fail once, honestly, and let Cole decide.
+  maxRetries: 0,
   description:
     "Draft and publish content. draft_post writes a caption in Cole's voice (inward, no side effects). publish_post stages a post for Cole's one-tap confirm on the Bridge — it can NEVER publish on its own (publishing is outward; Cole confirms every time).",
   actions: [
@@ -72,6 +78,12 @@ Draft a ${channel} post in Cole's voice — tactical, precise, no fluff, no
 hashtag spam. Topic: ${String(data.topic)}.
 ${data.notes ? `Notes to weave in: ${String(data.notes)}\n` : ""}Return ONLY the caption text, ready to post. Keep it tight.`.trim();
         const res = await runLLM({ taskType: "chat", operators: { primary: "content", secondaries: [] }, input: prompt });
+        // HARD RULE 3. Without this guard a keyless/failed engine returned
+        // ok:true with "Anthropic engine is not configured…" AS THE CAPTION —
+        // ready to be staged for publish. Fail loudly, once, with the fix.
+        if (engineUnavailableText(res.text ?? "")) {
+          return { ok: false, output: null, error: res.text || "no engine available to draft with" };
+        }
         const caption = extractDirectives(res.text ?? "").cleanedText || res.text;
         return {
           ok: true,
@@ -172,6 +184,9 @@ ${data.notes ? `Notes to weave in: ${String(data.notes)}\n` : ""}Return ONLY the
             `\nGive Cole 3-4 concrete, specific moves to grow — what format to post more, when to post, ` +
             `what to double down on based on HIS numbers above. No generic advice; cite his data. Tight and tactical.`;
           const res = await runLLM({ taskType: "chat", operators: { primary: "content", secondaries: [] }, input: brief });
+          if (engineUnavailableText(res.text ?? "")) {
+            return { ok: false, output: null, error: res.text || "no engine available for a strategy read" };
+          }
           const read = extractDirectives(res.text ?? "").cleanedText || res.text;
           return {
             ok: true,

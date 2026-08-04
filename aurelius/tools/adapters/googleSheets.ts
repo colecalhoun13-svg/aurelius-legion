@@ -270,7 +270,7 @@ async function logSession(data: Record<string, any>): Promise<ToolAdapterResult>
     return {
       ok: false,
       output: null,
-      error: "Google Sheets auth not configured. Check service account credentials in .env.",
+      error: "Google Sheets auth not configured — connect your Google login at /api/calendar/auth (one authorization covers Calendar + Sheets), or set GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH for the service-account path.",
     };
   }
 
@@ -345,7 +345,7 @@ async function readSessions(data: Record<string, any>): Promise<ToolAdapterResul
     return {
       ok: false,
       output: null,
-      error: "Google Sheets auth not configured. Check service account credentials in .env.",
+      error: "Google Sheets auth not configured — connect your Google login at /api/calendar/auth (one authorization covers Calendar + Sheets), or set GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH for the service-account path.",
     };
   }
 
@@ -413,7 +413,7 @@ async function readDashboard(data: Record<string, any>): Promise<ToolAdapterResu
     return {
       ok: false,
       output: null,
-      error: "Google Sheets auth not configured. Check service account credentials in .env.",
+      error: "Google Sheets auth not configured — connect your Google login at /api/calendar/auth (one authorization covers Calendar + Sheets), or set GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH for the service-account path.",
     };
   }
 
@@ -536,6 +536,23 @@ function deriveClientName(title: string): string {
 }
 
 async function syncRoster(_data: Record<string, any>): Promise<ToolAdapterResult> {
+  // SCOPE GUARD (deploy triage). This action's whole premise is "everything
+  // the service account can see IS the roster" — true when Cole shares one
+  // athlete folder with a service account. Under the OAuth-as-Cole path,
+  // Drive returns EVERY spreadsheet he owns, so a sync would register his
+  // taxes and his grocery list as athletes. Refuse rather than guess.
+  const usingServiceAccount = !!process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH?.trim();
+  if (!usingServiceAccount) {
+    return {
+      ok: false,
+      output: null,
+      error:
+        "sync_roster only works with a dedicated service account, because it treats every visible spreadsheet as an athlete sheet. " +
+        "Right now Aurelius reads Sheets as YOU, so that would sweep in every spreadsheet in your Drive. " +
+        "Register athletes individually instead (find_sheet by name, then POST /api/aurelius/register-sheet), " +
+        "or set GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH and share only the athlete folder with its client_email.",
+    };
+  }
   const drive = await getDriveClient();
   if (!drive) {
     return {
@@ -691,7 +708,7 @@ async function readBlock(data: Record<string, any>): Promise<ToolAdapterResult> 
     return {
       ok: false,
       output: null,
-      error: "Google Sheets auth not configured.",
+      error: "Google Sheets auth not configured — connect your Google login at /api/calendar/auth (one authorization covers Calendar + Sheets), or set GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH for the service-account path.",
     };
   }
 
@@ -776,7 +793,7 @@ async function writeFeedback(data: Record<string, any>): Promise<ToolAdapterResu
     return {
       ok: false,
       output: null,
-      error: "Google Sheets auth not configured.",
+      error: "Google Sheets auth not configured — connect your Google login at /api/calendar/auth (one authorization covers Calendar + Sheets), or set GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH for the service-account path.",
     };
   }
 
@@ -863,7 +880,7 @@ async function updateMax(data: Record<string, any>): Promise<ToolAdapterResult> 
     return {
       ok: false,
       output: null,
-      error: "Google Sheets auth not configured.",
+      error: "Google Sheets auth not configured — connect your Google login at /api/calendar/auth (one authorization covers Calendar + Sheets), or set GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH for the service-account path.",
     };
   }
 
@@ -952,7 +969,7 @@ async function reviewRecent(data: Record<string, any>): Promise<ToolAdapterResul
       return {
         ok: false,
         output: null,
-        error: "Google Sheets auth not configured.",
+        error: "Google Sheets auth not configured — connect your Google login at /api/calendar/auth (one authorization covers Calendar + Sheets), or set GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH for the service-account path.",
       };
     }
 
@@ -1275,6 +1292,11 @@ async function updateCells(data: any): Promise<ToolAdapterResult> {
 
 export const googleSheetsAdapter: ToolAdapter = {
   name: "google_sheets",
+  // NON-IDEMPOTENT — never auto-retry. The engine's default retry re-runs the
+  // call on failure, and its timeout does NOT cancel the in-flight promise: a
+  // slow write that trips the ceiling would land AND be retried, duplicating
+  // appended rows and logged sessions. Fail once, honestly, and let Cole decide.
+  maxRetries: 0,
   description: "Google Sheets — TWO modes. (1) ANY spreadsheet Cole names: find_sheet / list_tabs / read_tabs work on every sheet in his Drive (personal programs, planning docs, anything) — when Cole says 'go into <some sheet>', use find_sheet → list_tabs → read_tabs; never claim a sheet doesn't fit a structure without searching first. (2) Athlete training sheets (Dashboard/Day/Maxes/Feedback structure): reference athletes by name (e.g. \"Mike\") for logging, session reads, block analysis, feedback writing, PR tracking, batch review.",
   actions: ACTIONS,
 

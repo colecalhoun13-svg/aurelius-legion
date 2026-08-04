@@ -1,5 +1,6 @@
 // aurelius/engines/geminiEngine.ts
 import type { EngineAdapter, EngineRequest, EngineResponse } from "./engineAdapter.ts";
+import { REQUEST_TIMEOUT_MS } from "./engineAdapter.ts";
 
 // Google deprecates/renames model IDs; a hardcoded one 404s the day it's retired
 // and the multimodal tier silently collapses to a text-only failover. Rotate a
@@ -54,6 +55,10 @@ export const geminiAdapter: EngineAdapter = {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
+          // TIMEOUT: a stalled provider connection used to hang routeLLM forever
+          // (no timeout, and failover only fires on a RETURNED error) — a hung
+          // 07:00 briefing would simply never complete and never log.
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
         if (attempt.status === 404) {
           lastStatus = 404;

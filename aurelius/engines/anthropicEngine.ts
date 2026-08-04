@@ -5,6 +5,7 @@
  * Respects the model passed in by the router.
  */
 import type { EngineAdapter } from "./engineAdapter.ts";
+import { REQUEST_TIMEOUT_MS } from "./engineAdapter.ts";
 import { CACHE_BREAK } from "../llm/promptMarkers.ts";
 
 type RunAnthropicInput = {
@@ -68,6 +69,10 @@ async function runAnthropic({
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify(body),
+      // TIMEOUT (deploy triage): failover only fires on a RETURNED error, so a
+      // provider that accepted the socket and then stalled hung routeLLM
+      // forever — a scheduled ritual that never completed and never logged.
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     const json = await res.json();

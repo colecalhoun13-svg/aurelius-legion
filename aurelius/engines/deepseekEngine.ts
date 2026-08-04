@@ -1,5 +1,6 @@
 // aurelius/engines/deepseekEngine.ts
 import type { EngineAdapter, EngineRequest, EngineResponse } from "./engineAdapter.ts";
+import { REQUEST_TIMEOUT_MS } from "./engineAdapter.ts";
 
 const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
 
@@ -27,6 +28,9 @@ export const deepseekAdapter: EngineAdapter = {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
+        // TIMEOUT — see anthropicEngine. DeepSeek-reasoner is the slowest of the
+        // six, so it gets the same generous ceiling rather than a shorter one.
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       if (!res.ok) {

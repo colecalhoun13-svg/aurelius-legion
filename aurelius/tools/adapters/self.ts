@@ -26,6 +26,13 @@ export const selfAdapter: ToolAdapter = {
       dataSchema: '{ "limit"?: number (default 10, max 25) }',
       example: '[TOOL: tool=self action=recent_actions data={"limit": 10}]',
     },
+    {
+      name: "diagnose",
+      description:
+        "THE DOCTOR — live-probes every engine, key, and integration from inside this container and reports what is actually working (a key that is set but rejected reports BROKEN, not configured). Every failure carries its fix. Use when Cole says something 'isn't working', asks why an engine/calendar/search is dead, or wants a health check after a deploy.",
+      dataSchema: "{}",
+      example: "[TOOL: tool=self action=diagnose data={}]",
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     const { prisma } = await import("../../core/db/prisma.ts");
@@ -82,6 +89,23 @@ export const selfAdapter: ToolAdapter = {
         };
       } catch (e: any) {
         return { ok: false, output: null, error: e?.message ?? "recent actions failed" };
+      }
+    }
+    if (action === "diagnose") {
+      try {
+        const { runDoctor, formatDoctor } = await import("../../core/doctor.ts");
+        const result = await runDoctor();
+        return {
+          ok: true,
+          output: {
+            summary: result.summary,
+            report: formatDoctor(result),
+            broken: result.checks.filter((c) => c.status === "fail"),
+            dormant: result.checks.filter((c) => c.status === "dormant").map((c) => c.name),
+          },
+        };
+      } catch (e: any) {
+        return { ok: false, output: null, error: e?.message ?? "diagnose failed" };
       }
     }
     return { ok: false, output: null, error: `unknown self action: ${action}` };

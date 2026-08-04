@@ -1,15 +1,21 @@
 // aurelius/calendar/googleAuth.ts
 //
-// GOOGLE CALENDAR OAUTH (OG doc Part VIII) — Desktop-app credentials,
-// zero dependencies, raw fetch. The flow Cole runs ONCE:
+// GOOGLE CALENDAR OAUTH (OG doc Part VIII) — zero dependencies, raw fetch.
+// The flow Cole runs ONCE:
 //
 //   1. GET /api/calendar/auth       → redirect to Google's consent screen
-//   2. Google redirects back to     http://localhost:3001/api/calendar/callback
-//      (Desktop-app clients accept any http://localhost port — no URI
-//      registration needed; Codespaces port forwarding makes localhost
-//      work from Cole's browser)
+//   2. Google redirects back to     GOOGLE_REDIRECT_URI
 //   3. Callback exchanges the code for tokens; the refresh token persists
 //      in the DB and access tokens mint themselves forever after.
+//
+// CLIENT TYPE (this cost a deploy): a "Desktop app" client accepts any
+// http://localhost port with no registration, which is why local dev never
+// needed GOOGLE_REDIRECT_URI. A hosted deploy needs a **Web application**
+// client with the exact public https callback registered — and a refresh
+// token is bound to the client that minted it, so swapping desktop → web
+// kills every stored token with `invalid_grant`. That is a re-connect, not
+// a bug. Publish the consent screen too: in "Testing" Google expires
+// refresh tokens after 7 days.
 //
 // Token storage: a KnowledgeEntry (system.google_calendar_tokens on the
 // global operator) written with RAW prisma — deliberately bypassing
@@ -48,11 +54,37 @@ export function isCalendarConfigured(): boolean {
   return clientConfig() !== null;
 }
 
+let warnedLocalhostRedirect = false;
+
 export function redirectUri(): string {
-  return (
-    process.env.GOOGLE_REDIRECT_URI?.trim() ||
-    `http://localhost:${process.env.PORT || 3001}/api/calendar/callback`
-  );
+  const explicit = process.env.GOOGLE_REDIRECT_URI?.trim();
+  if (explicit) return explicit;
+  // Hosted with no explicit URI = the Connect button sends Cole's browser to
+  // HIS OWN machine. Say so once instead of letting it fail as a mystery.
+  if (process.env.NODE_ENV === "production" && !warnedLocalhostRedirect) {
+    warnedLocalhostRedirect = true;
+    console.warn(
+      "[calendar] GOOGLE_REDIRECT_URI is not set — falling back to localhost, which cannot work on a hosted deploy. " +
+        "Set GOOGLE_REDIRECT_URI=https://<backend-domain>/api/calendar/callback and register that exact URI on the Web OAuth client."
+    );
+  }
+  return `http://localhost:${process.env.PORT || 3001}/api/calendar/callback`;
+}
+
+/**
+ * The Sheets/Drive adapter caches its googleapis client for the process
+ * lifetime, and building that client makes no network call — so a client
+ * holding a DEAD refresh token caches perfectly and survives a re-connect.
+ * Cole re-authorized, the calendar came back, and Sheets stayed broken until
+ * a restart. Every token transition now drops that cache.
+ */
+async function invalidateGoogleClients(): Promise<void> {
+  try {
+    const { resetSheetsClient } = await import("../tools/adapters/googleAuth.ts");
+    resetSheetsClient();
+  } catch {
+    /* adapter not present in this process (frontend) — nothing to drop */
+  }
 }
 
 // ── Token persistence (raw prisma — never embedded) ─────────────────
@@ -93,6 +125,21 @@ async function storeTokens(tokens: StoredTokens): Promise<void> {
   });
 }
 
+/**
+ * Does the stored Google token still WORK? `isCalendarConnected()` only
+ * proves a row exists — after an OAuth client swap the row is there and
+ * every call fails, which is how the Tools page reported Calendar/Sheets/
+ * Gmail "live" while nothing worked. This mints an access token (refreshing
+ * a stale one), so a dead refresh token reports false.
+ */
+export async function isCalendarHealthy(): Promise<boolean> {
+  try {
+    return (await getAccessToken()) !== null;
+  } catch {
+    return false;
+  }
+}
+
 export async function isCalendarConnected(): Promise<boolean> {
   try {
     return (await loadTokens()) !== null;
@@ -109,6 +156,7 @@ export async function disconnectCalendar(): Promise<void> {
     data: { active: false },
   });
   cachedAccess = null;
+  await invalidateGoogleClients();
 }
 
 // ── The flow ─────────────────────────────────────────────────────────
@@ -158,6 +206,7 @@ export async function handleOAuthCallback(code: string): Promise<{ ok: boolean; 
     expires_at: Date.now() + (json.expires_in ?? 3600) * 1000,
   });
   cachedAccess = null;
+  await invalidateGoogleClients(); // a re-connect must reach Sheets too
   console.log("[calendar] Google Calendar connected — refresh token stored");
   return { ok: true };
 }

@@ -29,32 +29,42 @@ export async function getIntegrations(): Promise<Integration[]> {
   const registered = new Set(listTools().map((t) => t.name));
 
   const has = (k: string) => !!process.env[k]?.trim();
+
+  // TRUTHFUL GOOGLE (deploy triage): every Google row below used to mean
+  // "a token row exists", which stays true forever after an OAuth client
+  // swap while every actual call fails. One probe, shared by Calendar and
+  // Sheets (same login), that mints an access token — refreshing a stale
+  // one, and reporting false when the refresh token is dead.
+  let googleHealthy = false;
+  let googleHasRow = false;
+  try {
+    const { isCalendarHealthy, isCalendarConnected } = await import("../calendar/googleAuth.ts");
+    googleHasRow = await isCalendarConnected();
+    googleHealthy = googleHasRow && (await isCalendarHealthy());
+  } catch {
+    /* calendar module unavailable → not live */
+  }
   const telegramLive = has("TELEGRAM_BOT_TOKEN") && has("TELEGRAM_CHAT_ID");
   const voiceLive = has("GROQ_API_KEY");
   // Sheets is live via Cole's own Google login (once re-authorized for Sheets)
   // OR the legacy service account.
-  let sheetsViaOAuth = false;
-  try {
-    const { getUserGoogleClient } = await import("../calendar/googleAuth.ts");
-    sheetsViaOAuth = (await getUserGoogleClient()) !== null;
-  } catch {
-    sheetsViaOAuth = false;
-  }
-  const sheetsLive = registered.has("google_sheets") && (sheetsViaOAuth || has("GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH"));
+  const sheetsLive =
+    registered.has("google_sheets") && (googleHealthy || has("GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH"));
 
-  let calendarLive = false;
-  try {
-    const { isCalendarConnected, isCalendarConfigured } = await import("../calendar/googleAuth.ts");
-    calendarLive = isCalendarConfigured() && (await isCalendarConnected());
-  } catch {
-    /* calendar module unavailable → not live */
-  }
+  const calendarLive = googleHealthy;
+  // A stored-but-dead token is its own state: the fix is a re-connect, not
+  // a first-time setup, and saying so is the difference between two minutes
+  // and an evening.
+  const googleTokenDead = googleHasRow && !googleHealthy;
 
-  // Gmail: derive live status the same way as calendar (don't hardcode).
+  // Gmail rides the same OAuth client but its own token — probe it too.
   let gmailLive = false;
+  let gmailTokenDead = false;
   try {
     const { gmailAuth } = await import("../gmail/engine.ts");
-    gmailLive = registered.has("gmail") && (await gmailAuth.isConnected());
+    const connected = registered.has("gmail") && (await gmailAuth.isConnected());
+    gmailLive = connected && (await gmailAuth.isHealthy());
+    gmailTokenDead = connected && !gmailLive;
   } catch {
     /* gmail module unavailable → not live */
   }
@@ -88,7 +98,11 @@ export async function getIntegrations(): Promise<Integration[]> {
       status: calendarLive ? "live" : registered.has("google_calendar") ? "config" : "config",
       desc: "Read/write events, availability scanning, calendar-aware planning",
       glyph: "▤",
-      need: calendarLive ? undefined : "one-time auth at /api/calendar/auth",
+      need: calendarLive
+        ? undefined
+        : googleTokenDead
+          ? "your stored Google token was REJECTED (usually: the OAuth client changed, access was revoked, or the consent screen is still in Testing — those tokens die after 7 days). Re-connect at /api/calendar/auth"
+          : "one-time auth at /api/calendar/auth",
     },
     {
       name: "Telegram",
@@ -122,7 +136,11 @@ export async function getIntegrations(): Promise<Integration[]> {
       status: sheetsLive ? "live" : "config",
       desc: "Reads athlete sessions by name, writes feedback + PRs back (training engine)",
       glyph: "▦",
-      need: sheetsLive ? undefined : "re-authorize Google at /api/calendar/auth (adds Sheets to your login) — then just name an athlete",
+      need: sheetsLive
+        ? undefined
+        : googleTokenDead
+          ? "same dead Google token as Calendar — re-connect at /api/calendar/auth and Sheets comes back with it"
+          : "re-authorize Google at /api/calendar/auth (adds Sheets to your login) — then just name an athlete",
     },
     {
       name: "Planning",
@@ -147,7 +165,11 @@ export async function getIntegrations(): Promise<Integration[]> {
       status: gmailLive ? "live" : "config",
       desc: "Read + draft-only. Flags what needs you, never sends on its own",
       glyph: "✉",
-      need: gmailLive ? undefined : "one Google OAuth authorization at /api/gmail/auth",
+      need: gmailLive
+        ? undefined
+        : gmailTokenDead
+          ? "your stored Gmail token was REJECTED — re-connect at /api/gmail/auth (Gmail has its OWN token AND its own GOOGLE_GMAIL_REDIRECT_URI, separate from the calendar's)"
+          : "one Google OAuth authorization at /api/gmail/auth",
     },
     {
       name: "Vision (photos & video)",
@@ -163,7 +185,9 @@ export async function getIntegrations(): Promise<Integration[]> {
         ? "Running on MOCK embeddings — recall is not semantic yet"
         : `Semantic recall via ${embProvider} embeddings`,
       glyph: "❈",
-      need: embLive ? undefined : "set EMBEDDINGS_PROVIDER=gemini + a Gemini key, then re-embed",
+      need: embLive
+        ? undefined
+        : `EMBEDDINGS_PROVIDER=${embProvider} has no matching key — set ${embProvider === "gemini" ? "GEMINI_API_KEY" : "OPENAI_API_KEY"} (or switch provider), then re-embed with scripts/backfillEmbeddings.ts --force`,
     },
     {
       name: "Canvas LMS",

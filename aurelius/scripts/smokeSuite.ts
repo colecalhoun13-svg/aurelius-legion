@@ -1958,6 +1958,62 @@ async function main() {
     );
   }
 
+  console.log("── the doctor: honest health, every failure carrying its fix ──");
+  {
+    // Runs with the smoke env (no provider keys, EMBEDDINGS_PROVIDER=mock), so
+    // every live probe short-circuits on "not configured" — no network calls.
+    const { runDoctor, formatDoctor } = await import("../core/doctor.ts");
+    const result = await runDoctor();
+    const byName = (n: string) => result.checks.find((c) => c.name === n);
+
+    check("doctor reports the database it just used as reachable", byName("database")?.status === "ok");
+    check(
+      "a keyless provider is DORMANT, never broken (hard rule 4)",
+      byName("anthropic")?.status === "dormant" && byName("openai")?.status === "dormant"
+    );
+    check(
+      "mock embeddings report as BROKEN, not 'configured' — recall is fake",
+      byName("embeddings")?.status === "fail" && /mock/i.test(byName("embeddings")?.detail ?? "")
+    );
+    check(
+      "every failure carries a fix (hard rule 3 — never just a symptom)",
+      result.checks.filter((c) => c.status === "fail").every((c) => !!c.fix?.trim())
+    );
+    const report = formatDoctor(result);
+    check(
+      "the printed report names the broken things and their fixes",
+      report.includes("embeddings") && report.includes("→") && report.length > 200
+    );
+  }
+
+  console.log("── preflight: one honest line per subsystem at boot ──");
+  {
+    const { preflight } = await import("../core/preflight.ts");
+    const lines: string[] = [];
+    const realLog = console.log;
+    console.log = (...args: any[]) => { lines.push(args.join(" ")); };
+    try { preflight(); } finally { console.log = realLog; }
+    check("preflight names llm, embeddings, web search, google, lock and timezone",
+      ["llm:", "embeddings:", "web search:", "google:", "api lock:", "timezone:"].every((k) =>
+        lines.some((l) => l.includes(k))));
+    check("mock embeddings are called out at boot, not left silent",
+      lines.some((l) => l.includes("embeddings:") && /MOCK/i.test(l)));
+  }
+
+  console.log("── content: an engine error is never filed as a caption ──");
+  {
+    // No provider keys in the smoke env → runLLM returns its honest failure
+    // string. That string used to come back as ok:true WITH the error as the
+    // caption, ready to be staged for publish.
+    const { contentAdapter } = await import("../tools/adapters/content.ts");
+    const res = await contentAdapter.run("draft_post", { topic: `smoke ${TAG}` });
+    check(
+      "draft_post fails loudly instead of returning error text as the caption",
+      res.ok === false && !!res.error && /not configured|providers failed|error/i.test(res.error)
+    );
+    check("non-idempotent write adapters never auto-retry", contentAdapter.maxRetries === 0);
+  }
+
   // ── cleanup (smoke artifacts only) ──
   await prisma.vectorEmbedding.deleteMany({ where: { sourceId: doc.id } });
   await prisma.corpusDocument.delete({ where: { id: doc.id } });
