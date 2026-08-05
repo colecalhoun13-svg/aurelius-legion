@@ -1979,6 +1979,21 @@ async function main() {
       "every failure carries a fix (hard rule 3 — never just a symptom)",
       result.checks.filter((c) => c.status === "fail").every((c) => !!c.fix?.trim())
     );
+    // The regression that prompted this: unset providers got a row, CONFIGURED
+    // ones silently vanished, so the report showed three engines where six
+    // exist — and hid exactly the ones Cole had just set up.
+    for (const provider of ["anthropic", "openai", "gemini", "groq", "deepseek", "xai"]) {
+      check(`${provider} always appears, configured or not`, !!byName(provider));
+    }
+    check(
+      "every integration that reads a key gets a row (fred, paperless, instagram, sheets, web search)",
+      ["fred", "paperless", "instagram", "sheets auth", "web search"].every((n) => !!byName(n))
+    );
+    check(
+      "no check is silently omitted — areas cover core, engines, retrieval, google, data",
+      ["core", "engines", "retrieval", "google", "data"].every((a) =>
+        result.checks.some((c) => c.area === a))
+    );
     const report = formatDoctor(result);
     check(
       "the printed report names the broken things and their fixes",
