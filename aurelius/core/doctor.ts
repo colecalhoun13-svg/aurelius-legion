@@ -14,6 +14,9 @@
 // as DORMANT, never as broken — an integration Cole hasn't set up is a
 // choice, not a fault.
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { ANTHROPIC_DEFAULT_MODEL as ROUTER_DEFAULT_MODEL } from "../llm/modelConfig.ts";
 
 export type CheckStatus = "ok" | "dormant" | "fail";
@@ -63,8 +66,15 @@ async function anthropicModels(key: string): Promise<string[] | null> {
 async function checkAnthropic(): Promise<Check> {
   const key = env("ANTHROPIC_API_KEY");
   if (!key) {
-    return dormant("engines", "anthropic", "no ANTHROPIC_API_KEY on THIS service",
-      "set ANTHROPIC_API_KEY on the BACKEND service (the frontend having it is not enough — the backend is what reasons)");
+    // NOT DORMANT. Anthropic is the strategic + high-leverage tier and the
+    // fall-through for every task type the router doesn't name explicitly —
+    // roughly everything. Filing its absence under "by choice" is how Cole ran
+    // a week at 90% failover thinking the report looked fine.
+    return fail("engines", "anthropic",
+      "no ANTHROPIC_API_KEY on THIS service — the tier almost every task routes to has no engine",
+      "set ANTHROPIC_API_KEY on the BACKEND service (the frontend having it is not enough — the backend is what reasons), " +
+        "then press Apply Changes in Railway: the new value only reaches the process on the next deploy. " +
+        "Until then every Claude-routed call lands on a substitute model, and the opus reviewer is skipped with no trace.");
   }
   // Probe the model the router actually defaults to, not a hardcoded guess —
   // otherwise the doctor can report broken while chat works, or vice versa.
@@ -165,6 +175,8 @@ async function bearerProbe(args: {
   keyName: string;
   url: string;
   role: string;
+  /** Where the operator goes to fix billing or re-copy the key. */
+  console: string;
   fixWhenDormant: string;
 }): Promise<Check> {
   const key = env(args.keyName);
@@ -175,11 +187,33 @@ async function bearerProbe(args: {
       signal: AbortSignal.timeout(15_000),
     });
     if (res.ok) return ok(args.area, args.name, `live — key accepted · ${args.role}`);
-    const body = (await res.text().catch(() => "")).slice(0, 160);
-    return fail(args.area, args.name, `${res.status}: ${body || "rejected"}`,
-      res.status === 401 || res.status === 403
-        ? `re-copy ${args.keyName} (watch for a trailing space/newline) and redeploy`
-        : `check the provider's dashboard — the message above is theirs`);
+    const raw = await res.text().catch(() => "");
+    let msg: string = raw;
+    try {
+      const j = JSON.parse(raw);
+      msg = j?.error?.message ?? j?.error ?? j?.message ?? raw;
+    } catch { /* not JSON — use the raw body */ }
+    // 400 chars, not 160: xAI's reply carried the billing console URL and the
+    // old slice amputated it mid-link.
+    msg = String(msg).slice(0, 400);
+
+    // A FUNDED-ACCOUNT problem and a BAD-KEY problem are the same red X
+    // otherwise, and their fixes have nothing to do with each other. Cole's
+    // xAI key was perfectly valid — his team had no credits — and this told
+    // him to re-paste the key.
+    if (/credit|licen[cs]e|billing|payment|balance|insufficient|quota|permission.?denied/i.test(msg)) {
+      return fail(args.area, args.name, `billing — the KEY IS VALID, the account can't pay for calls: ${msg}`,
+        `add credits or a plan at ${args.console}. Do NOT re-paste ${args.keyName} — nothing is wrong with the key or the deploy.`);
+    }
+    if (res.status === 429 || /rate.?limit/i.test(msg)) {
+      return fail(args.area, args.name, `rate limited — the key WORKS: ${msg}`,
+        `wait it out, or raise the limit at ${args.console}`);
+    }
+    if (res.status === 401) {
+      return fail(args.area, args.name, `key REJECTED (401): ${msg}`,
+        `re-copy ${args.keyName} from ${args.console} (no quotes, no trailing space/newline), then press Apply Changes in Railway — the new value only reaches the process on the next deploy.`);
+    }
+    return fail(args.area, args.name, `${res.status}: ${msg}`, `check ${args.console} — the message above is theirs`);
   } catch (e: any) {
     return fail(args.area, args.name, `unreachable: ${e?.message ?? e}`, "network/egress problem from the container");
   }
@@ -188,19 +222,19 @@ async function bearerProbe(args: {
 function checkOptionalEngineKeys(): Array<Promise<Check>> {
   return [
     bearerProbe({
-      area: "engines", name: "groq", keyName: "GROQ_API_KEY",
+      area: "engines", name: "groq", console: "console.groq.com", keyName: "GROQ_API_KEY",
       url: "https://api.groq.com/openai/v1/models",
       role: "the cheap high-volume tier (log/extract/track/quick replies) + voice-note transcription",
       fixWhenDormant: "optional but free — a Groq key also turns on Telegram voice notes",
     }),
     bearerProbe({
-      area: "engines", name: "deepseek", keyName: "DEEPSEEK_API_KEY",
+      area: "engines", name: "deepseek", console: "platform.deepseek.com", keyName: "DEEPSEEK_API_KEY",
       url: "https://api.deepseek.com/models",
       role: "the math / code-heavy tier",
       fixWhenDormant: "optional — those tasks fall back to Anthropic without it",
     }),
     bearerProbe({
-      area: "engines", name: "xai", keyName: "XAI_API_KEY",
+      area: "engines", name: "xai", console: "console.x.ai", keyName: "XAI_API_KEY",
       url: "https://api.x.ai/v1/models",
       role: "the realtime/current-events tier",
       fixWhenDormant: "optional — realtime questions fall back to web search",
@@ -261,19 +295,38 @@ async function checkInstagram(): Promise<Check> {
       return dormant("outward", "instagram", "app configured, account not connected", "one tap at /api/instagram/auth");
     }
     return ok("outward", "instagram", "connected — publishing still stops for your confirm (outward, non-grantable)");
-  } catch {
-    return dormant("outward", "instagram", "not wired on this build", "");
+  } catch (e: any) {
+    return fail("outward", "instagram", `module failed to load: ${e?.message ?? e}`,
+      "this is a code/deploy error, not a config choice — see the backend log");
   }
 }
 
-function checkSheets(): Check {
+function checkSheets(calendar: Check | undefined): Check {
   const path = env("GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH");
-  if (path) return ok("google", "sheets auth", `service account file: ${path}`);
-  if (env("GOOGLE_CLIENT_ID")) {
-    return ok("google", "sheets auth", "rides your Google login (no service account needed) — health follows the calendar token above");
+  if (path) {
+    // Presence of a STRING is not presence of a FILE. The adapter opens this
+    // at call time; a typo'd or unmounted path was green here and threw there.
+    try {
+      JSON.parse(fs.readFileSync(path, "utf8"));
+      return ok("google", "sheets auth", `service account file present and parseable: ${path}`);
+    } catch (e: any) {
+      return fail("google", "sheets auth", `GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH=${path} is unreadable or not JSON: ${e?.message ?? e}`,
+        "mount the key file into the container at that path, or drop the var and use the Google login instead");
+    }
   }
-  return dormant("google", "sheets auth", "no Google login and no service account",
-    "connect Google at /api/calendar/auth — one authorization covers Calendar and Sheets");
+  if (!env("GOOGLE_CLIENT_ID")) {
+    return dormant("google", "sheets auth", "no Google login and no service account",
+      `connect Google at ${authUrl("/api/calendar/auth")} — one authorization covers Calendar and Sheets`);
+  }
+  if (calendar?.status === "fail") {
+    return fail("google", "sheets auth", "DEAD — Sheets rides the calendar token, and that token is rejected (see above)",
+      `every Sheets read and write is failing right now. Fixing the calendar row fixes this one: ${authUrl("/api/calendar/auth")}`);
+  }
+  if (calendar?.status !== "ok") {
+    return dormant("google", "sheets auth", "waiting on the Google login (Sheets rides the calendar token)",
+      `connect once at ${authUrl("/api/calendar/auth")}`);
+  }
+  return ok("google", "sheets auth", "rides your Google login — the calendar token above is live");
 }
 
 function checkIngestPaths(): Check[] {
@@ -287,11 +340,41 @@ function checkIngestPaths(): Check[] {
   out.push(vault
     ? ok("data", "vault mirror", `mirroring to ${vault}`)
     : dormant("data", "vault mirror", "not configured — Obsidian vault mirror", "optional; set VAULT_DIR at the Mini deploy"));
+  // A SET STRING IS NOT A WORKING BACKUP. This printed OK off the env var alone
+  // — it never asked whether the directory was writable, whether a Railway
+  // volume was actually mounted there, or whether a dump had ever landed. An
+  // unmounted path means every nightly dump dies with the container, silently,
+  // under a green tick.
   const backups = env("AURELIUS_BACKUP_DIR");
-  out.push(backups
-    ? ok("core", "backups", `nightly dumps → ${backups}`)
-    : fail("core", "backups", "AURELIUS_BACKUP_DIR not set — nightly dumps have nowhere durable to land",
-        "set AURELIUS_BACKUP_DIR=/data/backups and mount a volume at /data, or the 02:00 backup writes into a container that gets replaced"));
+  if (!backups) {
+    out.push(fail("core", "backups", "AURELIUS_BACKUP_DIR not set — nightly dumps have nowhere durable to land",
+      "set AURELIUS_BACKUP_DIR=/data/backups and mount a Railway volume at /data, or the 02:00 backup writes into a container that gets replaced"));
+  } else {
+    try {
+      fs.mkdirSync(backups, { recursive: true });
+      const probe = path.join(backups, ".doctor-probe");
+      fs.writeFileSync(probe, "ok");
+      fs.unlinkSync(probe);
+      const dumps = fs
+        .readdirSync(backups)
+        .filter((f) => f.startsWith("aurelius-") && f.endsWith(".dump"))
+        .map((f) => fs.statSync(path.join(backups, f)).mtimeMs)
+        .sort((a, b) => b - a);
+      if (!dumps.length) {
+        out.push(fail("core", "backups", `${backups} is writable but EMPTY — no dump has ever landed`,
+          "the 02:00 job has never succeeded. Check the backend log for [backup] lines, and confirm a Railway volume is mounted at the parent of this path — without one, dumps die with the container."));
+      } else {
+        const ageH = Math.round((Date.now() - dumps[0]) / 3600_000);
+        out.push(ageH > 48
+          ? fail("core", "backups", `newest dump is ${ageH}h old (${dumps.length} on disk in ${backups})`,
+              "the 02:00 job hasn't run or hasn't succeeded — check the [backup] lines in the backend log")
+          : ok("core", "backups", `${dumps.length} dump(s) in ${backups}, newest ${ageH}h old`));
+      }
+    } catch (e: any) {
+      out.push(fail("core", "backups", `${backups} is NOT writable: ${e?.message ?? e}`,
+        "mount a Railway volume at /data (service → Settings → Volumes) — without it the 02:00 dump has nowhere to land and every backup is lost on redeploy"));
+    }
+  }
   return out;
 }
 
@@ -316,8 +399,17 @@ async function checkEmbeddings(): Promise<Check> {
     const { getEmbeddingAdapter } = await import("../retrieval/embeddingAdapter.ts");
     const adapter = getEmbeddingAdapter();
     if (!adapter) {
-      return fail("retrieval", "embeddings", "no adapter resolved — retrieval DISABLED",
-        `check EMBEDDINGS_PROVIDER and ${keyName}`);
+      // By here the provider and key are both proven fine, so the only way to
+      // land here is the kill switch. Saying "check EMBEDDINGS_PROVIDER and
+      // the key" would send Cole to re-verify the two things just validated.
+      const killed = process.env.RETRIEVAL_EMBEDDINGS_ENABLED === "false";
+      return fail("retrieval", "embeddings",
+        killed
+          ? "RETRIEVAL_EMBEDDINGS_ENABLED=false — retrieval is switched OFF at the kill switch, even though the provider and key are both fine"
+          : "no adapter resolved — retrieval DISABLED",
+        killed
+          ? "unset RETRIEVAL_EMBEDDINGS_ENABLED (or set it to true) and redeploy"
+          : `check EMBEDDINGS_PROVIDER and ${keyName}`);
     }
     const [vec] = await adapter.embed(["aurelius doctor probe"]);
     if (Array.isArray(vec) && vec.length > 0) {
@@ -342,7 +434,11 @@ async function checkVectorGeometry(): Promise<Check | null> {
   try {
     const { getEmbeddingAdapter } = await import("../retrieval/embeddingAdapter.ts");
     const adapter = getEmbeddingAdapter();
-    if (!adapter) return null; // the embeddings check already reported this
+    if (!adapter) {
+      // Never null — a dropped row reads as "fine". The embeddings row above
+      // carries the fix; this one just refuses to disappear.
+      return dormant("retrieval", "vector index", "not measurable — no embedder resolved (see the embeddings row above)", "");
+    }
     const active = `${adapter.name}:${adapter.model}`;
     const { prisma } = await import("./db/prisma.ts");
     const rows: Array<{ embeddingModel: string; n: bigint }> = await prisma.$queryRaw`
@@ -361,9 +457,19 @@ async function checkVectorGeometry(): Promise<Check | null> {
         "the provider changed, so the whole index is in the wrong geometry — recall silently returns nothing. Re-embed: cd aurelius && DATABASE_URL=<url> npx tsx scripts/backfillEmbeddings.ts --force");
     }
     if (usable < total) {
-      return dormant("retrieval", "vector index",
-        `${usable}/${total} vectors readable by ${active} — the rest were embedded by another model`,
-        "run scripts/backfillEmbeddings.ts --force to bring the whole index into one geometry");
+      const stranded = rows
+        .filter((r) => r.embeddingModel !== active)
+        .map((r) => `${r.embeddingModel} (${Number(r.n)})`)
+        .join(", ");
+      // NOT dormant — nobody chose this, and the consequence is invisible:
+      // searchSimilar filters on embeddingModel, so these rows are excluded
+      // from EVERY recall query forever and nothing ever says so.
+      return fail("retrieval", "vector index",
+        `${usable}/${total} vectors readable by ${active} — ${total - usable} are STRANDED in ${stranded} and are filtered out of every recall query. Whatever they encode will never surface again, and nothing will tell you.`,
+        `re-embed the index into one geometry, and PIN THE PROVIDER EXPLICITLY: ` +
+          `EMBEDDINGS_PROVIDER=${adapter.name} DATABASE_URL=<prod url> npx tsx scripts/backfillEmbeddings.ts --force . ` +
+          `The pin matters — that script loads .env, and a local .env carrying EMBEDDINGS_PROVIDER=mock would overwrite all ${total} production vectors with hash garbage. ` +
+          `--force is required too: the incremental path skips any source that already has a row regardless of which model wrote it — i.e. exactly the stranded ones.`);
     }
     return ok("retrieval", "vector index", `${total} vectors, all readable by ${active}`);
   } catch (e: any) {
@@ -378,15 +484,25 @@ async function checkVectorGeometry(): Promise<Check | null> {
  * been dead for a week reads as "everything's fine" unless Cole opens Traces.
  */
 async function checkFailover(): Promise<Check | null> {
+  const KEY_FOR: Record<string, string> = {
+    anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", groq: "GROQ_API_KEY",
+    gemini: "GEMINI_API_KEY", deepseek: "DEEPSEEK_API_KEY", xai: "XAI_API_KEY",
+  };
   try {
     const { prisma } = await import("./db/prisma.ts");
     const since = new Date(Date.now() - 7 * 86400_000);
     const recent = await prisma.logEntry.findMany({
       where: { type: "llm_call", createdAt: { gte: since } },
       select: { context: true },
-      take: 2000,
+      // ORDER matters: `take` without it made recent.length a cap over an
+      // arbitrary slice, so the percentage went arbitrary above the limit.
+      orderBy: { createdAt: "desc" },
+      take: 5000,
     });
-    if (!recent.length) return null;
+    if (!recent.length) {
+      // Never return null — a missing row reads as "fine".
+      return dormant("engines", "failover", "no LLM calls logged in the last 7 days — nothing to measure", "");
+    }
     const counts = new Map<string, number>();
     for (const r of recent) {
       const from = (r.context as any)?.failedOverFrom;
@@ -394,17 +510,43 @@ async function checkFailover(): Promise<Check | null> {
     }
     const total = [...counts.values()].reduce((a, b) => a + b, 0);
     if (total === 0) return ok("engines", "failover", `no failovers in ${recent.length} calls over 7 days`);
-    const detail = [...counts.entries()].map(([p, n]) => `${p} → ${n}×`).join(", ");
+
+    const detail = [...counts.entries()].map(([p, n]) => `${n}× away from ${p}`).join(", ");
     const share = total / recent.length;
-    return share > 0.25
-      ? fail("engines", "failover", `${total}/${recent.length} calls failed over in 7 days (${detail})`,
-          "a provider is failing consistently — the checks above say which. Scheduled rituals never mention this, so it can run for weeks unnoticed.")
-      : dormant("engines", "failover", `${total}/${recent.length} calls failed over in 7 days (${detail})`,
-          "occasional failover is the system working as designed");
-  } catch {
-    return null;
+    if (share <= 0.25) {
+      return dormant("engines", "failover", `${total}/${recent.length} calls re-routed in 7 days (${detail})`,
+        "occasional failover is the system working as designed");
+    }
+    const [worst] = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    const worstProvider = worst[0];
+    const configured = !!process.env[KEY_FOR[worstProvider] ?? ""]?.trim();
+    return fail("engines", "failover",
+      `${total}/${recent.length} calls (${Math.round(share * 100)}%) were re-routed away from the engine the router chose (${detail})`,
+      configured
+        ? `${worstProvider} is answering but failing — the "${worstProvider}" row above carries the provider's own error. Scheduled rituals never mention failover, so this runs for weeks unnoticed.`
+        : `THIS IS THE "${worstProvider}" ROW ABOVE, not a separate fault: ${worstProvider} has no key on this service, so every call the router sends there lands on a substitute model. Fix that row and this one clears on its own.`);
+  } catch (e: any) {
+    return fail("engines", "failover", `couldn't read the call log: ${e?.message ?? e}`, "see the backend log");
   }
 }
+
+/**
+ * The public origin, derived from what we already know. The report printed the
+ * real domain on the "redirect uri" line and then, four lines later, told Cole
+ * to open `https://<backend-domain>/api/calendar/auth` — a literal placeholder,
+ * in Telegram, where he can't substitute anything. These auth routes are in
+ * AUTH_EXEMPT, so a plain browser tap works.
+ */
+function publicOrigin(): string | null {
+  const r = process.env.GOOGLE_REDIRECT_URI?.trim();
+  if (r) {
+    try { return new URL(r).origin; } catch { /* fall through */ }
+  }
+  const d = process.env.RAILWAY_PUBLIC_DOMAIN?.trim(); // Railway injects this
+  return d ? `https://${d}` : null;
+}
+const authUrl = (p: string): string =>
+  `${publicOrigin() ?? `http://localhost:${process.env.PORT || 3001}`}${p}`;
 
 // ── Google (calendar + gmail) ────────────────────────────────────────
 // The subtle one: a stored refresh token is bound to the CLIENT that
@@ -416,71 +558,125 @@ async function checkGoogle(): Promise<Check[]> {
   const id = env("GOOGLE_CLIENT_ID");
   const secret = env("GOOGLE_CLIENT_SECRET");
   if (!id || !secret) {
+    // NEVER return early here. The old version dropped FIVE rows at once
+    // (redirect uri, calendar, gmail, gmail redirect, consent screen) — and a
+    // missing row reads as "fine", which is the failure this file exists for.
     out.push(dormant("google", "credentials", "GOOGLE_CLIENT_ID/SECRET not set",
-      "add both from the Google Cloud Console OAuth client (must be a WEB application client)"));
+      "add both from the Google Cloud Console OAuth client (it must be a WEB application client — a Desktop client cannot register an https redirect)"));
+    for (const n of ["redirect uri", "calendar", "gmail", "gmail redirect uri", "sheets auth"]) {
+      out.push(dormant("google", n, "waiting on GOOGLE_CLIENT_ID/SECRET", ""));
+    }
     return out;
   }
   out.push(ok("google", "credentials", `client configured (…${id.slice(-14)})`));
 
+  // Validate the redirect PROPERLY. "not localhost" passed a URI pointing at
+  // the frontend service, or one missing the callback path — and this string
+  // is the root of the whole OAuth failure class.
   const redirect = process.env.GOOGLE_REDIRECT_URI?.trim();
   if (!redirect) {
-    out.push(fail("google", "redirect uri", "GOOGLE_REDIRECT_URI not set — Connect will send you to localhost",
-      "set GOOGLE_REDIRECT_URI=https://<backend-domain>/api/calendar/callback AND add that exact URI in the Google Console"));
-  } else if (redirect.includes("localhost")) {
-    out.push(fail("google", "redirect uri", `points at localhost: ${redirect}`,
-      "on a hosted deploy this must be the public backend domain + /api/calendar/callback"));
+    out.push(fail("google", "redirect uri", "GOOGLE_REDIRECT_URI not set — Connect will send your browser to localhost",
+      `set GOOGLE_REDIRECT_URI=${authUrl("/api/calendar/callback")} and register that EXACT string in the Google Console`));
   } else {
-    out.push(ok("google", "redirect uri", redirect));
+    let bad = "";
+    try {
+      const u = new URL(redirect);
+      if (u.protocol !== "https:") bad = "Google requires https for a Web client";
+      else if (u.pathname !== "/api/calendar/callback") bad = `path is "${u.pathname}", must be exactly /api/calendar/callback`;
+    } catch { bad = "not a valid URL"; }
+    out.push(bad
+      ? fail("google", "redirect uri", `${redirect} — ${bad}`,
+          "point GOOGLE_REDIRECT_URI at the BACKEND service's public domain + /api/calendar/callback, and register that exact string in the Google Console — it must match character for character, trailing slash included")
+      : ok("google", "redirect uri", redirect));
   }
 
-  // Calendar: stored token + a LIVE refresh, which is what actually breaks.
+  // CALENDAR — with a READ-ONLY probe. The old check used a forced refresh,
+  // which DISCONNECTS the token on invalid_grant: running /doctor deleted the
+  // thing it was diagnosing, so the second run always said "never connected"
+  // and the real failure moved into the quiet bucket.
+  let calendarDead = false;
   try {
-    const { isCalendarConnected, getAccessToken } = await import("../calendar/googleAuth.ts");
+    const { isCalendarConnected, probeRefresh } = await import("../calendar/googleAuth.ts");
     if (!(await isCalendarConnected())) {
-      out.push(dormant("google", "calendar", "no stored token — never connected, or a dead token was cleared",
-        "open https://<backend-domain>/api/calendar/auth once and approve"));
+      out.push(dormant("google", "calendar", "no stored token — never connected, or a dead one was cleared",
+        `open ${authUrl("/api/calendar/auth")} once and approve`));
     } else {
-      const token = await getAccessToken(true); // force refresh: the real test
-      if (token) {
-        out.push(ok("google", "calendar", "live — refresh token works, access token minted"));
+      const probe = await probeRefresh();
+      if (probe.ok) {
+        out.push(ok("google", "calendar", "live — refresh token works"));
+      } else if (probe.error === "invalid_client") {
+        // Completely different fix from invalid_grant, and re-connecting can
+        // never resolve it. Worth its own branch.
+        calendarDead = true;
+        out.push(fail("google", "calendar", "Google rejected the CLIENT, not the token (invalid_client)",
+          "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are from different OAuth clients, or the secret was rotated. Re-connecting will NOT fix this — correct the pair in Railway variables first, then re-connect."));
       } else {
-        out.push(fail("google", "calendar", "stored token REJECTED — refresh failed (usually invalid_grant)",
-          "the token was minted by a DIFFERENT OAuth client (e.g. you swapped desktop → web), or access was revoked. Re-connect at https://<backend-domain>/api/calendar/auth"));
+        calendarDead = true;
+        out.push(fail("google", "calendar", `stored token REJECTED — Google says: ${probe.error}`,
+          `Most likely on a fresh deploy: the OAuth consent screen is still in TESTING, where Google expires every refresh token after 7 days — publish it at console.cloud.google.com → OAuth consent screen. ` +
+            `Otherwise the token was minted by a DIFFERENT client (a desktop → web swap does this) or access was revoked. Either way, re-connect at ${authUrl("/api/calendar/auth")}`));
       }
     }
   } catch (e: any) {
-    out.push(fail("google", "calendar", `check threw: ${e?.message ?? e}`, "see the backend log"));
+    out.push(fail("google", "calendar", `check threw: ${e?.message ?? e}`, "this is a code/deploy error, not a config choice — see the backend log"));
   }
 
-  // Gmail rides the same OAuth client but its OWN token AND its own redirect
-  // var — setting only GOOGLE_REDIRECT_URI leaves Gmail unable to re-connect.
+  // GMAIL — its own token AND its own redirect var.
+  let gmailDead = false;
   try {
     const { gmailAuth } = await import("../gmail/engine.ts");
     if (!(await gmailAuth.isConnected())) {
-      out.push(dormant("google", "gmail", "not connected", "optional — open /api/gmail/auth to enable inbox triage"));
-    } else if (await gmailAuth.isHealthy()) {
-      out.push(ok("google", "gmail", "live — refresh token works"));
+      out.push(dormant("google", "gmail", "not connected", `optional — open ${authUrl("/api/gmail/auth")} to enable inbox triage`));
     } else {
-      out.push(fail("google", "gmail", "stored token REJECTED — refresh failed",
-        "re-connect at /api/gmail/auth (Gmail has its own token, separate from the calendar's)"));
+      // probeRefresh, not isHealthy: isHealthy can return true off a CACHED
+      // access token with no network call, so a revoked grant reported "live"
+      // for up to an hour.
+      const probe = await gmailAuth.probeRefresh();
+      if (probe.ok) {
+        out.push(ok("google", "gmail", "live — refresh token works"));
+      } else {
+        gmailDead = true;
+        out.push(fail("google", "gmail", `stored token REJECTED — Google says: ${probe.error}`,
+          `re-connect at ${authUrl("/api/gmail/auth")}. Gmail holds its OWN token and its OWN redirect var, separate from the calendar's — check the row below first.`));
+      }
     }
-    const gmailRedirect = process.env.GOOGLE_GMAIL_REDIRECT_URI?.trim();
-    if (!gmailRedirect) {
-      out.push(dormant("google", "gmail redirect uri", "GOOGLE_GMAIL_REDIRECT_URI not set — falls back to localhost",
-        "needed only to (re)connect Gmail on a hosted deploy: set it to https://<backend-domain>/api/gmail/callback and register that exact URI too. It is a SEPARATE var from GOOGLE_REDIRECT_URI."));
-    } else if (gmailRedirect.includes("localhost")) {
-      out.push(fail("google", "gmail redirect uri", `points at localhost: ${gmailRedirect}`,
-        "on a hosted deploy this must be the public backend domain + /api/gmail/callback"));
-    } else {
-      out.push(ok("google", "gmail redirect uri", gmailRedirect));
-    }
-  } catch {
-    out.push(dormant("google", "gmail", "not wired on this build", ""));
+  } catch (e: any) {
+    out.push(fail("google", "gmail", `module failed to load: ${e?.message ?? e}`,
+      "this is a code/deploy error, not a config choice — see the backend log"));
   }
 
-  // Consent-screen mode is invisible from here but bites in 7 days.
-  out.push(dormant("google", "consent screen", "cannot be read from the API — verify manually",
-    "if the OAuth consent screen is still in TESTING, publish it: Google expires refresh tokens after 7 days in testing mode"));
+  // The gmail redirect var, OUTSIDE the try above so a gmail module error
+  // can't swallow it. Dormant only when it isn't blocking anything.
+  const gmailRedirect = process.env.GOOGLE_GMAIL_REDIRECT_URI?.trim();
+  if (!gmailRedirect) {
+    // NOT a choice when the token above is dead: this var is the door. Without
+    // it /api/gmail/auth bounces the browser to localhost, so the fix printed
+    // on the gmail FAIL cannot possibly succeed.
+    const blocking = gmailDead;
+    out.push((blocking ? fail : dormant)("google", "gmail redirect uri",
+      blocking
+        ? "GOOGLE_GMAIL_REDIRECT_URI not set — AND the Gmail token above is dead. Gmail CANNOT be re-connected until this is set: the consent screen would send your browser to localhost."
+        : "GOOGLE_GMAIL_REDIRECT_URI not set — falls back to localhost",
+      `set GOOGLE_GMAIL_REDIRECT_URI=${authUrl("/api/gmail/callback")} and add that EXACT URI to the same Web OAuth client in the Google Console (it is a SEPARATE var from GOOGLE_REDIRECT_URI), then open ${authUrl("/api/gmail/auth")}`));
+  } else if (gmailRedirect.includes("localhost")) {
+    out.push(fail("google", "gmail redirect uri", `points at localhost: ${gmailRedirect}`,
+      `on a hosted deploy this must be ${authUrl("/api/gmail/callback")}`));
+  } else {
+    out.push(ok("google", "gmail redirect uri", gmailRedirect));
+  }
+
+  // Consent screen: only worth a row when a Google token is actually dead —
+  // otherwise it was unconditional, unactionable noise. When it IS relevant
+  // it's the single likeliest cause, so it gets named as such.
+  if (calendarDead || gmailDead) {
+    out.push(fail("google", "consent screen", "unverifiable from the API — and it is the #1 cause of the dead Google token(s) above",
+      "console.cloud.google.com → APIs & Services → OAuth consent screen. If Publishing status is TESTING, Google expires every refresh token after 7 days — press PUBLISH APP, then re-connect. Re-connecting without publishing buys you another 7 days and nothing more."));
+  }
+
+  // SHEETS rides the calendar token — so it must actually follow it. The old
+  // row said "health follows the calendar token above" and then printed a
+  // green tick while that token was rejected.
+  out.push(checkSheets(out.find((c) => c.name === "calendar")));
   return out;
 }
 
@@ -496,8 +692,26 @@ async function checkTelegram(): Promise<Check> {
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/getMe`, { signal: AbortSignal.timeout(15_000) });
     const j: any = await res.json().catch(() => ({}));
-    if (j?.ok) return ok("telegram", "bot", `live — @${j.result?.username ?? "bot"}`);
-    return fail("telegram", "bot", `rejected: ${j?.description ?? res.status}`, "re-copy TELEGRAM_BOT_TOKEN from BotFather");
+    if (!j?.ok) return fail("telegram", "bot", `rejected: ${j?.description ?? res.status}`, "re-copy TELEGRAM_BOT_TOKEN from BotFather");
+    const username = j.result?.username ?? "bot";
+
+    // getMe only proves the token PARSES. The real failure mode is "the bot is
+    // live but never answers": a leftover webhook, or a second poller (a stray
+    // codespace backend) stealing the updates. getWebhookInfo sees both.
+    try {
+      const wh = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`, { signal: AbortSignal.timeout(15_000) });
+      const w: any = await wh.json().catch(() => ({}));
+      if (w?.ok && w.result?.url) {
+        return fail("telegram", "bot", `@${username} has a WEBHOOK registered (${w.result.url}) — long-polling can't receive anything while one is set`,
+          `delete it: curl https://api.telegram.org/bot<token>/deleteWebhook`);
+      }
+      const lastErr = w?.result?.last_error_message;
+      if (lastErr) {
+        return fail("telegram", "bot", `@${username} — Telegram's last delivery error: ${lastErr}`,
+          "a 409 here means a SECOND process is polling the same bot token (usually a codespace backend left running). Stop the other one.");
+      }
+    } catch { /* the getMe result stands on its own */ }
+    return ok("telegram", "bot", `live — @${username}, long-polling with no webhook conflict`);
   } catch (e: any) {
     return fail("telegram", "bot", `unreachable: ${e?.message ?? e}`, "network/egress problem from the container");
   }
@@ -583,7 +797,6 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: string }>
     embeddings,
     ...(geometry ? [geometry] : []),
     ...google,
-    checkSheets(),
     telegram,
     checkWebSearch(),
     fred,
@@ -593,9 +806,11 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: string }>
   ];
   const failed = checks.filter((c) => c.status === "fail");
   const dormantCount = checks.filter((c) => c.status === "dormant").length;
+  // "by choice" is a claim about Cole's intent. Only say it about things that
+  // genuinely are optional — never about a subsystem that failed into silence.
   const summary = failed.length
-    ? `${failed.length} thing(s) BROKEN: ${failed.map((c) => c.name).join(", ")}. ${dormantCount} dormant by choice.`
-    : `Everything configured is working. ${dormantCount} dormant by choice.`;
+    ? `${failed.length} thing(s) BROKEN: ${failed.map((c) => c.name).join(", ")}. ${dormantCount} not configured.`
+    : `Everything configured is working. ${dormantCount} not configured.`;
   return { checks, summary };
 }
 
@@ -610,7 +825,12 @@ export function formatDoctor(result: { checks: Check[]; summary: string }): stri
       lines.push(`\n${area.toUpperCase()}`);
     }
     lines.push(`  ${glyph[c.status]} ${c.name} — ${c.detail}`);
-    if (c.status === "fail" && c.fix) lines.push(`      → ${c.fix}`);
+    // PRINT EVERY FIX, not just the failures. Half this file's fix strings were
+    // computed and silently discarded — including the single most useful
+    // sentence in Cole's whole report ("set ANTHROPIC_API_KEY on the BACKEND
+    // service"). A dormant row with no guidance reads as content-free noise,
+    // which is why the report looked thin.
+    if (c.fix?.trim()) lines.push(`      → ${c.fix}`);
   }
   return `${result.summary}\n${lines.join("\n")}`;
 }

@@ -83,6 +83,12 @@ export type GoogleOAuth = {
    * refresh token reports false instead of a cheerful "live".
    */
   isHealthy(): Promise<boolean>;
+  /**
+   * READ-ONLY probe: asks Google, mutates nothing, returns Google's own error
+   * code. isHealthy() can return true off a cached access token WITHOUT any
+   * network call (up to an hour after a grant is revoked) — this can't.
+   */
+  probeRefresh(): Promise<{ ok: boolean; error?: string }>;
   disconnect(): Promise<void>;
   fetch(url: string, init?: RequestInit): Promise<Response>;
 };
@@ -230,6 +236,27 @@ export function makeGoogleOAuth(cfg: {
     },
     async isHealthy() {
       try { return (await getAccessToken()) !== null; } catch { return false; }
+    },
+    async probeRefresh() {
+      const cc = clientConfig();
+      if (!cc) return { ok: false, error: "no_client_config" };
+      const stored = await loadTokens();
+      if (!stored?.refresh_token) return { ok: false, error: "no_token" };
+      try {
+        const res = await fetch(TOKEN_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: cc.id, client_secret: cc.secret,
+            refresh_token: stored.refresh_token, grant_type: "refresh_token",
+          }),
+        });
+        const json: any = await res.json().catch(() => ({}));
+        if (res.ok && json.access_token) return { ok: true };
+        return { ok: false, error: json.error ?? `HTTP ${res.status}` };
+      } catch (e: any) {
+        return { ok: false, error: `unreachable: ${e?.message ?? e}` };
+      }
     },
     disconnect,
     async fetch(url: string, init: RequestInit = {}) {

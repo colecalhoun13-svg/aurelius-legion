@@ -101,7 +101,12 @@ export const selfAdapter: ToolAdapter = {
             summary: result.summary,
             report: formatDoctor(result),
             broken: result.checks.filter((c) => c.status === "fail"),
-            dormant: result.checks.filter((c) => c.status === "dormant").map((c) => c.name),
+            // Detail + fix, not bare names. Mapping to `.name` meant that when
+            // Aurelius diagnosed itself it saw a list of words with no reasons
+            // and concluded nothing was wrong.
+            notConfigured: result.checks
+              .filter((c) => c.status === "dormant")
+              .map((c) => ({ name: c.name, detail: c.detail, fix: c.fix })),
           },
         };
       } catch (e: any) {

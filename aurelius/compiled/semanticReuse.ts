@@ -83,6 +83,10 @@ export async function recordAnswer(args: {
   taskType: string;
   input: string;
   answer: string;
+  /** Which engine/model actually produced this. Stamped into the entry so a
+   *  degraded window can be invalidated by origin instead of by hand. */
+  engine?: string;
+  model?: string;
 }): Promise<void> {
   if (args.input.trim().length < MIN_QUESTION) return;
   if (args.answer.trim().length < MIN_ANSWER) return;
@@ -102,7 +106,16 @@ export async function recordAnswer(args: {
       entityKey: args.operatorName,
       externalScopeId: "runLLM",
       situationSignature: {
-        tags: { taskType: args.taskType, operator: args.operatorName },
+        // PROVENANCE (deploy triage). Without the engine/model here, a week of
+        // answers produced by a fallback model were indistinguishable from
+        // frontier ones — and kept being SERVED from cache for 14 more days
+        // with no way to invalidate them by origin. Stamp what made it.
+        tags: {
+          taskType: args.taskType,
+          operator: args.operatorName,
+          engine: args.engine ?? "unknown",
+          model: args.model ?? "unknown",
+        },
         fingerprint: `chat:${args.operatorName}:${args.input.slice(0, 80).toLowerCase()}`,
         raw: { input: args.input.slice(0, 500) },
       },

@@ -93,6 +93,8 @@ export async function runLLM(params: RunLLMInput): Promise<LLMResponse> {
         taskType: params.taskType,
         input: params.input,
         answer: response.text,
+        engine: response.engine,
+        model: response.model,
       });
     })().catch(() => {});
   }
