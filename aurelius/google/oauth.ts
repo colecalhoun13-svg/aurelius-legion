@@ -19,20 +19,53 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 // LOGIN-CSRF GUARD (go-live council): /auth mints a single-use state; the
 // callback must return it. Without this, an attacker could lure the browser
 // to /api/*/callback?code=<their code> and poison the stored token with
-// THEIR Google account. In-memory is right — the round trip is minutes,
-// single process, and a restart just means clicking Connect again.
-import { randomBytes } from "node:crypto";
-const pendingStates = new Map<string, number>(); // state → expiry
-export function mintOAuthState(): string {
-  const s = randomBytes(16).toString("hex");
-  pendingStates.set(s, Date.now() + 10 * 60_000);
-  return s;
+// THEIR Google account.
+//
+// STATELESS, SIGNED (was: an in-memory Map). The old note said "a restart
+// just means clicking Connect again" — true in a codespace, wrong on a
+// hosted deploy, where a redeploy fires on every push to main and can land
+// in the ~30 seconds between the consent screen and the callback. The result
+// was a 403 "OAuth state mismatch" on a connect that did nothing wrong,
+// during the exact re-connect a client swap forces. The state now carries
+// its own expiry and an HMAC over it, so ANY process (or replica) can verify
+// what another one minted, with nothing stored anywhere. The CSRF property
+// is unchanged: without the secret you cannot forge a state.
+import { randomBytes, createHmac, timingSafeEqual } from "node:crypto";
+
+const STATE_TTL_MS = 10 * 60_000;
+// Per-process fallback so a misconfigured deploy still gets CSRF protection —
+// it just loses cross-restart survival, which is exactly the old behaviour.
+const processSecret = randomBytes(32).toString("hex");
+
+function stateSecret(): string {
+  return (
+    process.env.GOOGLE_CLIENT_SECRET?.trim() ||
+    process.env.AURELIUS_API_KEY?.trim() ||
+    processSecret
+  );
 }
+
+function sign(payload: string): string {
+  return createHmac("sha256", stateSecret()).update(payload).digest("hex");
+}
+
+export function mintOAuthState(): string {
+  const payload = `${randomBytes(12).toString("hex")}.${Date.now() + STATE_TTL_MS}`;
+  return `${payload}.${sign(payload)}`;
+}
+
 export function consumeOAuthState(state: string): boolean {
-  const exp = pendingStates.get(state);
-  pendingStates.delete(state);
-  for (const [k, e] of pendingStates) if (e < Date.now()) pendingStates.delete(k);
-  return !!exp && exp > Date.now();
+  if (typeof state !== "string") return false;
+  const parts = state.split(".");
+  if (parts.length !== 3) return false;
+  const [nonce, expStr, mac] = parts;
+  const expected = sign(`${nonce}.${expStr}`);
+  // Constant-time compare — the lengths are fixed, so a mismatch here is a
+  // malformed/forged state, not a timing signal.
+  if (mac.length !== expected.length) return false;
+  if (!timingSafeEqual(Buffer.from(mac, "hex"), Buffer.from(expected, "hex"))) return false;
+  const exp = Number(expStr);
+  return Number.isFinite(exp) && exp > Date.now();
 }
 
 type StoredTokens = { refresh_token: string; access_token: string; expires_at: number };

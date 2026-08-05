@@ -139,6 +139,83 @@ async function checkEmbeddings(): Promise<Check> {
   }
 }
 
+/**
+ * THE SECOND HALF OF THE EMBEDDINGS STORY. A working embedder is not a
+ * working memory: retrieval only matches rows whose stored `embeddingModel`
+ * equals the ACTIVE one, because different models put text in different
+ * places. Switch provider (mock → openai, openai → gemini) and every
+ * existing vector becomes invisible — `searchSimilar` returns zero rows,
+ * which is indistinguishable from "nothing relevant". The index is fine;
+ * it's just being read in the wrong geometry, and only a backfill fixes it.
+ */
+async function checkVectorGeometry(): Promise<Check | null> {
+  try {
+    const { getEmbeddingAdapter } = await import("../retrieval/embeddingAdapter.ts");
+    const adapter = getEmbeddingAdapter();
+    if (!adapter) return null; // the embeddings check already reported this
+    const active = `${adapter.name}:${adapter.model}`;
+    const { prisma } = await import("./db/prisma.ts");
+    const rows: Array<{ embeddingModel: string; n: bigint }> = await prisma.$queryRaw`
+      SELECT "embeddingModel", COUNT(*)::bigint AS n
+      FROM "VectorEmbedding" GROUP BY "embeddingModel"`;
+    const total = rows.reduce((a, r) => a + Number(r.n), 0);
+    if (total === 0) {
+      return dormant("retrieval", "vector index", "empty — nothing embedded yet",
+        "normal on a fresh database; it fills as knowledge lands");
+    }
+    const usable = Number(rows.find((r) => r.embeddingModel === active)?.n ?? 0);
+    if (usable === 0) {
+      const others = rows.map((r) => `${r.embeddingModel} (${Number(r.n)})`).join(", ");
+      return fail("retrieval", "vector index",
+        `${total} vectors stored, NONE readable by the active embedder (${active}). Stored as: ${others}`,
+        "the provider changed, so the whole index is in the wrong geometry — recall silently returns nothing. Re-embed: cd aurelius && DATABASE_URL=<url> npx tsx scripts/backfillEmbeddings.ts --force");
+    }
+    if (usable < total) {
+      return dormant("retrieval", "vector index",
+        `${usable}/${total} vectors readable by ${active} — the rest were embedded by another model`,
+        "run scripts/backfillEmbeddings.ts --force to bring the whole index into one geometry");
+    }
+    return ok("retrieval", "vector index", `${total} vectors, all readable by ${active}`);
+  } catch (e: any) {
+    return fail("retrieval", "vector index", `check failed: ${e?.message ?? e}`, "see the backend log");
+  }
+}
+
+/**
+ * FAILOVER IS SILENT IN THE SPINE. Chat says so out loud ("anthropic was
+ * unreachable — openai answered this one"), but the 07:00 briefing and every
+ * other scheduled job only record it in a LogEntry field. A provider that has
+ * been dead for a week reads as "everything's fine" unless Cole opens Traces.
+ */
+async function checkFailover(): Promise<Check | null> {
+  try {
+    const { prisma } = await import("./db/prisma.ts");
+    const since = new Date(Date.now() - 7 * 86400_000);
+    const recent = await prisma.logEntry.findMany({
+      where: { type: "llm_call", createdAt: { gte: since } },
+      select: { context: true },
+      take: 2000,
+    });
+    if (!recent.length) return null;
+    const counts = new Map<string, number>();
+    for (const r of recent) {
+      const from = (r.context as any)?.failedOverFrom;
+      if (typeof from === "string") counts.set(from, (counts.get(from) ?? 0) + 1);
+    }
+    const total = [...counts.values()].reduce((a, b) => a + b, 0);
+    if (total === 0) return ok("engines", "failover", `no failovers in ${recent.length} calls over 7 days`);
+    const detail = [...counts.entries()].map(([p, n]) => `${p} → ${n}×`).join(", ");
+    const share = total / recent.length;
+    return share > 0.25
+      ? fail("engines", "failover", `${total}/${recent.length} calls failed over in 7 days (${detail})`,
+          "a provider is failing consistently — the checks above say which. Scheduled rituals never mention this, so it can run for weeks unnoticed.")
+      : dormant("engines", "failover", `${total}/${recent.length} calls failed over in 7 days (${detail})`,
+          "occasional failover is the system working as designed");
+  } catch {
+    return null;
+  }
+}
+
 // ── Google (calendar + gmail) ────────────────────────────────────────
 // The subtle one: a stored refresh token is bound to the CLIENT that
 // minted it. Swap OAuth clients (desktop → web) and every stored token
@@ -287,6 +364,10 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: string }>
     checkTelegram(),
     checkDatabase(),
   ]);
+  // These two read the DB, so they run after it has been proven reachable —
+  // otherwise their failures would just restate "no database".
+  const [geometry, failover] =
+    db.status === "ok" ? await Promise.all([checkVectorGeometry(), checkFailover()]) : [null, null];
   const checks: Check[] = [
     db,
     checkLock(),
@@ -295,7 +376,9 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: string }>
     openai,
     gemini,
     ...checkOptionalEngineKeys(),
+    ...(failover ? [failover] : []),
     embeddings,
+    ...(geometry ? [geometry] : []),
     ...google,
     telegram,
     checkWebSearch(),
