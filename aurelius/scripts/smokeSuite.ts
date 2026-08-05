@@ -201,18 +201,28 @@ async function main() {
       "a frontier call never falls back to a mini model",
       FRONTIER_MODELS.has(DEFAULT_TIER.model) && !FRONTIER_MODELS.has("gpt-5.4-mini")
     );
-    // Every declared tier must be REACHABLE. highLeverage was defined and no
-    // task type could select it — Opus only ever fired via an explicit alias,
-    // so the "deeper reasoning" tier had never run on its own.
+    // Two properties, and BOTH matter. The tier must be reachable (it was
+    // declared and unselectable), and it must be OFF by default — routing more
+    // work to a pricier tier is Cole's call, not a side effect of fixing the
+    // defect. I shipped it enabled once; this test is why that can't recur.
+    const prev = process.env.AURELIUS_HIGH_LEVERAGE;
+    delete process.env.AURELIUS_HIGH_LEVERAGE;
+    check(
+      "by DEFAULT a durable-state writer routes to strategic — no silent cost change",
+      chooseModel({ taskType: "decision_judge", input: "x" } as any).model === DEFAULT_TIER.model
+    );
+    process.env.AURELIUS_HIGH_LEVERAGE = "on";
     const deep = chooseModel({ taskType: "decision_judge", input: "x" } as any);
     check(
-      "the high-leverage tier is reachable by routing, not just by explicit alias",
+      "when switched ON, the high-leverage tier is reachable by routing (not just by alias)",
       deep.model === (await import("../llm/modelConfig.ts")).ANTHROPIC_OPUS_MODEL
     );
     check(
-      "durable-state writers route deeper than a throwaway chat turn",
+      "and it then routes deeper than a throwaway chat turn",
       deep.model !== chooseModel({ taskType: "chat", input: "x" } as any).model
     );
+    if (prev === undefined) delete process.env.AURELIUS_HIGH_LEVERAGE;
+    else process.env.AURELIUS_HIGH_LEVERAGE = prev;
     // The unreachable reviewer is gone, not merely unused.
     const routerSrc = (await import("node:fs")).readFileSync(
       new URL("../llm/router.ts", import.meta.url), "utf8");
