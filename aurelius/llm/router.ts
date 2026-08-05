@@ -42,7 +42,6 @@ import type { ToolDirective } from "./directiveParser.ts";
 
 export type LLMOptions = {
   engine?: string;
-  reviewer?: string;
 };
 
 export type OperatorContext = {
@@ -96,14 +95,7 @@ export type LLMResponse = {
   toolCalls?: import("./directiveParser.ts").ToolDirective[];
   /** Set when the routed provider failed and another served the call. */
   failedOverFrom?: string;
-  reviewed?: {
-    reviewer: string;
-    model: string;
-    text: string;
-    tokensUsed: number;
-    latencyMs: number;
   };
-};
 
 // Model IDs live in a leaf module so the doctor probes the SAME model the
 // router uses, and so an account without access to the default is one env var
@@ -123,6 +115,18 @@ const TIERS = {
   multimodal:    { provider: "gemini",    model: "gemini-2.5-pro" },
   mathCheap:     { provider: "deepseek",  model: "deepseek-reasoner" },
 };
+
+/**
+ * Task types routed to the deeper tier. Weekly-cadence work whose output is
+ * written into knowledge, heuristics, or trust gates rather than shown once
+ * and forgotten. Roughly a dozen calls a week — set AURELIUS_HIGH_LEVERAGE=off
+ * to route them at the strategic tier instead.
+ */
+const HIGH_LEVERAGE_TASK_TYPES = new Set(
+  process.env.AURELIUS_HIGH_LEVERAGE?.trim().toLowerCase() === "off"
+    ? []
+    : ["decision_judge", "decision_curriculum", "curriculum_distill", "council_synthesis"]
+);
 
 const ENGINE_ALIASES: Record<string, { provider: string; model: string }> = {
   "claude-opus":   { provider: "anthropic", model: ANTHROPIC_OPUS_MODEL },
@@ -175,6 +179,27 @@ export function chooseModel(task: LLMTask): LLMChoice {
 
   if (task.taskType === "structured" || task.taskType === "json") {
     return { ...TIERS.structured, reason: `Task type "${task.taskType}" → GPT-5.4-mini.` };
+  }
+
+  // HIGH-LEVERAGE TIER — reachable at last.
+  //
+  // TIERS.highLeverage was declared and no code path could select it: Opus was
+  // reachable only through the explicit `claude-opus` alias, so the "deeper
+  // reasoning" tier had never once fired on its own. A tier the router
+  // advertises and cannot route to is a lie in the config.
+  //
+  // These are the calls that WRITE DURABLE STATE — heuristics distilled from
+  // Cole's corrections, retire verdicts against confirmed rules, the shadow
+  // grades that gate whether Aurelius may skip the LLM. They teach the system,
+  // they are hard to unwind (the repair script exists because of exactly this),
+  // and they are LOW VOLUME: a handful per week on the Sunday cycle, not
+  // per-turn. That combination — high stakes, low frequency, durable
+  // consequences — is what a high-leverage tier is for.
+  if (HIGH_LEVERAGE_TASK_TYPES.has(task.taskType)) {
+    return {
+      ...TIERS.highLeverage,
+      reason: `Task type "${task.taskType}" writes durable state that teaches the system → high-leverage tier.`,
+    };
   }
 
   return { ...TIERS.strategic, reason: "Default strategic routing → Claude Sonnet 5 (Aurelius default)." };
@@ -816,52 +841,12 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
     failedOverFrom: failedOver && served.provider !== choice.provider ? choice.provider : undefined,
   };
 
-  if (task.options?.reviewer === "claude-opus") {
-    const reviewerModel = ANTHROPIC_OPUS_MODEL;
-    const reviewerSystemPrompt = `
-You are Aurelius operating as a high-leverage reviewer. Claude Sonnet (or another primary engine) just produced a response to Cole's request. Your job is to review it.
-
-Review criteria:
-  — Does the response actually answer what Cole asked?
-  — Is the reasoning sound, or are there holes?
-  — Does it match Aurelius's voice (tactical, precise, no fluff)?
-  — Is anything missing that Cole needs?
-  — Is anything included that Cole doesn't need?
-
-Produce a refined version. Keep what worked. Fix what didn't. Match Aurelius's voice throughout. Do not announce that you are reviewing — just deliver the better response.
-`.trim();
-
-    const reviewerUserPrompt = `
-Cole's original request:
-${task.input}
-
-Primary engine's response (${choice.provider}/${choice.model}):
-${primary.text}
-
-Produce your refined response now.
-`.trim();
-
-    // The reviewer is a single direct adapter call — no failover chain. If it
-    // throws (network) or comes back a non-answer (Opus unfunded/keyless/empty),
-    // do NOT attach it: a raw "Anthropic ... is not configured." string as
-    // `reviewed` would surface as the refined answer. Fall back to primary.
-    try {
-      const reviewed = await runAdapter("anthropic", reviewerModel, reviewerSystemPrompt, reviewerUserPrompt);
-      if (!isNonAnswer(reviewed.text)) {
-        response.reviewed = {
-          reviewer: "anthropic",
-          model: reviewerModel,
-          text: reviewed.text,
-          tokensUsed: reviewed.tokensUsed,
-          latencyMs: reviewed.latencyMs,
-        };
-      } else {
-        console.warn(`[ROUTER] reviewer (${reviewerModel}) gave no usable answer — keeping primary`);
-      }
-    } catch (err) {
-      console.warn(`[ROUTER] reviewer (${reviewerModel}) threw (${(err as any)?.message ?? err}) — keeping primary`);
-    }
-  }
+  // (The "claude-opus reviewer" second pass was removed: it had ZERO call
+  // sites anywhere in the repo, so ~50 lines of authoritative-looking code
+  // could never run. Unreachable code that reads like a feature is the same
+  // class of problem as a health check that hides a row — it tells you
+  // something is there when nothing is. If a review-before-answer pass is
+  // wanted, build it deliberately, with a failover chain and a real caller.)
 
   return response;
 }
