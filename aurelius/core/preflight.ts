@@ -37,6 +37,23 @@ export function preflight(): void {
       : `[preflight] llm: NONE CONFIGURED — every reasoning call will fail honestly. Set ANTHROPIC_API_KEY.`
   );
 
+  // THE ONE THAT MATTERS MOST, AND THE ONE THAT WAS MISSING. Cole's deploy had
+  // five providers live and this line read perfectly — while the DEFAULT tier's
+  // provider was the single one absent, so 90% of all reasoning silently failed
+  // over for a week. "Some providers configured" is not the health question;
+  // "is the default one configured" is.
+  if (live.length) {
+    const defaultProvider = "anthropic"; // TIERS.strategic — the fall-through for every unlisted taskType
+    const defaultKey = providers.find(([n]) => n === defaultProvider)?.[1];
+    if (defaultKey && !set(defaultKey)) {
+      lines.push(
+        `[preflight] llm: DEFAULT TIER IS DOWN — ${defaultProvider} is the provider almost every task routes to, ` +
+          `and ${defaultKey} is not set on THIS service. Everything still answers, via ${live[0]}, ` +
+          `but the reasoning you get is the substitute's, not the one this system was tuned for. Set ${defaultKey}.`
+      );
+    }
+  }
+
   // ── Embeddings: the silent one ──
   const provider = (process.env.EMBEDDINGS_PROVIDER ?? "openai").trim().toLowerCase();
   if (provider === "mock") {

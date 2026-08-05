@@ -1968,8 +1968,8 @@ async function main() {
 
     check("doctor reports the database it just used as reachable", byName("database")?.status === "ok");
     check(
-      "a keyless provider is DORMANT, never broken (hard rule 4)",
-      byName("anthropic")?.status === "dormant" && byName("openai")?.status === "dormant"
+      "a keyless OPTIONAL provider is DORMANT, never broken (hard rule 4)",
+      ["openai", "gemini", "groq", "deepseek", "xai"].every((p) => byName(p)?.status === "dormant")
     );
     check(
       "mock embeddings report as BROKEN, not 'configured' — recall is fake",
@@ -1998,6 +1998,35 @@ async function main() {
     check(
       "the printed report names the broken things and their fixes",
       report.includes("embeddings") && report.includes("→") && report.length > 200
+    );
+    // THE BUG THAT HID EVERYTHING ELSE: every dormant row's fix was computed
+    // and thrown away, so "○ anthropic — no ANTHROPIC_API_KEY" printed with no
+    // guidance at all and the report read as content-free noise.
+    const dormantWithFix = result.checks.filter((c) => c.status === "dormant" && c.fix?.trim());
+    check(
+      "a dormant row's fix is PRINTED, not silently discarded",
+      dormantWithFix.length > 0 && dormantWithFix.every((c) => report.includes(c.fix!.slice(0, 40)))
+    );
+    // Anthropic is the fall-through tier for nearly every task — its absence
+    // is a fault, not a preference. Calling it "by choice" is how a week of
+    // 90% failover looked healthy.
+    check(
+      "a missing ANTHROPIC_API_KEY is BROKEN, never 'dormant by choice'",
+      byName("anthropic")?.status === "fail"
+    );
+    check("the summary never claims 'by choice' about things nobody chose", !result.summary.includes("by choice"));
+    // The doctor must never mutate what it measures: the calendar probe used a
+    // forced refresh, which DISCONNECTS a dead token — so running /doctor
+    // deleted the token it was diagnosing and the second run looked healthier.
+    const calendarSrc = await import("node:fs").then((fs) =>
+      fs.readFileSync(new URL("../core/doctor.ts", import.meta.url), "utf8"));
+    check(
+      "the google checks use the READ-ONLY probeRefresh, never getAccessToken(true)",
+      calendarSrc.includes("probeRefresh") && !calendarSrc.includes("getAccessToken(true)")
+    );
+    check(
+      "no fix string still prints the literal <backend-domain> placeholder",
+      !report.includes("<backend-domain>")
     );
   }
 

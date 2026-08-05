@@ -249,6 +249,45 @@ async function refreshAccessToken(stored: StoredTokens): Promise<string | null> 
   return json.access_token;
 }
 
+/**
+ * READ-ONLY health probe. Asks Google whether the refresh token still works
+ * and changes NOTHING.
+ *
+ * The doctor used to diagnose the calendar with getAccessToken(true), which
+ * routes through refreshAccessToken() — and that DISCONNECTS on invalid_grant.
+ * So running /doctor deleted the very token it was reporting on: the first run
+ * said "REJECTED", every run after said "never connected". The system appeared
+ * to heal by being examined, and the real failure moved into the quiet bucket.
+ *
+ * Returns Google's own error code, because they mean different things:
+ *   invalid_grant       → re-consent (dead token, revoked, or testing-mode expiry)
+ *   invalid_client      → the CLIENT_ID/SECRET pair is wrong; re-connecting won't help
+ *   unauthorized_client → the client isn't allowed this grant type
+ */
+export async function probeRefresh(): Promise<{ ok: boolean; error?: string }> {
+  const cfg = clientConfig();
+  if (!cfg) return { ok: false, error: "no_client_config" };
+  const stored = await loadTokens();
+  if (!stored?.refresh_token) return { ok: false, error: "no_token" };
+  try {
+    const res = await fetch(TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: cfg.id,
+        client_secret: cfg.secret,
+        refresh_token: stored.refresh_token,
+        grant_type: "refresh_token",
+      }),
+    });
+    const json: any = await res.json().catch(() => ({}));
+    if (res.ok && json.access_token) return { ok: true };
+    return { ok: false, error: json.error ?? `HTTP ${res.status}` };
+  } catch (e: any) {
+    return { ok: false, error: `unreachable: ${e?.message ?? e}` };
+  }
+}
+
 export async function getAccessToken(forceRefresh = false): Promise<string | null> {
   if (!forceRefresh && cachedAccess && cachedAccess.expiresAt - Date.now() > 60_000) {
     return cachedAccess.token;

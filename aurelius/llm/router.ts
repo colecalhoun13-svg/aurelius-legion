@@ -648,6 +648,15 @@ const FALLBACK_ORDER = ["anthropic", "openai", "groq", "gemini", "deepseek", "xa
 // answer in prose. Failover preserves the class: a directive-bearing turn
 // never silently lands on a prose-only model mid-conversation.
 export const DIRECTIVE_CAPABLE = new Set(["anthropic", "openai", "gemini"]);
+// TIER-AWARE FALLBACK (deploy triage). This used to be a flat provider→model
+// map, so a STRATEGIC call that failed over to OpenAI landed on gpt-5.4-mini —
+// the same throwaway model a `structured` call gets. Cole ran a week with
+// ANTHROPIC_API_KEY unset on the backend: 192 of 212 calls failed over, and
+// every one of them was frontier reasoning silently served by a mini model.
+// Nothing errored; the briefings just got shallower.
+//
+// A fallback must preserve the TIER, not just the provider. When the routed
+// choice was strategic or high-leverage, the substitute is the full model.
 const FALLBACK_MODELS: Record<string, string> = {
   anthropic: "claude-sonnet-5",
   openai: "gpt-5.4-mini",
@@ -656,6 +665,23 @@ const FALLBACK_MODELS: Record<string, string> = {
   deepseek: "deepseek-reasoner",
   xai: "grok-4-1-fast-reasoning",
 };
+/** Substitutes used when the call being replaced was frontier-tier. */
+const FRONTIER_FALLBACK_MODELS: Record<string, string> = {
+  anthropic: ANTHROPIC_DEFAULT_MODEL,
+  openai: "gpt-5.4",
+  gemini: "gemini-2.5-pro",
+};
+/** Was this routed choice frontier-tier — i.e. is a mini substitute a downgrade? */
+function isFrontierChoice(choice: { provider: string; model: string }): boolean {
+  return (
+    choice.model === TIERS.strategic.model ||
+    choice.model === TIERS.highLeverage.model ||
+    choice.provider === "anthropic"
+  );
+}
+function fallbackModelFor(provider: string, frontier: boolean): string {
+  return (frontier && FRONTIER_FALLBACK_MODELS[provider]) || FALLBACK_MODELS[provider];
+}
 const MAX_ATTEMPTS = 3;
 
 function providerConfigured(p: string): boolean {
@@ -699,8 +725,14 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
   // catalog to a model whose directives we'd refuse (or worse, mangle silently).
   // Prose-only primaries (groq quick replies, deepseek math) fall back anywhere.
   const preserveDirectives = DIRECTIVE_CAPABLE.has(choice.provider);
+  const frontier = isFrontierChoice(choice);
   const chain: Array<{ provider: string; model: string }> = [
-    { provider: choice.provider, model: choice.model },
+    // DON'T BURN AN ATTEMPT ON A PROVIDER WE KNOW IS DEAD. The routed choice
+    // used to go in unconditionally while only the FALLBACKS were filtered by
+    // providerConfigured — so with Anthropic unconfigured every chain was
+    // [anthropic(dead), openai, gemini] and one of three slots was spent on a
+    // guaranteed miss. That's what manufactured all 192 failover records.
+    ...(providerConfigured(choice.provider) ? [{ provider: choice.provider, model: choice.model }] : []),
     ...FALLBACK_ORDER.filter(
       (p) =>
         p !== choice.provider &&
@@ -708,8 +740,11 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
         (!preserveDirectives || DIRECTIVE_CAPABLE.has(p))
     ).map((p) => ({
       provider: p,
-      model: FALLBACK_MODELS[p],
+      model: fallbackModelFor(p, frontier),
     })),
+    // Keyless deployment: keep the routed choice so the adapter returns its
+    // honest "not configured" string rather than the chain being empty.
+    ...(providerConfigured(choice.provider) ? [] : [{ provider: choice.provider, model: choice.model }]),
   ].slice(0, MAX_ATTEMPTS);
 
   let primary: { text: string; tokensUsed: number; latencyMs: number; toolCalls?: ToolDirective[] } | null = null;
@@ -781,7 +816,7 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
   };
 
   if (task.options?.reviewer === "claude-opus") {
-    const reviewerModel = "claude-opus-4-8";
+    const reviewerModel = ANTHROPIC_OPUS_MODEL;
     const reviewerSystemPrompt = `
 You are Aurelius operating as a high-leverage reviewer. Claude Sonnet (or another primary engine) just produced a response to Cole's request. Your job is to review it.
 
