@@ -2081,6 +2081,71 @@ async function main() {
     );
   }
 
+  console.log("── the doctor: the same verdict must be right on Railway AND the Mini ──");
+  {
+    // A loopback redirect is CORRECT on a local-first box (Google exempts
+    // loopback from its https rule precisely so this works) and WRONG when
+    // hosted. The old rule was a blanket "https or fail" plus a blanket
+    // "contains localhost → fail", so the Mac Mini would have been greeted on
+    // day one by two red Xs next to a config that works perfectly.
+    const { validateRedirect } = await import("../core/doctor.ts");
+    const CAL = "/api/calendar/callback";
+    const saved = { pub: process.env.AURELIUS_PUBLIC_URL, rw: process.env.RAILWAY_PUBLIC_DOMAIN };
+    delete process.env.AURELIUS_PUBLIC_URL;
+    delete process.env.RAILWAY_PUBLIC_DOMAIN;
+
+    check(
+      "local-first: http://localhost:3001 callback is VALID (the Mini's real setup)",
+      validateRedirect("http://localhost:3001/api/calendar/callback", CAL) === ""
+    );
+    check(
+      "local-first: 127.0.0.1 is loopback too",
+      validateRedirect("http://127.0.0.1:3001/api/calendar/callback", CAL) === ""
+    );
+    check(
+      "a public host over plain http is still refused",
+      /https/.test(validateRedirect("http://example.com/api/calendar/callback", CAL))
+    );
+    check(
+      "a wrong path is caught even when the host is fine",
+      /path/.test(validateRedirect("https://x.up.railway.app/callback", CAL))
+    );
+    check("garbage is rejected, never thrown on", validateRedirect("not a url", CAL) !== "");
+
+    // Now declare a public origin — the SAME localhost URI must flip to broken,
+    // because the OAuth browser is no longer on this machine.
+    process.env.AURELIUS_PUBLIC_URL = "https://aurelius.example.com";
+    check(
+      "hosted: the same loopback URI becomes a FAILURE once a public origin exists",
+      validateRedirect("http://localhost:3001/api/calendar/callback", CAL) !== ""
+    );
+    check(
+      "hosted: and the failure names where the deploy actually answers",
+      validateRedirect("http://localhost:3001/api/calendar/callback", CAL).includes("aurelius.example.com")
+    );
+    check(
+      "hosted: a matching https URI is accepted",
+      validateRedirect("https://aurelius.example.com/api/calendar/callback", CAL) === ""
+    );
+
+    // AURELIUS_PUBLIC_URL is the host-agnostic replacement for the Railway-only
+    // variable — the Mini behind a tunnel needs the same signal.
+    const src = await import("node:fs").then((fs) =>
+      fs.readFileSync(new URL("../core/doctor.ts", import.meta.url), "utf8"));
+    check(
+      "the public origin is declarable without knowing what a Railway is",
+      src.includes("AURELIUS_PUBLIC_URL")
+    );
+    check(
+      "durable-storage advice branches on the host, not on Railway being assumed",
+      src.includes("ephemeralHost()")
+    );
+
+    if (saved.pub === undefined) delete process.env.AURELIUS_PUBLIC_URL;
+    else process.env.AURELIUS_PUBLIC_URL = saved.pub;
+    if (saved.rw !== undefined) process.env.RAILWAY_PUBLIC_DOMAIN = saved.rw;
+  }
+
   console.log("── oauth state: survives a redeploy mid-connect ──");
   {
     const { mintOAuthState, consumeOAuthState } = await import("../google/oauth.ts");
