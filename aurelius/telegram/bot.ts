@@ -36,6 +36,26 @@ export function internalApiHeaders(): Record<string, string> {
 }
 import { localClock } from "../planning/sessionPrep.ts";
 
+/** Split a long report on line boundaries so nothing is lost to Telegram's
+ *  4096-char message cap. Never mid-line: a truncated fix is a useless fix. */
+function chunkForTelegram(text: string, limit = 3800): string[] {
+  if (text.length <= limit) return [text];
+  const chunks: string[] = [];
+  let current = "";
+  for (const line of text.split("\n")) {
+    // A single pathological line still has to go somewhere — hard-split it.
+    if (line.length > limit) {
+      if (current) { chunks.push(current); current = ""; }
+      for (let i = 0; i < line.length; i += limit) chunks.push(line.slice(i, i + limit));
+      continue;
+    }
+    if (current.length + line.length + 1 > limit) { chunks.push(current); current = line; }
+    else { current = current ? `${current}\n${line}` : line; }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
 const API = "https://api.telegram.org";
 
 function token(): string | null {
@@ -337,10 +357,13 @@ async function handleCommand(chatId: string | number, text: string) {
       try {
         const { runDoctor, formatDoctor } = await import("../core/doctor.ts");
         const result = await runDoctor();
-        const report = formatDoctor(result);
-        // Telegram caps a message at 4096 chars. The fixes sit at the bottom
-        // and are the part worth keeping, so trim from the top if it runs long.
-        await send(chatId, report.length > 3900 ? `…\n${report.slice(-3900)}` : report);
+        // Telegram caps a message at 4096 chars and the report now covers every
+        // provider and integration, so it runs long. SPLIT it — the old version
+        // trimmed from the top, which silently dropped whole sections and made
+        // it look like the check only covered a handful of things.
+        for (const chunk of chunkForTelegram(formatDoctor(result))) {
+          await send(chatId, chunk);
+        }
       } catch (err: any) {
         await send(chatId, `The check itself failed: ${err?.message ?? err}`);
       }

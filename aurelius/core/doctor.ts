@@ -147,10 +147,152 @@ async function checkGemini(): Promise<Check> {
   }
 }
 
-function checkOptionalEngineKeys(): Check[] {
-  return (["GROQ_API_KEY", "DEEPSEEK_API_KEY", "XAI_API_KEY"] as const)
-    .filter((k) => !env(k))
-    .map((k) => dormant("engines", k.replace("_API_KEY", "").toLowerCase(), "not configured", "optional failover provider"));
+/**
+ * EVERY PROVIDER GETS A ROW — configured or not.
+ *
+ * The old version emitted a row only for keys that were MISSING, so the
+ * moment Cole set GROQ_API_KEY the groq line disappeared from the report
+ * entirely. Three engines showed where six exist, and the ones that vanished
+ * were precisely the ones he'd just configured. A health report that hides
+ * what you set up is worse than no report.
+ *
+ * Each of these is a plain authenticated GET against the provider's model
+ * list — the cheapest question that proves a key works.
+ */
+async function bearerProbe(args: {
+  area: string;
+  name: string;
+  keyName: string;
+  url: string;
+  role: string;
+  fixWhenDormant: string;
+}): Promise<Check> {
+  const key = env(args.keyName);
+  if (!key) return dormant(args.area, args.name, `not configured — ${args.role}`, args.fixWhenDormant);
+  try {
+    const res = await fetch(args.url, {
+      headers: { authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.ok) return ok(args.area, args.name, `live — key accepted · ${args.role}`);
+    const body = (await res.text().catch(() => "")).slice(0, 160);
+    return fail(args.area, args.name, `${res.status}: ${body || "rejected"}`,
+      res.status === 401 || res.status === 403
+        ? `re-copy ${args.keyName} (watch for a trailing space/newline) and redeploy`
+        : `check the provider's dashboard — the message above is theirs`);
+  } catch (e: any) {
+    return fail(args.area, args.name, `unreachable: ${e?.message ?? e}`, "network/egress problem from the container");
+  }
+}
+
+function checkOptionalEngineKeys(): Array<Promise<Check>> {
+  return [
+    bearerProbe({
+      area: "engines", name: "groq", keyName: "GROQ_API_KEY",
+      url: "https://api.groq.com/openai/v1/models",
+      role: "the cheap high-volume tier (log/extract/track/quick replies) + voice-note transcription",
+      fixWhenDormant: "optional but free — a Groq key also turns on Telegram voice notes",
+    }),
+    bearerProbe({
+      area: "engines", name: "deepseek", keyName: "DEEPSEEK_API_KEY",
+      url: "https://api.deepseek.com/models",
+      role: "the math / code-heavy tier",
+      fixWhenDormant: "optional — those tasks fall back to Anthropic without it",
+    }),
+    bearerProbe({
+      area: "engines", name: "xai", keyName: "XAI_API_KEY",
+      url: "https://api.x.ai/v1/models",
+      role: "the realtime/current-events tier",
+      fixWhenDormant: "optional — realtime questions fall back to web search",
+    }),
+  ];
+}
+
+// ── Data + outward integrations ──────────────────────────────────────
+// Everything else that reads a key. These were absent from the report
+// entirely, which is its own kind of lying: an integration nobody checks
+// looks identical to one that works.
+
+async function checkFred(): Promise<Check> {
+  const key = env("FRED_API_KEY");
+  if (!key) return dormant("data", "fred", "not configured — economic + rates data for the wealth operator", "a free key from fred.stlouisfed.org (~2 min)");
+  try {
+    const res = await fetch(
+      `https://api.stlouisfed.org/fred/series?series_id=GNPCA&file_type=json&api_key=${encodeURIComponent(key)}`,
+      { signal: AbortSignal.timeout(15_000) }
+    );
+    if (res.ok) return ok("data", "fred", "live — key accepted");
+    return fail("data", "fred", `${res.status}: ${(await res.text().catch(() => "")).slice(0, 140)}`,
+      "re-copy FRED_API_KEY from fred.stlouisfed.org");
+  } catch (e: any) {
+    return fail("data", "fred", `unreachable: ${e?.message ?? e}`, "network/egress problem from the container");
+  }
+}
+
+async function checkPaperless(): Promise<Check> {
+  const url = process.env.PAPERLESS_URL?.trim().replace(/\/$/, "");
+  const token = env("PAPERLESS_TOKEN");
+  if (!url || !token) {
+    return dormant("data", "paperless", "not configured — scanned documents → OCR → second brain, every 10 min",
+      "set PAPERLESS_URL + PAPERLESS_TOKEN (this one lives on the Mac Mini / NAS, not Railway)");
+  }
+  try {
+    const res = await fetch(`${url}/api/documents/?page_size=1`, {
+      headers: { authorization: `Token ${token}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.ok) return ok("data", "paperless", `live — reachable at ${url}`);
+    return fail("data", "paperless", `${res.status} from ${url}`,
+      res.status === 401 || res.status === 403 ? "re-issue PAPERLESS_TOKEN" : "check that PAPERLESS_URL is reachable from this container");
+  } catch (e: any) {
+    return fail("data", "paperless", `unreachable at ${url}: ${e?.message ?? e}`,
+      "a private/LAN address is not reachable from a cloud container — Paperless belongs on the Mini deploy");
+  }
+}
+
+async function checkInstagram(): Promise<Check> {
+  try {
+    const { isInstagramConfigured, isInstagramConnected } = await import("../instagram/auth.ts");
+    if (!isInstagramConfigured() && !env("INSTAGRAM_ACCESS_TOKEN")) {
+      return dormant("outward", "instagram", "not configured — drafting works keyless; publishing + metrics need the app",
+        "create a Meta app → INSTAGRAM_APP_ID + INSTAGRAM_APP_SECRET, then connect at /api/instagram/auth");
+    }
+    if (!(await isInstagramConnected())) {
+      return dormant("outward", "instagram", "app configured, account not connected", "one tap at /api/instagram/auth");
+    }
+    return ok("outward", "instagram", "connected — publishing still stops for your confirm (outward, non-grantable)");
+  } catch {
+    return dormant("outward", "instagram", "not wired on this build", "");
+  }
+}
+
+function checkSheets(): Check {
+  const path = env("GOOGLE_SHEETS_SERVICE_ACCOUNT_PATH");
+  if (path) return ok("google", "sheets auth", `service account file: ${path}`);
+  if (env("GOOGLE_CLIENT_ID")) {
+    return ok("google", "sheets auth", "rides your Google login (no service account needed) — health follows the calendar token above");
+  }
+  return dormant("google", "sheets auth", "no Google login and no service account",
+    "connect Google at /api/calendar/auth — one authorization covers Calendar and Sheets");
+}
+
+function checkIngestPaths(): Check[] {
+  const out: Check[] = [];
+  const dir = env("INGEST_WATCH_DIR");
+  out.push(dir
+    ? ok("data", "ingest folder", `watching ${dir}`)
+    : dormant("data", "ingest folder", "not configured — drop a file, the brain learns it within 10 min",
+        "set INGEST_WATCH_DIR to a drop folder (not the vault). Most useful on the Mini, where you have a real filesystem."));
+  const vault = env("VAULT_DIR");
+  out.push(vault
+    ? ok("data", "vault mirror", `mirroring to ${vault}`)
+    : dormant("data", "vault mirror", "not configured — Obsidian vault mirror", "optional; set VAULT_DIR at the Mini deploy"));
+  const backups = env("AURELIUS_BACKUP_DIR");
+  out.push(backups
+    ? ok("core", "backups", `nightly dumps → ${backups}`)
+    : fail("core", "backups", "AURELIUS_BACKUP_DIR not set — nightly dumps have nowhere durable to land",
+        "set AURELIUS_BACKUP_DIR=/data/backups and mount a volume at /data, or the 02:00 backup writes into a container that gets replaced"));
+  return out;
 }
 
 // ── Embeddings ───────────────────────────────────────────────────────
@@ -395,8 +537,10 @@ function checkTimezone(): Check {
 }
 
 function checkWebSearch(): Check {
-  if (env("TAVILY_API_KEY")) return ok("research", "web search", "live — Tavily");
-  if (env("GEMINI_API_KEY")) return ok("research", "web search", "live — Gemini fallback");
+  // Tavily has no free health endpoint — a probe would burn a search credit,
+  // so this row says "configured", not "verified". Say which it is.
+  if (env("TAVILY_API_KEY")) return ok("research", "web search", "Tavily configured (not probed — no free health endpoint; a real search proves it)");
+  if (env("GEMINI_API_KEY")) return ok("research", "web search", "live — Gemini grounding (the gemini key above was probed)");
   return dormant("research", "web search", "no TAVILY_API_KEY or GEMINI_API_KEY — live search disabled",
     "optional — research falls back to model knowledge and says so");
 }
@@ -416,20 +560,36 @@ export async function runDoctor(): Promise<{ checks: Check[]; summary: string }>
   // otherwise their failures would just restate "no database".
   const [geometry, failover] =
     db.status === "ok" ? await Promise.all([checkVectorGeometry(), checkFailover()]) : [null, null];
+  // The rest of the roster — every provider and integration, probed in
+  // parallel. None of these may be silently omitted: a missing row reads as
+  // "fine" and that is exactly the failure mode this whole file exists for.
+  const [optional, fred, paperless, instagram] = await Promise.all([
+    Promise.all(checkOptionalEngineKeys()),
+    checkFred(),
+    checkPaperless(),
+    checkInstagram(),
+  ]);
+  const paths = checkIngestPaths();
   const checks: Check[] = [
     db,
     checkLock(),
     checkTimezone(),
+    ...paths.filter((c) => c.area === "core"),
     anthropic,
     openai,
     gemini,
-    ...checkOptionalEngineKeys(),
+    ...optional,
     ...(failover ? [failover] : []),
     embeddings,
     ...(geometry ? [geometry] : []),
     ...google,
+    checkSheets(),
     telegram,
     checkWebSearch(),
+    fred,
+    ...paths.filter((c) => c.area === "data"),
+    paperless,
+    instagram,
   ];
   const failed = checks.filter((c) => c.status === "fail");
   const dormantCount = checks.filter((c) => c.status === "dormant").length;
