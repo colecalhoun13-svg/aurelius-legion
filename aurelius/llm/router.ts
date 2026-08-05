@@ -117,16 +117,27 @@ const TIERS = {
 };
 
 /**
- * Task types routed to the deeper tier. Weekly-cadence work whose output is
- * written into knowledge, heuristics, or trust gates rather than shown once
- * and forgotten. Roughly a dozen calls a week — set AURELIUS_HIGH_LEVERAGE=off
- * to route them at the strategic tier instead.
+ * Task types that MAY route to the deeper tier: weekly-cadence work whose
+ * output is written into knowledge, heuristics, or trust gates rather than
+ * shown once and forgotten.
+ *
+ * OFF BY DEFAULT — opt in with AURELIUS_HIGH_LEVERAGE=on.
+ *
+ * The defect this closes is that TIERS.highLeverage was declared and no code
+ * path could select it. Fixing that meant making the tier REACHABLE; it did
+ * not mean deciding to spend more of Cole's money. I shipped it enabled, which
+ * quietly changed both cost and behaviour on a system he'd said he wanted to
+ * observe as-is. A change that is reversible in code is still not a change
+ * that was authorised. Default preserves current behaviour; the switch is his.
  */
-const HIGH_LEVERAGE_TASK_TYPES = new Set(
-  process.env.AURELIUS_HIGH_LEVERAGE?.trim().toLowerCase() === "off"
-    ? []
-    : ["decision_judge", "decision_curriculum", "curriculum_distill", "council_synthesis"]
-);
+const HIGH_LEVERAGE_TASK_TYPES = ["decision_judge", "decision_curriculum", "curriculum_distill", "council_synthesis"];
+
+/** Read at call time, not import time, so the switch takes effect on restart
+ *  without a rebuild — and so tests can exercise both sides. */
+function highLeverageEnabled(): boolean {
+  const v = process.env.AURELIUS_HIGH_LEVERAGE?.trim().toLowerCase();
+  return v === "on" || v === "true" || v === "1";
+}
 
 const ENGINE_ALIASES: Record<string, { provider: string; model: string }> = {
   "claude-opus":   { provider: "anthropic", model: ANTHROPIC_OPUS_MODEL },
@@ -181,21 +192,20 @@ export function chooseModel(task: LLMTask): LLMChoice {
     return { ...TIERS.structured, reason: `Task type "${task.taskType}" → GPT-5.4-mini.` };
   }
 
-  // HIGH-LEVERAGE TIER — reachable at last.
+  // HIGH-LEVERAGE TIER — reachable, and OFF until Cole says otherwise.
   //
   // TIERS.highLeverage was declared and no code path could select it: Opus was
   // reachable only through the explicit `claude-opus` alias, so the "deeper
-  // reasoning" tier had never once fired on its own. A tier the router
-  // advertises and cannot route to is a lie in the config.
+  // reasoning" tier had never once fired on its own. That was the defect, and
+  // making it selectable is the fix. Whether to actually spend the deeper tier
+  // on these calls is a cost decision, not an engineering one — so it ships
+  // off, and everything routes to strategic exactly as before.
   //
-  // These are the calls that WRITE DURABLE STATE — heuristics distilled from
-  // Cole's corrections, retire verdicts against confirmed rules, the shadow
-  // grades that gate whether Aurelius may skip the LLM. They teach the system,
-  // they are hard to unwind (the repair script exists because of exactly this),
-  // and they are LOW VOLUME: a handful per week on the Sunday cycle, not
-  // per-turn. That combination — high stakes, low frequency, durable
-  // consequences — is what a high-leverage tier is for.
-  if (HIGH_LEVERAGE_TASK_TYPES.has(task.taskType)) {
+  // The candidates, when it's switched on: the calls that WRITE DURABLE STATE
+  // — heuristics distilled from Cole's corrections, retire verdicts against
+  // confirmed rules, council synthesis. Low volume (a handful per week on the
+  // Sunday cycle), hard to unwind, and they teach the system.
+  if (highLeverageEnabled() && HIGH_LEVERAGE_TASK_TYPES.includes(task.taskType)) {
     return {
       ...TIERS.highLeverage,
       reason: `Task type "${task.taskType}" writes durable state that teaches the system → high-leverage tier.`,
