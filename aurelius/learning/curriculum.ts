@@ -418,8 +418,18 @@ export function parseDiscoveries(text: string, field: string, existing: Unit[]):
   return out;
 }
 
-const EXPAND_WHEN_REMAINING = 4;
-const MAX_DISCOVERIES_PER_EXPAND = 12;
+// ── GAP-FIRST (2026-08-05) ───────────────────────────────────────────
+// This used to be `EXPAND_WHEN_REMAINING = 4`: gap discovery only fired once a
+// track's seed list was nearly exhausted. With ~19 seeded works plus topics per
+// track and one unit studied per field per week, that put the first gap
+// analysis roughly three years out. Cole's design was "start from what I know,
+// then find what's missing" — it never reached the second half.
+//
+// Now the gap QUEUE is kept topped up from run one, and study ALTERNATES
+// between the seed canon and gap-discovered units. The seed still gets studied;
+// it just stops being a three-year prerequisite.
+const MIN_UNSTUDIED_GAPS = 6;
+const MAX_DISCOVERIES_PER_EXPAND = 14;
 const MAX_QUEUE = 400;
 
 /**
@@ -431,6 +441,39 @@ const MAX_QUEUE = 400;
  * This is the metacognition Cole asked for: start from the seed, then see its own
  * gaps and research to fill them. Returns [] on any failure (keyless included).
  */
+/**
+ * Cole's real situation, for the tracks where a generic answer is a wasted run.
+ *
+ * The business track was studying business canon — true things, aimed at
+ * nobody. Cole is employed full-time, building a remote coaching business that
+ * currently has zero clients and no inbound. What he needs studied is that,
+ * including the questions he hasn't answered yet, because an unanswered
+ * question is itself a research target.
+ *
+ * Returns "" for every other track and on any failure — the gap analysis is
+ * strictly better with this and must never depend on it.
+ */
+async function coleSituation(domain: string): Promise<string> {
+  if (domain !== "business" && domain !== "content") return "";
+  try {
+    const { knownFacts, openGaps } = await import("../business/positioning.ts");
+    const [facts, gaps] = await Promise.all([knownFacts(), openGaps()]);
+    if (facts.length === 0) return "";
+    const factLines = facts.slice(0, 12).map((f) => `- ${f.key}: ${f.value}`).join("\n");
+    const gapLines = gaps.slice(0, 5).map((g) => `- ${g.question}`).join("\n");
+    return (
+      `WHOSE FIELD THIS IS. This is not a generic study of ${domain}. It is aimed at one operator:\n${factLines}\n\n` +
+      (gapLines
+        ? `He has NOT yet answered these, and they are legitimate research targets — study how comparable ` +
+          `operators have answered them:\n${gapLines}\n\n`
+        : "") +
+      `Weight the gaps toward what would actually move THIS situation forward.`
+    );
+  } catch {
+    return "";
+  }
+}
+
 async function fillKnowledgeGaps(track: Track, planned: Unit[]): Promise<Unit[]> {
   // What has this field ACTUALLY ingested? (the studied units, most recent first)
   let coveredTitles: string[] = [];
@@ -455,17 +498,34 @@ async function fillKnowledgeGaps(track: Track, planned: Unit[]): Promise<Unit[]>
   const covered = coveredTitles.slice(0, 160).join("; ") || "(nothing studied yet)";
   const onDeck = planned.map((u) => u.title).slice(-80).join("; ");
 
+  // For the fields that touch Cole's actual business, ground the gap analysis
+  // in HIS situation rather than a generic professional's. Without this the
+  // business track studies business-book canon — real, but not aimed at a
+  // coach with a full-time job, no offer priced, and an empty pipeline.
+  const situation = await coleSituation(track.domain);
+
   const prompt =
     `You are directing self-education to become DEEPLY versed in ${track.label} — its literature AND its actual ` +
     `subject matter.\n\n` +
     (understanding ? `CURRENT UNDERSTANDING (my synthesis of the field so far):\n${understanding}\n\n` : "") +
     `Works/topics already STUDIED: ${covered}\n\n` +
     (onDeck ? `Already planned (don't repeat): ${onDeck}\n\n` : "") +
+    (situation ? `${situation}\n\n` : "") +
     `Assess this coverage honestly against what real mastery of ${track.label} requires, and identify the most ` +
     `important GAPS: essential works/authors/schools that are missing (foundational classics, the Soviet/Eastern-bloc ` +
     `and international traditions where relevant, and the strongest current thinkers), AND core concepts, mechanisms, ` +
-    `or live debates of the field that are absent or under-covered. Prefer PRIMARY/SEMINAL sources over derivative ` +
-    `repackaging, and return a MIX of works and concepts (not all of one). Rank by how much each raises real mastery. ` +
+    `or live debates of the field that are absent or under-covered.\n\n` +
+    // Cole's instruction, verbatim in spirit: "pulling a lot of stuff not just
+    // easy picks." Without an explicit bar, gap analysis regresses to the
+    // best-known titles — which are exactly what the seed list already holds.
+    `RAISE THE BAR. Do NOT return the obvious, famous, best-selling entry points — assume those are already known. ` +
+    `Go for what a serious practitioner reaches for AFTER the popular tier: primary and seminal sources, ` +
+    `technical and academic literature, translated or non-English traditions, practitioner work that never got ` +
+    `popularised, and the genuinely contested frontier of the field. Explicitly EXCLUDE popular summaries, ` +
+    `derivative repackaging, listicle-tier business/self-help titles, and anything whose main virtue is being ` +
+    `an accessible introduction. If a famous work belongs, name the specific hard part of it that gets skipped ` +
+    `rather than the work as a whole.\n\n` +
+    `Return a MIX of works and concepts (not all of one). Rank by how much each raises real mastery. ` +
     `Return the top ${MAX_DISCOVERIES_PER_EXPAND} as ONE per line: "Work, author, or topic — why it's a gap". ` +
     `No preamble, no numbering, nothing else.`;
 
@@ -482,7 +542,39 @@ async function fillKnowledgeGaps(track: Track, planned: Unit[]): Promise<Unit[]>
   return parseDiscoveries(text, track.label, against).slice(0, MAX_DISCOVERIES_PER_EXPAND);
 }
 
-const MAX_UNITS_PER_RUN = 8;
+// Two units per track per week (7 tracks). Raised from 8 — at one-per-track a
+// field advanced 52 units a year, which is why the curriculum read as stuck on
+// the canon. Each unit is a deep research pass plus an ingest, so this roughly
+// doubles the weekly cost of the job; that is the intended trade.
+/**
+ * Pick the next unit: ALTERNATE seed canon ↔ gap-discovered queue.
+ *
+ * The old rule was "first unstudied in [canon, ...queue]", which walked the
+ * entire seed list before touching a single discovered gap. Cole's design was
+ * "start with what I know, then find what's missing" — at one unit per field
+ * per week against ~19 seeded units, the second half was roughly three years
+ * out, so in practice it never arrived.
+ *
+ * Alternating honours both halves: the canon still gets studied, it just stops
+ * being a prerequisite for everything else. Each side falls back to the other
+ * when it runs dry, so a track whose gaps haven't been discovered yet — or
+ * whose canon is finished — still advances every run.
+ *
+ * PURE (no I/O) so the alternation is testable without an LLM.
+ */
+export function selectNextUnit(canon: Unit[], queue: Unit[], studied: string[]): Unit | undefined {
+  const studiedSet = new Set(studied);
+  const unstudied = (list: Unit[]) => list.filter((u) => !studiedSet.has(norm(u.title)));
+  const canonLeft = unstudied(canon);
+  const gapsLeft = unstudied(queue);
+  // Odd counts take a gap unit, even counts take a seed unit — so the very
+  // first gap is studied on run two, not in three years.
+  return studied.length % 2 === 1
+    ? gapsLeft[0] ?? canonLeft[0]
+    : canonLeft[0] ?? gapsLeft[0];
+}
+
+const MAX_UNITS_PER_RUN = 14;
 
 // Per-domain in-process guard against concurrent runs (Sunday ritual vs. a manual
 // study_now). Curriculum runs only in the backend process, so this covers it.
@@ -517,8 +609,16 @@ export async function runCurriculumIngest(opts?: {
   let count = 0;
   let proposedHeuristics = 0;
 
+  // ROUNDS. The track loop used to run exactly once, so `cap` was never the
+  // binding limit — raising it alone changed nothing, and every field advanced
+  // one unit a week no matter what. Rounds make the cap real: with cap 14 and
+  // 7 tracks, each field studies two units, and a field that skips (no engine,
+  // already in flight) simply yields its slot to the next round.
+  const rounds = Math.max(1, Math.ceil(cap / Math.max(1, tracks.length)));
+
+  outer: for (let round = 0; round < rounds; round++) {
   for (const trk of tracks) {
-    if (count >= cap) break;
+    if (count >= cap) break outer;
     // In-process guard: don't let a manual study_now and the Sunday ritual (or two
     // manual calls) study the same domain concurrently and churn duplicate research.
     if (inFlight.has(trk.domain)) {
@@ -531,8 +631,12 @@ export async function runCurriculumIngest(opts?: {
       let list = [...trk.canon, ...state.queue];
       const studiedSet = new Set(state.studied);
 
-      // Grow the plan before it runs out (gap-driven), then re-check coverage.
-      if (list.filter((u) => !studiedSet.has(norm(u.title))).length <= EXPAND_WHEN_REMAINING && state.queue.length < MAX_QUEUE) {
+      // Keep the GAP QUEUE topped up — not "expand once the seed runs dry".
+      // This is the fix for the curriculum reading as stuck on things Cole
+      // already knew: discovery now runs while there is still seed material,
+      // so the two streams exist side by side from the first run.
+      const unstudiedGapCount = () => state.queue.filter((u) => !studiedSet.has(norm(u.title))).length;
+      if (unstudiedGapCount() < MIN_UNSTUDIED_GAPS && state.queue.length < MAX_QUEUE) {
         const added = await fillKnowledgeGaps(trk, list);
         if (added.length > 0) {
           state = { ...state, queue: [...state.queue, ...added].slice(0, MAX_QUEUE), discoveries: state.discoveries + 1 };
@@ -542,8 +646,7 @@ export async function runCurriculumIngest(opts?: {
         }
       }
 
-      // Next unit = the first in the (seed+queue) list NOT yet studied. Reorder-proof.
-      const nextUnit = list.find((u) => !studiedSet.has(norm(u.title)));
+      const nextUnit = selectNextUnit(trk.canon, state.queue, state.studied);
       const done = !nextUnit;
       let studyUnit: Unit;
       if (nextUnit) {
@@ -645,6 +748,7 @@ export async function runCurriculumIngest(opts?: {
     } finally {
       inFlight.delete(trk.domain);
     }
+  }
   }
 
   if (touched.size > 0) {

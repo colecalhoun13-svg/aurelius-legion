@@ -137,6 +137,42 @@ export async function generateMorningBriefing(dateStr?: string) {
     lines.push("Signals worth a look:");
     for (const s of attention.slice(0, 3)) lines.push(`  ⇄ ${s.title}`);
   }
+  // Overnight inbox triage runs at 05:30, ninety minutes before this. Say what
+  // it left waiting — a draft nobody knows about is a draft nobody reviews.
+  try {
+    const since = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    const drafts = await prisma.bridgeSignal.count({
+      // Still-open only: "pending" or "surfaced". A signal Cole already acted
+      // on or dismissed isn't waiting on him, and counting it would inflate
+      // the number every morning until it expired.
+      where: { sourceType: "inbox_triage", createdAt: { gte: since }, status: { in: ["pending", "surfaced"] } },
+    });
+    if (drafts > 0) {
+      lines.push(`Inbox: ${drafts} repl${drafts === 1 ? "y" : "ies"} drafted overnight, waiting on you (nothing sent).`);
+    }
+  } catch {
+    // the inbox line is a bonus, never a briefing blocker
+  }
+  // The business, when there IS one. Blocks ending, renewals, overdue
+  // follow-ups and unpaid invoices are the things that cost money if the day
+  // swallows them. Silent when the pipeline is empty — an empty CRM has
+  // nothing to report and saying so every morning is noise, not honesty.
+  try {
+    const { whatNeedsAttention } = await import("../crm/service.ts");
+    const biz = await whatNeedsAttention(7);
+    const bizLines: string[] = [];
+    for (const b of biz.blocksEnding.slice(0, 2)) bizLines.push(`  ◈ ${b.client}: ${b.title} ends soon — re-sign conversation`);
+    for (const r of biz.renewalsDue.slice(0, 2)) bizLines.push(`  ◈ ${r.client}: ${r.amount} renews`);
+    for (const f of biz.followUpsOverdue.slice(0, 2)) bizLines.push(`  ◈ ${f.name}: ${f.action ?? "follow up"} is past due`);
+    const overdueInvoices = biz.unpaid.filter((i) => i.overdue).slice(0, 2);
+    for (const u of overdueInvoices) bizLines.push(`  ◈ ${u.client} owes $${(u.outstandingCents / 100).toFixed(2)} — overdue`);
+    if (bizLines.length > 0) {
+      lines.push("Business:");
+      lines.push(...bizLines);
+    }
+  } catch {
+    // business layer unavailable — the rest of the briefing stands
+  }
   // Earned-trust nudge (council PR4): when Cole has confirmed a class 3×
   // with no undos, the briefing offers the grant — once per cooldown window,
   // max two lines, never a recurring nag. The switch stays his hand.

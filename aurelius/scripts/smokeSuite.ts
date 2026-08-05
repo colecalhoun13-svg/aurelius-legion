@@ -1243,6 +1243,56 @@ async function main() {
     }
   }
 
+  console.log("── media host: the seam that makes publishing reachable ──");
+  {
+    const { mediaHostStatus, resolvePublicMediaUrl, localDiskHost, MEDIA_ROUTE } =
+      await import("../media/host.ts");
+    const prior = process.env.MEDIA_PUBLIC_BASE_URL;
+
+    // Dormant until configured (hard rule 4) — and the reason must name the fix.
+    delete process.env.MEDIA_PUBLIC_BASE_URL;
+    const dormant = mediaHostStatus();
+    check("media host is dormant without config, and says how to fix it",
+      dormant.configured === false && /MEDIA_PUBLIC_BASE_URL/.test(dormant.reason ?? ""));
+    let refused = false;
+    try { await resolvePublicMediaUrl("/tmp/whatever.jpg"); } catch { refused = true; }
+    check("hosting a local file fails loudly while unconfigured", refused);
+
+    process.env.MEDIA_PUBLIC_BASE_URL = "https://aurelius.example.com";
+    check("media host wakes when the base URL lands", mediaHostStatus().configured === true);
+
+    // An already-public URL passes straight through — Cole may have hosted it.
+    check("an already-public URL is passed through untouched",
+      (await resolvePublicMediaUrl("https://cdn.example.com/a.jpg")) === "https://cdn.example.com/a.jpg");
+
+    // The bug this exists to prevent: handing Meta a URL only reachable from
+    // inside the network. The Graph error for that is opaque enough to cost
+    // an hour, so refuse it here with the real reason.
+    for (const unreachable of ["http://localhost:3001/x.jpg", "http://192.168.1.20/x.jpg", "http://10.0.0.5/x.jpg", "http://mini.local/x.jpg"]) {
+      let rejected = false;
+      try { await resolvePublicMediaUrl(unreachable); } catch { rejected = true; }
+      check(`a private-network URL is refused, not handed to Meta (${unreachable.split("/")[2]})`, rejected);
+    }
+
+    // Round-trip real bytes through the disk provider.
+    const hosted = await localDiskHost.put({
+      data: Buffer.from(`${TAG} pixels`),
+      contentType: "image/jpeg",
+      extension: "jpg",
+    });
+    check("hosted media gets a public URL under the served route",
+      hosted.url.startsWith("https://aurelius.example.com" + MEDIA_ROUTE) && hosted.url.endsWith(".jpg"));
+    check("hosted filenames are random, never caller-derived (the directory is public)",
+      /\/[0-9a-f]{32}\.jpg$/.test(hosted.url));
+    await localDiskHost.remove(hosted.key);
+    // Traversal in a key must not escape the media directory.
+    await localDiskHost.remove("../../../etc/passwd");
+    check("media host self-cleans and refuses to traverse out of its directory", true);
+
+    if (prior === undefined) delete process.env.MEDIA_PUBLIC_BASE_URL;
+    else process.env.MEDIA_PUBLIC_BASE_URL = prior;
+  }
+
   console.log("── client engine: the remote business, leads through money ──");
   {
     const {
@@ -1504,8 +1554,35 @@ async function main() {
   // ── curriculum: auto-learning the canon of every field ──
   console.log("── curriculum: the auto-learning canon ──");
   {
-    const { CURRICULUM, getCurriculumProgress, parseDiscoveries } = await import("../learning/curriculum.ts");
+    const { CURRICULUM, getCurriculumProgress, parseDiscoveries, selectNextUnit } =
+      await import("../learning/curriculum.ts");
     const domains = new Set(CURRICULUM.map((t) => t.domain));
+
+    // ── gap-first (2026-08-05) ──
+    // The curriculum read as stuck on things Cole already knew. It wasn't the
+    // seed list: gap discovery only fired once the seed was nearly exhausted,
+    // ~3 years out at one unit per field per week. Study now ALTERNATES seed
+    // canon and gap-discovered units, so the first gap lands on run two.
+    {
+      const canon = [{ title: "Seed A", query: "q" }, { title: "Seed B", query: "q" }, { title: "Seed C", query: "q" }];
+      const gaps = [{ title: "Gap A", query: "q" }, { title: "Gap B", query: "q" }];
+      const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+      check("first unit studied comes from the seed canon", selectNextUnit(canon, gaps, [])?.title === "Seed A");
+      check("the SECOND unit is a discovered gap, not the rest of the canon",
+        selectNextUnit(canon, gaps, [norm("Seed A")])?.title === "Gap A");
+      check("study keeps alternating seed → gap",
+        selectNextUnit(canon, gaps, [norm("Seed A"), norm("Gap A")])?.title === "Seed B");
+
+      // Each side must fall back to the other, or a track with no gaps yet
+      // (or a finished canon) would stall on alternate runs.
+      check("with no gaps discovered yet, the canon still advances every run",
+        selectNextUnit(canon, [], [norm("Seed A")])?.title === "Seed B");
+      check("with the canon finished, gaps carry the run",
+        selectNextUnit(canon, gaps, [norm("Seed A"), norm("Seed B"), norm("Seed C")])?.title === "Gap A");
+      check("everything studied yields nothing (hands off to spaced review)",
+        selectNextUnit(canon, gaps, [...canon, ...gaps].map((u) => norm(u.title))) === undefined);
+    }
     check(
       "curriculum covers all seven operator fields",
       CURRICULUM.length === 7 &&

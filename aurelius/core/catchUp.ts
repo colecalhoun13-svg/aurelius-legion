@@ -39,6 +39,15 @@ const JOBS: CatchUpJob[] = [
     run: async () => (await import("../autonomy/workflows/scheduleProtection.ts")).runScheduleProtection({ days: 5 }),
   },
   {
+    name: "inbox_triage",
+    hour: 5,
+    minute: 30,
+    // Pointless once the day is underway — Cole has read the inbox himself by
+    // then, and a pile of stale drafts is worse than none.
+    expiresHour: 11,
+    run: async () => (await import("../autonomy/workflows/inboxTriage.ts")).runInboxTriage({}),
+  },
+  {
     name: "morning_briefing",
     hour: 7,
     run: async () => {

@@ -75,6 +75,7 @@ import { correctionsRouter } from "./router/correctionsRouter.ts";
 import { gmailRouter } from "./router/gmailRouter.ts";
 import { instagramRouter } from "./router/instagramRouter.ts";
 import { crmRouter } from "./router/crmRouter.ts";
+import { MEDIA_DIR, MEDIA_ROUTE } from "./media/host.ts";
 
 // Structured tracing — every request and scheduled run leaves a LogEntry
 // row the cockpit can read. Telemetry is fire-and-forget by design.
@@ -105,8 +106,26 @@ app.use(
     // Lockable: set FRONTEND_ORIGIN (comma-separated) to pin CORS to the real
     // frontend host(s). Unset keeps the open default for local dev.
     origin: process.env.FRONTEND_ORIGIN ? process.env.FRONTEND_ORIGIN.split(",").map((s) => s.trim()) : "*",
-    methods: ["GET", "POST"],
+    // PATCH/DELETE added with the Client Engine — moving a lead through the
+    // pipeline is a PATCH, and without it a cross-origin caller gets a CORS
+    // preflight failure rather than a useful error.
+    methods: ["GET", "POST", "PATCH", "DELETE"],
     credentials: true,
+  })
+);
+
+// PUBLIC MEDIA. Instagram fetches images from its own servers by URL, so this
+// directory is deliberately unauthenticated — it sits outside /api and so
+// outside THE LOCK below, which is the point. Only media intended for
+// publication is ever written here (media/host.ts writes random filenames).
+// Dormant when MEDIA_PUBLIC_BASE_URL is unset: the directory is still served,
+// but nothing writes to it because the host reports itself unconfigured.
+app.use(
+  MEDIA_ROUTE,
+  express.static(MEDIA_DIR, {
+    index: false,
+    dotfiles: "deny",
+    maxAge: "365d", // filenames are content-random, so they never need revalidating
   })
 );
 
@@ -1511,6 +1530,21 @@ scheduleNamed("schedule_protection", "45 6 * * *", "schedule protection", async 
     });
   } catch (err) {
     console.error("[scheduleProtection] daily sweep failed:", err);
+  }
+});
+// Inbox triage at 05:30 — before the briefing, so the 07:00 push can say what's
+// waiting. This workflow already existed but was only reachable from Telegram
+// and the autonomy router: it had never been on the spine, so it only ran when
+// Cole thought to ask for it, which defeats the point of an overnight pass.
+// Drafts land in Gmail as DRAFTS — nothing is ever sent (outward stays gated).
+scheduleNamed("inbox_triage", "30 5 * * *", "inbox triage", async () => {
+  try {
+    await runTraced("schedule", "inbox_triage", async () => {
+      const { runInboxTriage } = await import("./autonomy/workflows/inboxTriage.ts");
+      await runInboxTriage({});
+    });
+  } catch (err) {
+    console.error("[inboxTriage] morning sweep failed:", err);
   }
 });
 // Morning briefing at 07:00 — the day opens with a push, not a blank page.

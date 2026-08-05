@@ -425,6 +425,18 @@ In rough priority. None are needed to go live.
     publishes**. An outward action behind the grant gate (a `content.publish`
     class); never posts on its own. Needs a Meta Business/Creator account + Graph
     API app review. Build with the Business Engine, on Cole's real accounts.
+  - *Media hosting — this is the Mini's job.* Instagram fetches the image from
+    a **public URL** and cannot accept an upload, so publishing is unreachable
+    without somewhere to serve files from. `aurelius/media/host.ts` writes to
+    `MEDIA_DIR` (default `vault/public-media`) and Express serves it at
+    `/media`. Set **`MEDIA_PUBLIC_BASE_URL`** to the origin the Mini answers on
+    (e.g. `https://aurelius.yourdomain.com`) and publishing lights up; leave it
+    unset and the doctor honestly reports Instagram as `config`, not `live`.
+    Two things to know: that directory is deliberately **unauthenticated**
+    (Meta must fetch it anonymously, so it sits outside the API lock — put
+    nothing there but media meant to be published), and a `localhost` or
+    `192.168.x` base URL is **refused** rather than handed to Meta, because
+    the Graph error for an unreachable image is opaque enough to cost an hour.
 
 Rejected (so we stop relitigating): n8n/Huginn (Aurelius *is* the workflow/trigger
 engine), MinIO (Postgres + NAS filesystem suffice), Logseq (the vault is
