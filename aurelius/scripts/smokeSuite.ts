@@ -1986,6 +1986,40 @@ async function main() {
     );
   }
 
+  console.log("── oauth state: survives a redeploy mid-connect ──");
+  {
+    const { mintOAuthState, consumeOAuthState } = await import("../google/oauth.ts");
+    const state = mintOAuthState();
+    check("a freshly minted state verifies", consumeOAuthState(state) === true);
+    check(
+      "and verifies AGAIN from a 'different process' — signed, not stored " +
+        "(a Railway redeploy between consent and callback used to 403)",
+      consumeOAuthState(state) === true
+    );
+    check("a forged state is refused", consumeOAuthState("aaaa.9999999999999.bbbb") === false);
+    check("garbage is refused, never thrown on", consumeOAuthState("nonsense") === false);
+    const [nonce] = state.split(".");
+    check(
+      "an EXPIRED state is refused even with a valid shape",
+      consumeOAuthState(`${nonce}.${Date.now() - 1000}.deadbeef`) === false
+    );
+  }
+
+  console.log("── the doctor: vector geometry, the silent recall killer ──");
+  {
+    // The smoke DB is embedded with the mock adapter, which IS the active one
+    // here — so the index reads as coherent. The check that matters is that it
+    // reports honestly at all, and never crashes the sweep.
+    const { runDoctor } = await import("../core/doctor.ts");
+    const result = await runDoctor();
+    const geo = result.checks.find((c) => c.name === "vector index");
+    check("the doctor reports on the vector index's readable geometry", !!geo);
+    check(
+      "a geometry mismatch would carry the backfill command, not just a symptom",
+      !geo || geo.status !== "fail" || /backfillEmbeddings/.test(geo.fix ?? "")
+    );
+  }
+
   console.log("── preflight: one honest line per subsystem at boot ──");
   {
     const { preflight } = await import("../core/preflight.ts");

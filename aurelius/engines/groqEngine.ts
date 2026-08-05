@@ -4,6 +4,17 @@ import { REQUEST_TIMEOUT_MS } from "./engineAdapter.ts";
 
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 
+// Groq retires model IDs aggressively, and this tier carries the cheap
+// high-volume work (log/extract/track/quick_reply/summary/rewrite). A dead ID
+// 404s every one of them into failover — honest, but only visible in chat.
+// Rotate candidates on 404 and cache the winner, same self-heal as gemini.
+const MODEL_CANDIDATES = [
+  process.env.GROQ_CHAT_MODEL?.trim(),
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+].filter((m): m is string => !!m);
+let cachedModel: string | null = null;
+
 export const groqAdapter: EngineAdapter = {
   name: "groq",
   async run(req: EngineRequest): Promise<EngineResponse> {
@@ -12,26 +23,46 @@ export const groqAdapter: EngineAdapter = {
       return { text: "GROQ_API_KEY is not configured.", tokensUsed: 0 };
     }
 
-    const body = {
-      model: req.model || "llama-3.3-70b-versatile",
-      messages: [
-        req.systemPrompt ? { role: "system", content: req.systemPrompt } : null,
-        { role: "user", content: req.userPrompt },
-      ].filter(Boolean),
-    };
+    const messages = [
+      req.systemPrompt ? { role: "system", content: req.systemPrompt } : null,
+      { role: "user", content: req.userPrompt },
+    ].filter(Boolean);
 
     try {
-      const res = await fetch(GROQ_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${GROQ_API_KEY}`,
-        },
-        body: JSON.stringify(body),
-        // TIMEOUT — see anthropicEngine: no signal meant a stalled socket hung
-        // the whole router with no failover and no log line.
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
+      // The router's choice goes first, then the fallbacks — but once a model
+      // has answered, stick to it rather than re-probing every call.
+      const candidates = cachedModel
+        ? [cachedModel]
+        : [req.model, ...MODEL_CANDIDATES].filter((m): m is string => !!m);
+      let res: Response | null = null;
+      let lastErr = "no models tried";
+      for (const model of candidates) {
+        const attempt = await fetch(GROQ_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${GROQ_API_KEY}`,
+          },
+          body: JSON.stringify({ model, messages }),
+          // TIMEOUT — see anthropicEngine: no signal meant a stalled socket hung
+          // the whole router with no failover and no log line.
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+        if (attempt.status === 404 || attempt.status === 400) {
+          // Groq returns 400 "model_decommissioned" as often as a 404.
+          const body = await attempt.text();
+          if (/decommission|not found|does not exist|model_not_found/i.test(body)) {
+            lastErr = `model ${model} unavailable (${attempt.status})`;
+            if (cachedModel === model) cachedModel = null;
+            continue;
+          }
+          return { text: `Groq error: ${attempt.status} ${body}`, tokensUsed: 0 };
+        }
+        cachedModel = model;
+        res = attempt;
+        break;
+      }
+      if (!res) return { text: `Groq error: ${lastErr}`, tokensUsed: 0 };
 
       if (!res.ok) {
         const errText = await res.text();
