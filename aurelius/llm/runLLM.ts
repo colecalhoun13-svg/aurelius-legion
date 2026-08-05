@@ -17,9 +17,9 @@ export async function runLLM(params: RunLLMInput): Promise<LLMResponse> {
 
   // Compiled understanding, read side: a near-duplicate of a recent
   // question serves from cache instead of a model. Explicit engine
-  // overrides and reviewer runs always go to the LLM.
+  // overrides always go to the LLM.
   const primaryName = params.operators?.primary ?? params.operator ?? "strategy";
-  if (!params.options?.engine && !params.options?.reviewer && !params.noReuse) {
+  if (!params.options?.engine && !params.noReuse) {
     try {
       const { isReusableTask, tryReuseAnswer } = await import("../compiled/semanticReuse.ts");
       if (isReusableTask(params.taskType, params)) {
@@ -80,7 +80,7 @@ export async function runLLM(params: RunLLMInput): Promise<LLMResponse> {
   // serve a stated intention with nothing executed behind it. And not for
   // noReuse callers (wiki/ritual/planning synthesis): serving a 14-day-old
   // page back to a synthesis job silently freezes the living documents.
-  if (!params.options?.engine && !params.options?.reviewer && !params.noReuse && !response.toolCalls?.length) {
+  if (!params.options?.engine && !params.noReuse && !response.toolCalls?.length) {
     (async () => {
       const { isReusableTask, recordAnswer } = await import("../compiled/semanticReuse.ts");
       if (!isReusableTask(params.taskType, params)) return;
@@ -105,7 +105,6 @@ export async function runLLM(params: RunLLMInput): Promise<LLMResponse> {
     engine: response.engine,
     model: response.model,
     tokensUsed: response.tokensUsed,
-    reviewed: !!response.reviewed,
     latencyMs: latency,
     timestamp: new Date().toISOString(),
   });

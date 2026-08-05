@@ -201,6 +201,23 @@ async function main() {
       "a frontier call never falls back to a mini model",
       FRONTIER_MODELS.has(DEFAULT_TIER.model) && !FRONTIER_MODELS.has("gpt-5.4-mini")
     );
+    // Every declared tier must be REACHABLE. highLeverage was defined and no
+    // task type could select it — Opus only ever fired via an explicit alias,
+    // so the "deeper reasoning" tier had never run on its own.
+    const deep = chooseModel({ taskType: "decision_judge", input: "x" } as any);
+    check(
+      "the high-leverage tier is reachable by routing, not just by explicit alias",
+      deep.model === (await import("../llm/modelConfig.ts")).ANTHROPIC_OPUS_MODEL
+    );
+    check(
+      "durable-state writers route deeper than a throwaway chat turn",
+      deep.model !== chooseModel({ taskType: "chat", input: "x" } as any).model
+    );
+    // The unreachable reviewer is gone, not merely unused.
+    const routerSrc = (await import("node:fs")).readFileSync(
+      new URL("../llm/router.ts", import.meta.url), "utf8");
+    check("the dead claude-opus reviewer path is deleted, not left dormant",
+      !routerSrc.includes("reviewerSystemPrompt"));
   }
   // Keyless env → the failover chain is length one → the old honest failure
   const { routeLLM } = await import("../llm/router.ts");

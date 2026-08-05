@@ -1124,29 +1124,6 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       }
     }
 
-    // Strip directives from reviewer response if present (and persist any saves it produced)
-    let cleanedReviewed = response.reviewed;
-    if (response.reviewed) {
-      const r = extractDirectives(response.reviewed.text);
-      for (const d of r.saves) {
-        try {
-          const result = await saveMemory({
-            operator: primary,
-            category: d.category,
-            value: d.value,
-            relatedOperators: secondaries,
-          });
-          if (result) {
-            savedAuto.push(result);
-            autoSavedForReflection.push({ category: d.category, value: d.value });
-          }
-        } catch (err) {
-          console.error("[aurelius] auto save (reviewer) failed:", err);
-        }
-      }
-      cleanedReviewed = { ...response.reviewed, text: r.cleanedText };
-    }
-
     // ── Never return an empty bubble ──
     // If the model answered with only directives (a silent SAVE/TOOL/
     // knowledge proposal) the visible text strips to "". Rather than send an
@@ -1266,7 +1243,6 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
         durationMs: e.result.durationMs,
       })),
       pass2: pass2Outcomes,
-      reviewed: cleanedReviewed || null,
     });
   } catch (err: any) {
     console.error("Aurelius error:", err);
