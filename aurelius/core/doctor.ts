@@ -14,6 +14,8 @@
 // as DORMANT, never as broken — an integration Cole hasn't set up is a
 // choice, not a fault.
 
+import { ANTHROPIC_DEFAULT_MODEL as ROUTER_DEFAULT_MODEL } from "../llm/modelConfig.ts";
+
 export type CheckStatus = "ok" | "dormant" | "fail";
 export type Check = {
   area: string;
@@ -37,34 +39,80 @@ function env(name: string): string | null {
 // ── Engines ──────────────────────────────────────────────────────────
 // A live 1-token ping is the only way to tell "key set" from "key works".
 
+/**
+ * When the probe fails, ask the key itself what it CAN do. /v1/models is the
+ * cheapest possible question — it separates "this key is dead" from "this key
+ * is fine but can't reach that model", which are the same red X otherwise.
+ * Returns the model list, `[]` when the key is valid but lists nothing, or
+ * null when the key was rejected outright.
+ */
+async function anthropicModels(key: string): Promise<string[] | null> {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/models?limit=20", {
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const j: any = await res.json().catch(() => ({}));
+    return (j?.data ?? []).map((m: any) => m?.id).filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
 async function checkAnthropic(): Promise<Check> {
   const key = env("ANTHROPIC_API_KEY");
-  if (!key) return dormant("engines", "anthropic", "no ANTHROPIC_API_KEY", "set ANTHROPIC_API_KEY on the service");
+  if (!key) {
+    return dormant("engines", "anthropic", "no ANTHROPIC_API_KEY on THIS service",
+      "set ANTHROPIC_API_KEY on the BACKEND service (the frontend having it is not enough — the backend is what reasons)");
+  }
+  // Probe the model the router actually defaults to, not a hardcoded guess —
+  // otherwise the doctor can report broken while chat works, or vice versa.
+  const model = ROUTER_DEFAULT_MODEL;
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
+      body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
       signal: AbortSignal.timeout(20_000),
     });
-    if (res.ok) return ok("engines", "anthropic", "live — key accepted, model reachable");
+    if (res.ok) return ok("engines", "anthropic", `live — key accepted, ${model} reachable`);
     const j: any = await res.json().catch(() => ({}));
     const msg = j?.error?.message ?? `HTTP ${res.status}`;
+
     if (res.status === 401) {
       return fail("engines", "anthropic", `key REJECTED (401): ${msg}`,
-        "the key is set but Anthropic won't accept it — re-copy it from console.anthropic.com (watch for a trailing space/newline) and redeploy");
-    }
-    if (res.status === 404) {
-      return fail("engines", "anthropic", `model not available: ${msg}`,
-        "your account can't reach claude-sonnet-5 — check model access in the Anthropic console");
+        `the key is set but Anthropic won't accept it. Usual causes, in order: (1) it's the key from a different account or workspace, ` +
+        `(2) it was pasted with a trailing space/newline, (3) it's been revoked. Re-copy it from console.anthropic.com, ` +
+        `paste with no surrounding quotes or whitespace, and REDEPLOY — a variable change alone doesn't restart the process.`);
     }
     if (res.status === 400 && /credit|balance/i.test(msg)) {
-      return fail("engines", "anthropic", `billing: ${msg}`, "add credit at console.anthropic.com");
+      return fail("engines", "anthropic", `billing — the key is VALID, the account is out of credit: ${msg}`,
+        "add credit at console.anthropic.com → Billing. Nothing is wrong with the key or the deploy.");
     }
-    if (res.status === 429) return fail("engines", "anthropic", `rate limited: ${msg}`, "wait it out or raise the limit");
-    return fail("engines", "anthropic", `${res.status}: ${msg}`, "check the Anthropic console");
+    if (res.status === 429) {
+      return fail("engines", "anthropic", `rate limited — the key WORKS, you're just over the limit: ${msg}`,
+        "wait it out, or raise the limit at console.anthropic.com → Limits");
+    }
+    if (res.status === 404 || /model/i.test(msg)) {
+      // The key may be perfectly good and simply lack access to this model.
+      const models = await anthropicModels(key);
+      if (models === null) {
+        return fail("engines", "anthropic", `${res.status}: ${msg} — and the key can't list models either, so it's the KEY, not the model`,
+          "re-copy ANTHROPIC_API_KEY from console.anthropic.com and redeploy");
+      }
+      if (models.length === 0) {
+        return fail("engines", "anthropic", `the key is VALID but your account exposes no models`,
+          "check console.anthropic.com → the account may be new, unverified, or have no credit yet");
+      }
+      return fail("engines", "anthropic",
+        `the key is VALID, but "${model}" is not available to this account. It CAN reach: ${models.slice(0, 8).join(", ")}`,
+        `set ANTHROPIC_CHAT_MODEL to one of those (e.g. ANTHROPIC_CHAT_MODEL=${models[0]}) and redeploy`);
+    }
+    return fail("engines", "anthropic", `${res.status}: ${msg}`, "check console.anthropic.com — the exact message above is Anthropic's own");
   } catch (e: any) {
-    return fail("engines", "anthropic", `unreachable: ${e?.message ?? e}`, "network/egress problem from the container");
+    return fail("engines", "anthropic", `unreachable: ${e?.message ?? e}`,
+      "the container can't reach api.anthropic.com at all — a network/egress problem, not a key problem");
   }
 }
 

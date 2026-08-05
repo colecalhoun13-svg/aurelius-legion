@@ -105,6 +105,11 @@ export type LLMResponse = {
   };
 };
 
+// Model IDs live in a leaf module so the doctor probes the SAME model the
+// router uses, and so an account without access to the default is one env var
+// (ANTHROPIC_CHAT_MODEL) away from working rather than a code change.
+import { ANTHROPIC_DEFAULT_MODEL, ANTHROPIC_OPUS_MODEL } from "./modelConfig.ts";
+
 // ═══════════════════════════════════════════════════════════════════
 // TIER MAPPING
 // ═══════════════════════════════════════════════════════════════════
@@ -112,16 +117,16 @@ export type LLMResponse = {
 const TIERS = {
   fast:          { provider: "groq",      model: "llama-3.3-70b-versatile" },
   structured:    { provider: "openai",    model: "gpt-5.4-mini" },
-  strategic:     { provider: "anthropic", model: "claude-sonnet-5" },
-  highLeverage:  { provider: "anthropic", model: "claude-opus-4-8" },
+  strategic:     { provider: "anthropic", model: ANTHROPIC_DEFAULT_MODEL },
+  highLeverage:  { provider: "anthropic", model: ANTHROPIC_OPUS_MODEL },
   realtime:      { provider: "xai",       model: "grok-4-1-fast-reasoning" },
   multimodal:    { provider: "gemini",    model: "gemini-2.5-pro" },
   mathCheap:     { provider: "deepseek",  model: "deepseek-reasoner" },
 };
 
 const ENGINE_ALIASES: Record<string, { provider: string; model: string }> = {
-  "claude-opus":   { provider: "anthropic", model: "claude-opus-4-8" },
-  "claude-sonnet": { provider: "anthropic", model: "claude-sonnet-5" },
+  "claude-opus":   { provider: "anthropic", model: ANTHROPIC_OPUS_MODEL },
+  "claude-sonnet": { provider: "anthropic", model: ANTHROPIC_DEFAULT_MODEL },
   // Fable 5 is premium-priced ($10/$50 per MTok) — explicit override only,
   // never auto-routed. For the hardest long-horizon reasoning when Cole asks.
   "claude-fable":  { provider: "anthropic", model: "claude-fable-5" },
