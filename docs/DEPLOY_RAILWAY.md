@@ -174,6 +174,11 @@ and dead. Three ways to get the truth, all the same check:
 - **In chat:** "run a health check" — Aurelius has it as a tool
   (`self.diagnose`).
 
+**Reaching for the heavier model:** prefix any message with `/deep` — in
+Telegram, in the web app, anywhere — and that one turn runs on Opus instead of
+Sonnet. Nothing routes there on its own; it costs more and it's your call. The
+reply is signed with the model that answered so you can see it worked.
+
 It distinguishes the three states that used to look identical: **live**
 (probed, working), **dormant** (deliberately not configured — a choice, not a
 fault), and **broken** (configured and REJECTED — with the reason and the fix).

@@ -236,7 +236,7 @@ async function handleCommand(chatId: string | number, text: string) {
     case "/help":
       await send(
         chatId,
-        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\n/grants — what I can act on for you (grant/revoke keyholes)\n/protect — hold deep-work time on your calendar\n/triage — draft replies to what needs one\n/doctor — what is actually working right now (live check, with fixes)\nA voice note transcribes and captures the same as text.\nAnything else you type goes straight to the inbox."
+        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\n/grants — what I can act on for you (grant/revoke keyholes)\n/protect — hold deep-work time on your calendar\n/triage — draft replies to what needs one\n/doctor — what is actually working right now (live check, with fixes)\n/deep <question> — think it through on the heavier model (your call, costs more)\nA voice note transcribes and captures the same as text.\nAnything else you type goes straight to the inbox."
       );
       return;
 

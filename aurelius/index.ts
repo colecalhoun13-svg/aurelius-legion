@@ -616,8 +616,31 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
 
   let message: string = typeof req.body?.message === "string" ? req.body.message : "";
 
+  // ── "/deep" — Opus, when COLE decides the problem deserves it ──────
+  //
+  // The high-leverage tier existed in the router and had no way to be invoked:
+  // the `claude-opus` alias was real, but nothing in chat, Telegram, or the web
+  // app ever set options.engine, so "use the deeper model for this one" was
+  // literally impossible to ask for. (I briefly made it AUTOMATIC for a few
+  // task types — wrong: that spends his money on the router's judgment. This
+  // is the shape he actually wanted.)
+  //
+  // Parsed here, at the single chat entry point, so it works everywhere at
+  // once: Telegram free text routes through this same endpoint, and so does
+  // the web app's chat proxy. One marker, every surface.
+  let engineOverride: string | undefined = options?.engine;
+  const deepMarker = /^\s*[/!]deep\b[:,]?\s*/i;
+  if (deepMarker.test(message)) {
+    message = message.replace(deepMarker, "");
+    engineOverride = "claude-opus";
+  }
+
   if (!message.trim() && !media) {
-    return res.status(400).json({ error: "Message or media is required" });
+    return res.status(400).json({
+      error: engineOverride === "claude-opus"
+        ? "/deep needs a question after it — e.g. \"/deep should I take the ten-athlete cohort or stay 1:1?\""
+        : "Message or media is required",
+    });
   }
 
   // Multimodal chat: Cole attached one or more photos/videos. Aurelius "sees"
@@ -797,7 +820,10 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       autonomyMode,
       urgency,
       input: message,
-      options,
+      // Carry the /deep override through — without this the marker parses and
+      // then routes to the default tier anyway, which would look like a
+      // working feature and be a no-op.
+      options: engineOverride ? { ...options, engine: engineOverride } : options,
       needsRealtime,
       hasMultimodal,
       // Real decision → run the frameworks through the application harness.
@@ -864,6 +890,10 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
       }
       if (response.failedOverFrom) {
         cleanedText += `\n\n_(${response.failedOverFrom} was unreachable — ${response.engine} answered this one)_`;
+      } else if (engineOverride === "claude-opus") {
+        // Confirm the deeper model actually ran. Cole asked for it explicitly
+        // and it costs more — "did it work?" shouldn't require opening Traces.
+        cleanedText += `\n\n_(${response.model})_`;
       }
     } catch (err) {
       console.warn("[aurelius] directive integrity pass failed (non-fatal):", err);
