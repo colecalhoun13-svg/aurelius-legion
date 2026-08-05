@@ -264,7 +264,9 @@ async function checkFred(): Promise<Check> {
 }
 
 async function checkPaperless(): Promise<Check> {
-  const url = process.env.PAPERLESS_URL?.trim().replace(/\/$/, "");
+  // env(), not raw process.env — every other check strips wrapping quotes, and
+  // a quoted value behaving differently in two code paths is its own bug.
+  const url = env("PAPERLESS_URL")?.replace(/\/$/, "");
   const token = env("PAPERLESS_TOKEN");
   if (!url || !token) {
     return dormant("data", "paperless", "not configured — scanned documents → OCR → second brain, every 10 min",
@@ -744,6 +746,15 @@ function checkTimezone(): Check {
   }
   try {
     const now = new Date().toLocaleString("en-US", { timeZone: tz, hour: "2-digit", minute: "2-digit" });
+    // index.ts sets process.env.TZ from AURELIUS_TZ only when TZ is UNSET — so
+    // an externally-set TZ silently wins for everything using local time while
+    // this row still printed a confident tick. Catch the disagreement.
+    const processTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (processTz && processTz !== tz) {
+      return fail("core", "timezone",
+        `AURELIUS_TZ=${tz} but the process is actually running in ${processTz} — every ritual fires on the wrong clock`,
+        `TZ is set to something else and wins. Set TZ=${tz} alongside AURELIUS_TZ on this service, or remove the conflicting TZ.`);
+    }
     return ok("core", "timezone", `${tz} — local time reads ${now}`);
   } catch {
     return fail("core", "timezone", `AURELIUS_TZ="${tz}" is not a valid IANA zone`, "use a zone like America/Phoenix");

@@ -108,7 +108,7 @@ export type LLMResponse = {
 // Model IDs live in a leaf module so the doctor probes the SAME model the
 // router uses, and so an account without access to the default is one env var
 // (ANTHROPIC_CHAT_MODEL) away from working rather than a code change.
-import { ANTHROPIC_DEFAULT_MODEL, ANTHROPIC_OPUS_MODEL } from "./modelConfig.ts";
+import { ANTHROPIC_DEFAULT_MODEL, ANTHROPIC_OPUS_MODEL, DEFAULT_TIER, FRONTIER_MODELS } from "./modelConfig.ts";
 
 // ═══════════════════════════════════════════════════════════════════
 // TIER MAPPING
@@ -117,7 +117,7 @@ import { ANTHROPIC_DEFAULT_MODEL, ANTHROPIC_OPUS_MODEL } from "./modelConfig.ts"
 const TIERS = {
   fast:          { provider: "groq",      model: "llama-3.3-70b-versatile" },
   structured:    { provider: "openai",    model: "gpt-5.4-mini" },
-  strategic:     { provider: "anthropic", model: ANTHROPIC_DEFAULT_MODEL },
+  strategic:     { provider: DEFAULT_TIER.provider, model: ANTHROPIC_DEFAULT_MODEL },
   highLeverage:  { provider: "anthropic", model: ANTHROPIC_OPUS_MODEL },
   realtime:      { provider: "xai",       model: "grok-4-1-fast-reasoning" },
   multimodal:    { provider: "gemini",    model: "gemini-2.5-pro" },
@@ -671,13 +671,14 @@ const FRONTIER_FALLBACK_MODELS: Record<string, string> = {
   openai: "gpt-5.4",
   gemini: "gemini-2.5-pro",
 };
-/** Was this routed choice frontier-tier — i.e. is a mini substitute a downgrade? */
+/**
+ * Was this routed choice frontier-tier — i.e. would a mini substitute be a
+ * silent downgrade? Derived from the tier table, not from a provider name:
+ * hardcoding "anthropic" here would break the moment the strategic tier moves,
+ * which is the same failure mode this whole change exists to close.
+ */
 function isFrontierChoice(choice: { provider: string; model: string }): boolean {
-  return (
-    choice.model === TIERS.strategic.model ||
-    choice.model === TIERS.highLeverage.model ||
-    choice.provider === "anthropic"
-  );
+  return FRONTIER_MODELS.has(choice.model);
 }
 function fallbackModelFor(provider: string, frontier: boolean): string {
   return (frontier && FRONTIER_FALLBACK_MODELS[provider]) || FALLBACK_MODELS[provider];

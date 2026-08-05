@@ -14,6 +14,8 @@
 // For "does it actually WORK", the doctor makes the real calls:
 //   GET /api/health/doctor   ·   cd aurelius && npx tsx scripts/doctor.ts
 
+import { DEFAULT_TIER } from "../llm/modelConfig.ts";
+
 function set(name: string): boolean {
   return !!process.env[name]?.trim();
 }
@@ -43,8 +45,11 @@ export function preflight(): void {
   // over for a week. "Some providers configured" is not the health question;
   // "is the default one configured" is.
   if (live.length) {
-    const defaultProvider = "anthropic"; // TIERS.strategic — the fall-through for every unlisted taskType
-    const defaultKey = providers.find(([n]) => n === defaultProvider)?.[1];
+    // Read the router's own declaration — do NOT restate it. A second copy of
+    // "which provider is the default" is how this class of bug survives: the
+    // doctor once probed a model the router didn't use, and this very check
+    // shipped with its own hardcoded "anthropic" a commit later.
+    const { provider: defaultProvider, keyName: defaultKey } = DEFAULT_TIER;
     if (defaultKey && !set(defaultKey)) {
       lines.push(
         `[preflight] llm: DEFAULT TIER IS DOWN — ${defaultProvider} is the provider almost every task routes to, ` +
