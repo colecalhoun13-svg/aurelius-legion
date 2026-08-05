@@ -201,28 +201,21 @@ async function main() {
       "a frontier call never falls back to a mini model",
       FRONTIER_MODELS.has(DEFAULT_TIER.model) && !FRONTIER_MODELS.has("gpt-5.4-mini")
     );
-    // Two properties, and BOTH matter. The tier must be reachable (it was
-    // declared and unselectable), and it must be OFF by default — routing more
-    // work to a pricier tier is Cole's call, not a side effect of fixing the
-    // defect. I shipped it enabled once; this test is why that can't recur.
-    const prev = process.env.AURELIUS_HIGH_LEVERAGE;
-    delete process.env.AURELIUS_HIGH_LEVERAGE;
+    // NOTHING auto-routes to Opus. It is on-demand only: Cole reaches for it
+    // when HE decides a problem deserves it. An automatic version shipped
+    // briefly and was removed — the router does not get to spend his money.
+    for (const t of ["decision_judge", "decision_curriculum", "curriculum_distill", "council_synthesis", "chat", "reflect"]) {
+      check(
+        `taskType "${t}" routes to the default tier, never to Opus on its own`,
+        chooseModel({ taskType: t, input: "x" } as any).model === DEFAULT_TIER.model
+      );
+    }
+    // ...and the alias behind /deep still reaches it when he asks.
     check(
-      "by DEFAULT a durable-state writer routes to strategic — no silent cost change",
-      chooseModel({ taskType: "decision_judge", input: "x" } as any).model === DEFAULT_TIER.model
+      "the claude-opus alias reaches the high-leverage tier on demand",
+      chooseModel({ taskType: "chat", input: "x", options: { engine: "claude-opus" } } as any).model ===
+        (await import("../llm/modelConfig.ts")).ANTHROPIC_OPUS_MODEL
     );
-    process.env.AURELIUS_HIGH_LEVERAGE = "on";
-    const deep = chooseModel({ taskType: "decision_judge", input: "x" } as any);
-    check(
-      "when switched ON, the high-leverage tier is reachable by routing (not just by alias)",
-      deep.model === (await import("../llm/modelConfig.ts")).ANTHROPIC_OPUS_MODEL
-    );
-    check(
-      "and it then routes deeper than a throwaway chat turn",
-      deep.model !== chooseModel({ taskType: "chat", input: "x" } as any).model
-    );
-    if (prev === undefined) delete process.env.AURELIUS_HIGH_LEVERAGE;
-    else process.env.AURELIUS_HIGH_LEVERAGE = prev;
     // The unreachable reviewer is gone, not merely unused.
     const routerSrc = (await import("node:fs")).readFileSync(
       new URL("../llm/router.ts", import.meta.url), "utf8");
