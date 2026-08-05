@@ -133,33 +133,33 @@ model LogEntry {
 // ═══════════════════════════════════════════════════════════════════
 
 model ReasoningCacheEntry {
-  id                 String   @id @default(cuid())
-  operatorId         String
-  operator           Operator @relation(fields: [operatorId], references: [id])
+  id         String   @id @default(cuid())
+  operatorId String
+  operator   Operator @relation(fields: [operatorId], references: [id])
 
   // Modularity primitive: operator + domain as separate axes
-  domain             String   @default("training_session")
+  domain String @default("training_session")
 
   // Identity / scope — generalized for cross-operator use
-  entityKey          String   // athlete name, lead ID, post ID, etc.
-  externalScopeId    String   // sheet ID, CRM ID, post ID — was sheetId
-  subContext         String?  // "Day 1", "Q4_2026", "instagram_reels" — was dayTab
+  entityKey       String // athlete name, lead ID, post ID, etc.
+  externalScopeId String // sheet ID, CRM ID, post ID — was sheetId
+  subContext      String? // "Day 1", "Q4_2026", "instagram_reels" — was dayTab
 
   // The situation, tagged at write time using the operator's knowledge module
   situationSignature Json
 
   // What Aurelius concluded for this situation
-  reasoningSummary   String
+  reasoningSummary String
 
   // Provenance + usage
-  sourceMemoryIds    String[]
-  usageCount         Int      @default(0)
+  sourceMemoryIds String[]
+  usageCount      Int      @default(0)
 
   // Re-tagging support (populated in future; v1 leaves empty)
-  previousTags       Json[]   @default([])
+  previousTags Json[] @default([])
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([operatorId, domain, entityKey])
   @@index([operatorId, entityKey, externalScopeId])
@@ -167,33 +167,33 @@ model ReasoningCacheEntry {
 }
 
 model CompiledPattern {
-  id                 String   @id @default(cuid())
-  operatorId         String
-  operator           Operator @relation(fields: [operatorId], references: [id])
+  id         String   @id @default(cuid())
+  operatorId String
+  operator   Operator @relation(fields: [operatorId], references: [id])
 
   // Modularity primitive (matches ReasoningCacheEntry)
-  domain             String
+  domain String
 
   // Scope — null entityKey = cross-entity (e.g., cross-athlete)
-  entityKey          String?
-  externalScopeId    String?
+  entityKey       String?
+  externalScopeId String?
 
   // Pattern shape
-  patternType        String   // "factual" | "heuristic" | "structuralMatch"
-  patternSignature   Json
-  conditions         Json?
+  patternType      String // "factual" | "heuristic" | "structuralMatch"
+  patternSignature Json
+  conditions       Json?
 
   // Lifecycle status
   // auto_factual          — facts that compiled automatically (N=2)
   // proposed_heuristic    — heuristic noticed but unconfirmed (N=3)
   // confirmed_heuristic   — Cole confirmed; usable as soft rule
   // discarded             — Cole denied, kept as observation only
-  status             String   @default("proposed_heuristic")
+  status String @default("proposed_heuristic")
 
   // Evidence trail
-  evidence           String[]
-  supportCount       Int      @default(0)
-  confidenceScore    Float    @default(0)
+  evidence        String[]
+  supportCount    Int      @default(0)
+  confidenceScore Float    @default(0)
 
   // Trust counters (outcome loop) — monotone, machine-readable, non-saturating.
   // These gate the short-circuit; the confidence float is only a floor veto.
@@ -204,8 +204,8 @@ model CompiledPattern {
   ratifiedCount           Int @default(0)
   correctionsSinceConfirm Int @default(0)
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([operatorId, domain, entityKey])
   @@index([operatorId, status])
@@ -645,41 +645,42 @@ model VectorEmbedding {
 // ═══════════════════════════════════════════════════════════════════
 
 model KnowledgeEntry {
-  id          String   @id @default(cuid())
-  operatorId  String
-  operator    Operator @relation(fields: [operatorId], references: [id])
+  id         String   @id @default(cuid())
+  operatorId String
+  operator   Operator @relation(fields: [operatorId], references: [id])
 
   // Scope — namespacing within an operator's knowledge
   // e.g., scope="rep_bands", key="strength" → value={lower:4, upper:5, intent:"strength"}
-  scope       String   // top-level category: "rep_bands", "intensity_zones", etc.
-  key         String   // identifier within scope: "strength", "hypertrophy", etc.
-  value       Json     // the actual knowledge payload (structured)
+  scope String // top-level category: "rep_bands", "intensity_zones", etc.
+  key   String // identifier within scope: "strength", "hypertrophy", etc.
+  value Json // the actual knowledge payload (structured)
 
   // Provenance — why does this value exist?
   // sourceType: "founding_default" | "cole_conversation" | "research_ingestion" | "manual"
   // sourceId: opaque reference (memory id, research result id, conversation turn id)
   // rationale: short human-readable explanation
-  sourceType  String
-  sourceId    String?
-  rationale   String?
+  sourceType String
+  sourceId   String?
+  rationale  String?
 
   // Audit + lifecycle
-  createdBy   String   // "system" for seeded defaults, "cole" for confirmed updates, etc.
-  updatedBy   String?
-  version     Int      @default(1)  // increments on update
-  active      Boolean  @default(true) // soft-disable without deletion
+  createdBy String // "system" for seeded defaults, "cole" for confirmed updates, etc.
+  updatedBy String?
+  version   Int     @default(1) // increments on update
+  active    Boolean @default(true) // soft-disable without deletion
 
   // History trail — previous values preserved for audit
   // Each prior version stored as { value, sourceType, sourceId, rationale, version, replacedAt }
-  history     Json[]   @default([])
+  history Json[] @default([])
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([operatorId, scope, key])
   @@index([operatorId, scope])
   @@index([operatorId, active])
 }
+
 // Atomic once-per-day claim for scheduled jobs (go-live council). The catch-up
 // dedup used to rest on best-effort trace telemetry — a redeploy straddling a
 // cron minute could double-fire the briefing, or a killed run could count as
@@ -688,10 +689,230 @@ model KnowledgeEntry {
 model JobRun {
   id        String   @id @default(cuid())
   jobName   String
-  day       String   // local YYYY-MM-DD (process TZ)
+  day       String // local YYYY-MM-DD (process TZ)
   status    String   @default("running") // running | done | failed
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([jobName, day])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// THE CLIENT ENGINE — Cole's remote coaching business, end to end.
+//
+// Scope note (2026-08-05): this models the REMOTE business Cole owns. He is
+// employed at the gym, so the athletes he coaches in person belong to his
+// employer and never appear here. Putting them in would be modelling someone
+// else's book as if it were his.
+//
+// The pipeline is Lead → Client → Engagement → { Session, Invoice → Payment }.
+// Two deliberate splits:
+//
+//   • INVOICE vs PAYMENT — owed vs received. Cole asked for both, and they
+//     are genuinely different questions: "who hasn't paid me" cannot be
+//     answered by a ledger of what arrived. An Invoice can be partially paid
+//     by several Payments, so this is one-to-many, not a status flag.
+//   • ENGAGEMENT carries the money, not Client. Cole sells three shapes at
+//     once (monthly retainer, fixed 8–12 week block, one-off program) and a
+//     single athlete can move between them or hold more than one. Collapsing
+//     price onto Client would have forced one shape to win.
+//
+// Money is INTEGER CENTS everywhere. Never Float — binary floating point
+// cannot represent 0.10, and a revenue total that drifts is worse than none.
+// ═══════════════════════════════════════════════════════════════════
+
+// Someone who might become a client. Lives here from first contact until they
+// convert or go cold — Cole has zero inbound today, so most leads will start
+// as a name he typed in himself off the warm list.
+model Lead {
+  id       String  @id @default(cuid())
+  name     String
+  email    String?
+  phone    String?
+  // Athlete context — the lead may BE the athlete or be their parent.
+  sport    String?
+  gradYear Int?
+  location String? // remote coaching crosses time zones; "Austin TX" is enough
+
+  // Where they came from. Cole's honest answer today is "nowhere" — this
+  // exists so the first ten tell him which channel is actually worth building.
+  source     String  @default("manual") // "manual" | "referral" | "instagram" | "email" | "word_of_mouth" | "website" | "other"
+  referredBy String? // free text: who sent them. The highest-converting source is also the easiest to forget to thank.
+
+  status     String  @default("new") // "new" | "contacted" | "conversing" | "proposed" | "won" | "lost" | "dormant"
+  lostReason String? // why it died — the only way a pipeline teaches anything
+
+  // The follow-up spine. A lead with no nextAction is how a warm list goes cold.
+  nextAction    String?
+  nextActionAt  DateTime?
+  lastContactAt DateTime?
+
+  notes String?
+
+  convertedClientId String?   @unique
+  convertedClient   Client?   @relation(fields: [convertedClientId], references: [id])
+  convertedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, nextActionAt])
+  @@index([source])
+}
+
+// A converted athlete. Distinct from Lead so a lost lead can't quietly linger
+// in the roster and inflate the only numbers that matter.
+model Client {
+  id    String  @id @default(cuid())
+  name  String
+  email String?
+  phone String?
+
+  sport    String?
+  position String?
+  gradYear Int?
+  timezone String? // remote delivery: a 6am check-in is not 6am for both of you
+
+  // The buyer is frequently NOT the athlete. Cole coaches high-school athletes;
+  // parents typically pay and are typically the ones who need answering.
+  parentName  String?
+  parentEmail String?
+  parentPhone String?
+  isMinor     Boolean @default(false) // gates sharing results publicly — consent for a minor is the parent's to give
+
+  status      String    @default("active") // "active" | "paused" | "ended"
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+  endedReason String?
+
+  notes String?
+
+  lead        Lead?
+  engagements Engagement[]
+  sessions    Session[]
+  invoices    Invoice[]
+  payments    Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+// The commercial relationship — WHAT the client bought and on what terms.
+// One client may hold several over time (a block, then monthly), or more than
+// one at once (monthly coaching plus a one-off program).
+model Engagement {
+  id       String @id @default(cuid())
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  // Cole's three shapes, and the reason this table exists:
+  //   "monthly" — recurring until cancelled; nextBillingAt drives the renewal.
+  //   "block"   — fixed 8–12 weeks; endsAt is a real date and IS the re-sign
+  //               conversation, which is the highest-value thing to be reminded of.
+  //   "program" — one-off sale, no ongoing obligation; endsAt stays null.
+  shape String
+  title String // "Off-season speed block", "Monthly remote coaching"
+
+  priceCents Int // per month for "monthly"; total for "block" and "program"
+  currency   String @default("usd")
+
+  startsAt      DateTime  @default(now())
+  endsAt        DateTime? // set for "block"; null for open-ended monthly and one-off programs
+  nextBillingAt DateTime? // "monthly" only — when the next invoice is due to be raised
+  autoRenew     Boolean   @default(false)
+
+  status String  @default("active") // "active" | "completed" | "cancelled" | "pending"
+  notes  String?
+
+  sessions Session[]
+  invoices Invoice[]
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId, status])
+  @@index([status, endsAt])
+  @@index([status, nextBillingAt])
+}
+
+// A coaching touchpoint. Deliberately delivery-agnostic: Cole runs on Google
+// Sheets and text today and wants Aurelius to become the delivery platform
+// later, so this records THAT something happened, not how it was delivered.
+model Session {
+  id           String      @id @default(cuid())
+  clientId     String
+  client       Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  engagementId String?
+  engagement   Engagement? @relation(fields: [engagementId], references: [id])
+
+  kind        String    @default("check_in") // "check_in" | "call" | "video_review" | "test" | "session"
+  scheduledAt DateTime?
+  completedAt DateTime?
+  durationMin Int?
+  notes       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId, scheduledAt])
+  @@index([completedAt])
+}
+
+// WHAT IS OWED. Separate from Payment on purpose — see the header note.
+model Invoice {
+  id           String      @id @default(cuid())
+  clientId     String
+  client       Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  engagementId String?
+  engagement   Engagement? @relation(fields: [engagementId], references: [id])
+
+  amountCents Int
+  currency    String  @default("usd")
+  description String?
+
+  issuedAt DateTime  @default(now())
+  dueAt    DateTime?
+  paidAt   DateTime? // set when payments cover the full amount
+
+  // "overdue" is NOT stored — it is dueAt < now on an unpaid invoice. A stored
+  // flag would need a cron to stay honest and would be wrong between runs.
+  status String @default("draft") // "draft" | "sent" | "partial" | "paid" | "void"
+
+  externalRef String? // Stripe/PayPal id if invoicing ever moves off Cole's hands
+
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId, status])
+  @@index([status, dueAt])
+}
+
+// WHAT ACTUALLY ARRIVED. May be linked to an Invoice (normal) or stand alone
+// (Cole gets handed cash — recording it beats pretending it didn't happen).
+model Payment {
+  id           String      @id @default(cuid())
+  clientId     String
+  client       Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  invoiceId    String?
+  invoice      Invoice?    @relation(fields: [invoiceId], references: [id])
+  engagementId String?
+  engagement   Engagement? @relation(fields: [engagementId], references: [id])
+
+  amountCents Int
+  currency    String   @default("usd")
+  receivedAt  DateTime @default(now())
+  method      String   @default("other") // "cash" | "venmo" | "zelle" | "stripe" | "paypal" | "bank" | "other"
+  externalRef String?
+  note        String?
+
+  createdAt DateTime @default(now())
+
+  @@index([clientId, receivedAt])
+  @@index([invoiceId])
+  @@index([receivedAt])
 }

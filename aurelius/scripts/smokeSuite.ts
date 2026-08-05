@@ -1148,6 +1148,56 @@ async function main() {
       const measured = facts.find((f) => f.key === "measured_outcomes");
       check("the measured-outcomes asset is present and specific", !!measured && /5-10-5|vertical/i.test(measured.value));
 
+      // ── the 2026-08-05 correction: remote is the business ──
+      // Cole is EMPLOYED at the gym and the remote business is his own. These
+      // guard the reframe, because every offer/pricing/outreach answer reasons
+      // from these facts and the previous reading pointed them at his employer.
+      const arrangement = facts.find((f) => f.key === "gym_arrangement");
+      check("the gym arrangement is known (employed — not Cole's clients to sell to)",
+        !!arrangement && /employed/i.test(arrangement.value));
+      check("remote coaching is stated as THE business, not an exploration",
+        facts.some((f) => f.key === "the_business" && /own business/i.test(f.value)));
+      check("the empty pipeline is held as the binding constraint",
+        facts.some((f) => f.key === "lead_reality" && /no inbound/i.test(f.value)));
+      check("all three billing shapes survive as distinct",
+        facts.some((f) => f.key === "billing_shapes" && /monthly/i.test(f.value) && /block/i.test(f.value) && /one-off|program/i.test(f.value)));
+      check("the retired `exploring` fact is not live",
+        !facts.some((f) => f.key === "exploring"));
+
+      // REVISION PATH: a seed-written entry at an older revision must be
+      // rewritten when Cole restates the fact. Without this, a correction
+      // lives in the source file and never reaches the database.
+      {
+        const { REVISION_SOURCE_PREFIX } = await import("../business/profile.ts");
+        await prisma.knowledgeEntry.updateMany({
+          where: { operatorId: bizOp, scope: BUSINESS_SCOPE, key: "near_term_goal" },
+          data: { value: "STALE VALUE" as any, sourceId: `${REVISION_SOURCE_PREFIX}1` },
+        });
+        const rev = await seedBusinessProfile();
+        const after = await knownFacts();
+        check(
+          "a restated fact is revised, not skipped (stale truth can't outlive the correction)",
+          rev.revised.includes("near_term_goal") &&
+            !/STALE VALUE/.test(after.find((f) => f.key === "near_term_goal")?.value ?? "")
+        );
+      }
+
+      // But a fact Cole edited HIMSELF still outranks the seed — that was the
+      // original rule and the revision path must not quietly repeal it.
+      {
+        await prisma.knowledgeEntry.updateMany({
+          where: { operatorId: bizOp, scope: BUSINESS_SCOPE, key: "near_term_goal" },
+          data: { value: "COLE'S OWN EDIT" as any, sourceId: "correction:abc123" },
+        });
+        const rev = await seedBusinessProfile();
+        const after = await knownFacts();
+        check(
+          "a hand-written correction is never overwritten by the seed",
+          !rev.revised.includes("near_term_goal") &&
+            /COLE'S OWN EDIT/.test(after.find((f) => f.key === "near_term_goal")?.value ?? "")
+        );
+      }
+
       const gapsBefore = await openGaps();
       check("open questions are ranked by what they unblock", gapsBefore.length > 0 && gapsBefore[0]!.priority === 1);
 
@@ -1170,7 +1220,14 @@ async function main() {
       const topicList = Array.isArray(topics?.value) ? (topics!.value as string[]) : [];
       check(
         "seeding aims the Sunday research sweep at Cole's real situation",
-        topicList.length >= 4 && topicList.some((t) => /high-school athlete enrollment/i.test(t))
+        topicList.length >= 4 && topicList.some((t) => /first paying remote|online clients/i.test(t))
+      );
+      // The topics must aim at the business Cole OWNS. The original list led
+      // with growing enrollment at the gym — i.e. researching how to grow his
+      // employer. He is employed there; those athletes are not his to sell to.
+      check(
+        "research is not aimed at growing Cole's employer",
+        !topicList.some((t) => /enrollment at a gym they already work in/i.test(t))
       );
       // resolveTopicsFor is what the weekend pulse actually calls — prove the
       // derived topics beat the generic fallbacks through the real path.
@@ -1184,6 +1241,92 @@ async function main() {
     } else {
       check("business foundation (skipped — no business operator)", true);
     }
+  }
+
+  console.log("── client engine: the remote business, leads through money ──");
+  {
+    const {
+      addLead, convertLead, addEngagement, logSession, raiseInvoice, recordPayment,
+      outstandingInvoices, whatNeedsAttention, pipelineSnapshot, clientDetail, toCents, fromCents,
+    } = await import("../crm/service.ts");
+
+    // Money is integer cents. A float here would drift a revenue total.
+    check("dollars parse to cents through formatting", toCents("$1,200.50") === 120050);
+    check("cents render back to dollars", fromCents(120050) === "$1,200.50");
+    let threwAmount = false;
+    try { toCents("abc"); } catch { threwAmount = true; }
+    check("a nonsense amount throws instead of storing NaN", threwAmount);
+
+    const lead = await addLead({
+      name: `${TAG} Athlete`, sport: "football", source: "referral", referredBy: "Coach Davis",
+      nextAction: "Send intake", nextActionAt: new Date(Date.now() - 86_400_000).toISOString(),
+    });
+    let badSource = false;
+    try { await addLead({ name: `${TAG} bad`, source: "carrier_pigeon" }); } catch { badSource = true; }
+    check("an unknown lead source is rejected, not silently stored", badSource);
+
+    const due = await whatNeedsAttention(14);
+    check("a past-due follow-up surfaces as needing attention", due.followUpsOverdue.some((f) => f.leadId === lead.id));
+
+    const client = await convertLead(lead.id, { parentName: `${TAG} Parent`, isMinor: true });
+    const reLead = await prisma.lead.findUnique({ where: { id: lead.id } });
+    check("converting links lead → client and clears the stale follow-up",
+      reLead?.status === "won" && reLead?.convertedClientId === client.id && reLead?.nextActionAt === null);
+    let twice = false;
+    try { await convertLead(lead.id); } catch { twice = true; }
+    check("a lead cannot be converted twice", twice);
+
+    // Cole sells three shapes at once — each must keep its own dates.
+    const block = await addEngagement({ clientId: client.id, shape: "block", title: "Speed block", price: 600, weeks: 12 });
+    const monthly = await addEngagement({ clientId: client.id, shape: "monthly", title: "Monthly coaching", price: 200 });
+    const program = await addEngagement({ clientId: client.id, shape: "program", title: "Template", price: 99 });
+    check("a block gets a real end date (that end IS the re-sign conversation)", !!block.endsAt);
+    check("monthly recurs with no end date", !!monthly.nextBillingAt && monthly.endsAt === null);
+    check("a one-off program neither ends nor rebills", program.endsAt === null && program.nextBillingAt === null);
+
+    const sess = await logSession({ clientId: client.id, kind: "video_review", notes: `${TAG} squat depth` });
+    check("a session logged with no date counts as just happened", !!sess.completedAt);
+
+    // Owed vs received — the split Cole asked for.
+    const inv = await raiseInvoice({
+      clientId: client.id, amount: 600, description: "Speed block", engagementId: block.id,
+      dueAt: new Date(Date.now() - 86_400_000).toISOString(),
+    });
+    const before = (await outstandingInvoices()).find((i) => i.id === inv.id);
+    check("an unpaid past-due invoice derives as overdue (never a stored flag)",
+      before?.overdue === true && before?.outstandingCents === 60000);
+
+    await recordPayment({ clientId: client.id, invoiceId: inv.id, amount: 300, method: "venmo" });
+    const partial = (await outstandingInvoices()).find((i) => i.id === inv.id);
+    check("a partial payment leaves the remainder owed", partial?.status === "partial" && partial?.outstandingCents === 30000);
+
+    await recordPayment({ clientId: client.id, invoiceId: inv.id, amount: 300, method: "venmo" });
+    const settled = await prisma.invoice.findUnique({ where: { id: inv.id } });
+    check("covering the balance settles the invoice", settled?.status === "paid" && !!settled?.paidAt);
+    let zeroPay = false;
+    try { await recordPayment({ clientId: client.id, amount: 0 }); } catch { zeroPay = true; }
+    check("a zero payment is refused", zeroPay);
+
+    const snap = await pipelineSnapshot();
+    check("MRR counts only the monthly shape — blocks and programs would inflate it", snap.mrrCents === 20000);
+    check("received-this-month reflects real payments", snap.receivedThisMonthCents === 60000);
+
+    const detail = await clientDetail(`${TAG} Athlete`);
+    check("a client resolves by name with lifetime value", detail?.lifetimeCents === 60000);
+
+    const horizon = await whatNeedsAttention(120);
+    check("an ending block surfaces for re-sign", horizon.blocksEnding.some((b) => b.engagementId === block.id));
+    check("a monthly renewal surfaces", horizon.renewalsDue.some((r) => r.engagementId === monthly.id));
+
+    // An empty pipeline must say so rather than render encouraging nothing.
+    await prisma.lead.updateMany({ where: { id: lead.id }, data: { convertedClientId: null } });
+    await prisma.client.delete({ where: { id: client.id } });
+    await prisma.lead.deleteMany({ where: { name: { contains: TAG } } });
+    const emptied = await pipelineSnapshot();
+    check("an empty pipeline is reported as empty, naming lead generation as the constraint",
+      emptied.empty === true && /lead generation/i.test(emptied.headline));
+    check("client engine self-cleans (cascade took engagements/invoices/payments)",
+      (await prisma.client.count({ where: { name: { contains: TAG } } })) === 0);
   }
 
   console.log("── telegram bridge: the lock must not lock out its own bridge ──");

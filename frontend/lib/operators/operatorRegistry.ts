@@ -46,6 +46,12 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     description: "The shelves, ask-anything, and the syntheses",
     group: "Direction",
   },
+  business: {
+    name: "Business",
+    path: "/business",
+    description: "The remote coaching business — leads, clients, and the money",
+    group: "Direction",
+  },
   aurelius: {
     name: "Aurelius",
     path: "/aurelius",

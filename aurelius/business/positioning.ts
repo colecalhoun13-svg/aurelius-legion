@@ -24,7 +24,15 @@ import { setKnowledge, getKnowledge, resolveOperatorId } from "../knowledge/stor
 import { runLLM } from "../llm/runLLM.ts";
 import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { extractDirectives } from "../llm/directiveParser.ts";
-import { CONFIRMED_FACTS, OPEN_QUESTIONS, BUSINESS_SCOPE, type OpenQuestion } from "./profile.ts";
+import {
+  CONFIRMED_FACTS,
+  OPEN_QUESTIONS,
+  BUSINESS_SCOPE,
+  RETIRED_FACTS,
+  REVISION_SOURCE_PREFIX,
+  factRevision,
+  type OpenQuestion,
+} from "./profile.ts";
 
 /** The business lens owns this knowledge. */
 async function businessOperatorId(): Promise<string | null> {
@@ -41,7 +49,15 @@ async function researchFor(query: string): Promise<{ text: string; grounding: st
   try {
     const { runResearch } = await import("../research/researchEngine.ts");
     const res: any = await runResearch({
-      query: `${query} — context: a coach specialising in high-school and college athletes, growing an in-person practice at a local gym`,
+      // Context corrected 2026-08-05. This used to say "growing an in-person
+      // practice at a local gym", which aimed every business research pass at
+      // the wrong business — Cole is EMPLOYED at that gym and its athletes
+      // aren't his to sell to. The subject is the remote business he owns.
+      query:
+        `${query} — context: a strength coach specialising in high-school and college athletes. ` +
+        `He is employed full-time at a gym (those athletes belong to the employer, not to him) and is ` +
+        `building his OWN remote/online coaching business alongside it. The remote business currently has ` +
+        `zero clients and no inbound lead flow. Answer for the remote business, not the gym job.`,
       operator: "business",
       depth: "deep",
       subject: query.slice(0, 80),
@@ -58,19 +74,75 @@ async function researchFor(query: string): Promise<{ text: string; grounding: st
 }
 
 /**
- * Seed Cole's stated facts into Living Knowledge. Idempotent: an existing
- * entry is left alone, because Cole's later corrections outrank this seed.
- * Returns what it actually wrote.
+ * Seed Cole's stated facts into Living Knowledge.
+ *
+ * Idempotent, with two deliberate exceptions — both of which exist because
+ * "never touch an existing entry" was quietly wrong when Cole RESTATED a fact
+ * rather than correcting one:
+ *
+ *   • REVISED facts. A seeded entry carries a `profile:rev{N}` sourceId. When
+ *     the source fact's revision is higher, Cole has answered that question
+ *     again and the newer answer wins — setKnowledge keeps the old value in
+ *     history. An entry with any OTHER sourceId was written by a correction or
+ *     a confirmed proposal, and is still left alone: Cole's hand outranks this
+ *     seed, which was the original rule and stays the original rule.
+ *   • RETIRED facts. Deactivated (soft — history intact). Without this, a fact
+ *     that stopped being true just stays live forever; `exploring` described
+ *     remote coaching as "not committed" long after it became the business.
+ *
+ * Returns what it actually wrote, revised, and retired.
  */
-export async function seedBusinessProfile(): Promise<{ written: string[]; skipped: string[] }> {
+export async function seedBusinessProfile(): Promise<{
+  written: string[];
+  skipped: string[];
+  revised: string[];
+  retired: string[];
+}> {
   const opId = await businessOperatorId();
-  if (!opId) return { written: [], skipped: [] };
+  if (!opId) return { written: [], skipped: [], revised: [], retired: [] };
   const written: string[] = [];
   const skipped: string[] = [];
+  const revised: string[] = [];
+  const retired: string[] = [];
+
+  // Retire first, so a retired key can't be resurrected by a same-run write.
+  for (const dead of RETIRED_FACTS) {
+    const existing = await getKnowledge(opId, BUSINESS_SCOPE, dead.key, { includeInactive: false });
+    if (!existing) continue;
+    await prisma.knowledgeEntry.updateMany({
+      where: { operatorId: opId, scope: BUSINESS_SCOPE, key: dead.key, active: true },
+      data: { active: false, updatedBy: "cole", rationale: `Retired: ${dead.reason}` },
+    });
+    retired.push(dead.key);
+  }
+
   for (const fact of CONFIRMED_FACTS) {
+    const rev = factRevision(fact);
+    const stamp = `${REVISION_SOURCE_PREFIX}${rev}`;
     const existing = await getKnowledge(opId, BUSINESS_SCOPE, fact.key, { includeInactive: false });
     if (existing) {
-      skipped.push(fact.key);
+      const storedSource = (existing as any)?.sourceId ?? null;
+      const storedRev =
+        typeof storedSource === "string" && storedSource.startsWith(REVISION_SOURCE_PREFIX)
+          ? Number(storedSource.slice(REVISION_SOURCE_PREFIX.length))
+          : null;
+      // Not seed-written (a real correction), or already at/ahead of this
+      // revision → leave it. Cole's own edits are never overwritten.
+      if (storedRev === null || !Number.isFinite(storedRev) || storedRev >= rev) {
+        skipped.push(fact.key);
+        continue;
+      }
+      await setKnowledge({
+        operatorId: opId,
+        scope: BUSINESS_SCOPE,
+        key: fact.key,
+        value: fact.value,
+        sourceType: "cole_conversation",
+        sourceId: stamp,
+        rationale: `Restated by Cole (revision ${rev}). ${fact.note}`,
+        updatedBy: "cole",
+      });
+      revised.push(fact.key);
       continue;
     }
     await setKnowledge({
@@ -79,6 +151,7 @@ export async function seedBusinessProfile(): Promise<{ written: string[]; skippe
       key: fact.key,
       value: fact.value,
       sourceType: "cole_conversation",
+      sourceId: stamp,
       rationale: `Stated by Cole in the business foundation session. ${fact.note}`,
       updatedBy: "cole",
     });
@@ -86,10 +159,17 @@ export async function seedBusinessProfile(): Promise<{ written: string[]; skippe
   }
   // Aim the research pipe at his real situation as part of seeding, so the
   // very next Sunday sweep compounds on Cole's business, not a stock persona.
-  await deriveStandingTopics().catch((err) =>
-    console.warn("[business] standing-topic derivation failed (non-fatal):", (err as any)?.message ?? err)
-  );
-  return { written, skipped };
+  //
+  // ONLY when the profile actually changed. deriveStandingTopics overwrites
+  // `research.standing_topics` outright, and this function now runs at every
+  // boot — deriving unconditionally would silently reset any topics Cole had
+  // tuned every time the process restarted. A no-op seed leaves them alone.
+  if (written.length || revised.length || retired.length) {
+    await deriveStandingTopics().catch((err) =>
+      console.warn("[business] standing-topic derivation failed (non-fatal):", (err as any)?.message ?? err)
+    );
+  }
+  return { written, skipped, revised, retired };
 }
 
 /**
@@ -109,17 +189,25 @@ export async function deriveStandingTopics(): Promise<{ business: string[]; cont
   const gaps = await openGaps();
   const topGap = gaps[0];
 
+  // Re-aimed 2026-08-05. The first topic used to be "how coaches grow
+  // high-school athlete enrollment at a gym they already work in" — research
+  // pointed at growing Cole's EMPLOYER. Cole is employed there; those athletes
+  // are not his. The subject is the remote business he owns, and its binding
+  // constraint is that nothing arrives on its own (`lead_reality`).
   const business = [
-    "how local sports performance coaches grow high-school athlete enrollment at a gym they already work in",
-    "requirement-and-standards positioning versus guarantee-based offers in youth athletic training — what earns trust with parents",
+    "how independent strength coaches get their first paying remote/online clients with no audience and no inbound",
+    "pricing structures for online athletic coaching — monthly retainers versus fixed training blocks versus one-off program sales, and when each fits",
     "remote athletic coaching models that sell capability and competency rather than measured outcomes",
-    "what parents of varsity high-school athletes actually evaluate when choosing a performance coach",
+    "requirement-and-standards positioning versus guarantee-based offers in youth athletic training — what earns trust with parents",
+    "what parents of varsity high-school athletes actually evaluate when choosing a remote performance coach they will never meet in person",
+    "how coaches running a side business alongside full-time employment structure delivery so it survives limited hours",
   ];
   if (topGap) business.push(`${topGap.question.replace(/\?$/, "")} — how comparable coaches have answered this`);
 
   const content = [
     "content formats that demonstrate coaching competency without guarantee claims",
     "how performance coaches show athlete progress credibly when they cannot publish verified numbers",
+    "how coaches with no existing following start producing content that reaches athletes and parents outside their local area",
   ];
 
   const opBiz = await businessOperatorId();

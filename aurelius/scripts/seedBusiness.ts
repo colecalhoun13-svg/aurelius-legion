@@ -11,8 +11,10 @@
 import { seedBusinessProfile, businessSnapshot } from "../business/positioning.ts";
 
 async function main() {
-  const { written, skipped } = await seedBusinessProfile();
+  const { written, skipped, revised, retired } = await seedBusinessProfile();
   console.log(`[seedBusiness] wrote ${written.length} fact(s): ${written.join(", ") || "(none)"}`);
+  if (revised.length) console.log(`[seedBusiness] revised (Cole restated): ${revised.join(", ")}`);
+  if (retired.length) console.log(`[seedBusiness] retired (no longer true): ${retired.join(", ")}`);
   if (skipped.length) console.log(`[seedBusiness] left alone (already known): ${skipped.join(", ")}`);
 
   const snap = await businessSnapshot();

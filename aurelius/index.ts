@@ -74,6 +74,7 @@ import { calendarRouter } from "./router/calendarRouter.ts";
 import { correctionsRouter } from "./router/correctionsRouter.ts";
 import { gmailRouter } from "./router/gmailRouter.ts";
 import { instagramRouter } from "./router/instagramRouter.ts";
+import { crmRouter } from "./router/crmRouter.ts";
 
 // Structured tracing — every request and scheduled run leaves a LogEntry
 // row the cockpit can read. Telemetry is fire-and-forget by design.
@@ -164,6 +165,7 @@ app.use("/api/calendar", calendarRouter);
 app.use("/api/corrections", correctionsRouter);
 app.use("/api/gmail", gmailRouter);
 app.use("/api/instagram", instagramRouter);
+app.use("/api/crm", crmRouter);
 
 app.get("/", (req: Request, res: Response) => {
   res.send("Aurelius OS backend is running");
@@ -1700,6 +1702,29 @@ app.use((err: any, _req: Request, res: Response, _next: any) => {
   console.error("[express] unhandled error:", err?.message ?? err);
   return res.status(500).json({ error: "Aurelius hit an unexpected server error." });
 });
+
+// ── BUSINESS TRUTH RECONCILIATION (2026-08-05) ───────────────────────
+// Cole's stated business facts used to reach the database only when someone
+// remembered to run `scripts/seedBusiness.ts` by hand. That was survivable
+// while the profile was append-only; it stopped being survivable once facts
+// could be REVISED or RETIRED. A stale fact isn't inert — `exploring` told
+// every business answer that remote coaching was hypothetical for as long as
+// it stayed live. Reconciling at boot means a correction lands on deploy.
+//
+// Cheap and quiet: a handful of indexed reads, writes only on real drift, and
+// standing-topic derivation is skipped entirely when nothing changed. Failure
+// is non-fatal — a business seed must never keep the server from booting.
+import("./business/positioning.ts")
+  .then(async ({ seedBusinessProfile }) => {
+    const { written, revised, retired } = await seedBusinessProfile();
+    const changes = [
+      written.length ? `${written.length} new` : "",
+      revised.length ? `revised ${revised.join(", ")}` : "",
+      retired.length ? `retired ${retired.join(", ")}` : "",
+    ].filter(Boolean);
+    if (changes.length) console.log(`[business] profile reconciled — ${changes.join(" · ")}`);
+  })
+  .catch((err) => console.warn("[business] profile reconcile failed (non-fatal):", err?.message ?? err));
 
 const PORT = Number(process.env.PORT) || 3001;
 // Dead-man heartbeat: a 5-min proof-of-life ping to an external check
