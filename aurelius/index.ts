@@ -1664,7 +1664,21 @@ scheduleNamed("db_backup", "0 2 * * *", "nightly database backup", () => {
 scheduleNamed("queue_sweep", "15 21 * * *", "queue sweep", () => {
   runTraced("schedule", "queue_sweep", async () => {
     const { sweepQueues } = await import("./knowledge/queueSweep.ts");
-    return sweepQueues();
+    const result = await sweepQueues();
+    // Budget check rides the nightly sweep rather than owning a cron slot —
+    // it's a cheap read over rows that already exist, and daily is the right
+    // resolution for a monthly ceiling. Dormant without
+    // LLM_MONTHLY_BUDGET_USD; fires once per threshold per month, because an
+    // alarm that repeats every night gets muted, and a muted alarm is worse
+    // than no alarm. Non-fatal: a spend read must never fail the sweep.
+    try {
+      const { checkBudget } = await import("./measurement/spend.ts");
+      const b = await checkBudget();
+      if (b.fired.length) console.log(`[spend] budget alarm fired at ${b.fired.join("%, ")}%`);
+    } catch (err) {
+      console.warn("[spend] budget check failed (non-fatal):", (err as any)?.message ?? err);
+    }
+    return result;
   }).catch((err) => console.error("[queueSweep] failed:", err));
 });
 // Curriculum ingest — Sunday 22:00: Aurelius studies the next unit of each

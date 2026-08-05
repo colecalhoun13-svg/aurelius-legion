@@ -1243,6 +1243,69 @@ async function main() {
     }
   }
 
+  console.log("── spend: what Aurelius costs, and the alarm before it hurts ──");
+  {
+    const { priceFor, costUsd, formatUsd, monthlyBudgetUsd } = await import("../llm/pricing.ts");
+    const { spendSummary, checkBudget } = await import("../measurement/spend.ts");
+
+    // Prefix matching, so a new point release still prices under its family
+    // instead of falling off the table and silently costing nothing.
+    check("a known model prices", !!priceFor("claude-sonnet-5"));
+    check("an unseen point release still prices under its family", !!priceFor("claude-sonnet-5-20260901"));
+    check("longest prefix wins (mini is not full price)",
+      (priceFor("gpt-4o-mini")?.inPer1M ?? 0) < (priceFor("gpt-4o")?.inPer1M ?? 0));
+
+    // THE RULE THAT MATTERS: unknown → null, never 0. A zero reads exactly
+    // like "this call was free" and would understate the bill forever.
+    check("an unknown model prices to NULL, not zero", priceFor("some-model-nobody-added") === null);
+    check("cost of an unknown model is null, so it can be reported as unpriced",
+      costUsd("some-model-nobody-added", { tokensIn: 1_000_000, tokensOut: 1_000_000 }) === null);
+    check("the compiled-reuse cache is genuinely free (no provider was called)",
+      costUsd("reasoning_cache", { tokensIn: 5000, tokensOut: 5000 }) === 0);
+
+    // Output bills far above input — the single summed total the engines used
+    // to return could not express this, which is why the split exists.
+    const inOnly = costUsd("claude-sonnet-5", { tokensIn: 1_000_000, tokensOut: 0 })!;
+    const outOnly = costUsd("claude-sonnet-5", { tokensIn: 0, tokensOut: 1_000_000 })!;
+    check("output is priced well above input", outOnly > inOnly * 3);
+    check("input price is exact per 1M", Math.abs(inOnly - 3) < 1e-9);
+
+    // Prompt caching is deliberate in this system (llm/router.ts marks the
+    // static prefix). Pricing cached reads at full rate would overstate
+    // exactly the calls the cache was built to make cheap.
+    const cold = costUsd("claude-sonnet-5", { tokensIn: 100_000, tokensOut: 1000 })!;
+    const warm = costUsd("claude-sonnet-5", { tokensIn: 100_000, tokensOut: 1000, tokensCachedIn: 90_000 })!;
+    check("a warm prompt cache costs materially less than a cold one", warm < cold * 0.5);
+    check("cached tokens are discounted, not free", warm > costUsd("claude-sonnet-5", { tokensIn: 10_000, tokensOut: 1000 })!);
+
+    check("money formats without pretending to false precision", formatUsd(0) === "$0.00" && formatUsd(0.004) === "<$0.01");
+
+    // The ledger reads rows runLLM already writes — no second write path.
+    const summary = await spendSummary(30);
+    check("spend summarises from the existing llm_call log, grouped by job and model",
+      Array.isArray(summary.byTaskType) && Array.isArray(summary.byModel) && summary.estimated === true);
+    check("every spend figure carries its as-of date (these are estimates)", !!summary.pricesAsOf);
+
+    // Dormant without a budget (hard rule 4) — tracked, but no alarm.
+    const priorBudget = process.env.LLM_MONTHLY_BUDGET_USD;
+    delete process.env.LLM_MONTHLY_BUDGET_USD;
+    check("no budget set → tracking continues, no alarm", monthlyBudgetUsd() === null);
+    const unset = await checkBudget();
+    check("the budget check is a no-op when no ceiling is set", unset.configured === false && unset.fired.length === 0);
+
+    // A ceiling of essentially zero must trip both thresholds — then the
+    // dedup must stop it firing twice for the same month.
+    process.env.LLM_MONTHLY_BUDGET_USD = "0.0000001";
+    const first = await checkBudget();
+    const second = await checkBudget();
+    check("crossing the ceiling raises an alarm", first.configured === true);
+    check("the alarm never repeats for a threshold already fired this month", second.fired.length === 0);
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "llm_budget" } });
+
+    if (priorBudget === undefined) delete process.env.LLM_MONTHLY_BUDGET_USD;
+    else process.env.LLM_MONTHLY_BUDGET_USD = priorBudget;
+  }
+
   console.log("── media host: the seam that makes publishing reachable ──");
   {
     const { mediaHostStatus, resolvePublicMediaUrl, localDiskHost, MEDIA_ROUTE } =

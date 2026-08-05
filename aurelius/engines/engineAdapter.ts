@@ -25,7 +25,16 @@ export type EngineRequest = {
 
 export type EngineResponse = {
   text: string;
+  /** in + out. Kept for every existing caller. */
   tokensUsed: number;
+  // Split counts, because output bills ~5x input and cached input bills ~10%
+  // of it — a single total cannot be priced. Optional: an adapter that can't
+  // report the split leaves them undefined and its calls report as UNPRICED
+  // rather than silently costing zero.
+  tokensIn?: number;
+  tokensOut?: number;
+  /** Input tokens served from the provider's prompt cache. */
+  tokensCachedIn?: number;
   raw?: any;
 };
 

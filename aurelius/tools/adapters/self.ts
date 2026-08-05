@@ -33,9 +33,48 @@ export const selfAdapter: ToolAdapter = {
       dataSchema: "{}",
       example: "[TOOL: tool=self action=diagnose data={}]",
     },
+    {
+      name: "spend",
+      description:
+        "WHAT AURELIUS COSTS TO RUN — month-to-date LLM spend, broken down by which job and which model spent it, against the monthly budget if one is set. Use when Cole asks what this is costing him, which job is expensive, or whether he's near budget. Figures are hand-maintained estimates, not a billing feed — say so.",
+      dataSchema: '{ "days"?: number (default: month-to-date) }',
+      example: '[TOOL: tool=self action=spend data={}]',
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     const { prisma } = await import("../../core/db/prisma.ts");
+    if (action === "spend") {
+      try {
+        const { spendSummary, monthToDate } = await import("../../measurement/spend.ts");
+        const { monthlyBudgetUsd, formatUsd } = await import("../../llm/pricing.ts");
+        const days = Number(data?.days);
+        const summary = Number.isFinite(days) && days > 0 ? await spendSummary(days) : await monthToDate();
+        const budget = monthlyBudgetUsd();
+        return {
+          ok: true,
+          output: {
+            window: Number.isFinite(days) && days > 0 ? `last ${days} days` : "month to date",
+            cost: summary.cost,
+            calls: summary.calls,
+            tokensIn: summary.tokensIn,
+            tokensOut: summary.tokensOut,
+            tokensCachedIn: summary.tokensCachedIn,
+            budget: budget ? formatUsd(budget) : null,
+            pctOfBudget: budget ? Math.round((summary.costUsd / budget) * 100) : null,
+            topJobs: summary.byTaskType.slice(0, 8).map((b) => ({ job: b.key, cost: formatUsd(b.costUsd), calls: b.calls })),
+            topModels: summary.byModel.slice(0, 8).map((b) => ({ model: b.key, cost: formatUsd(b.costUsd), calls: b.calls })),
+            unpricedCalls: summary.unpricedCalls,
+            caveat:
+              `Estimated from hand-maintained prices as of ${summary.pricesAsOf} — not a billing feed. Check the provider console for the real bill.` +
+              (summary.unpricedCalls > 0
+                ? ` ${summary.unpricedCalls} call(s) ran on models not in the price table and contributed no dollars, so the true total is higher.`
+                : ""),
+          },
+        };
+      } catch (err: any) {
+        return { ok: false, output: null, error: err?.message ?? String(err) };
+      }
+    }
     if (action === "status") {
       try {
         const [missions, grants, pending, failures] = await Promise.all([

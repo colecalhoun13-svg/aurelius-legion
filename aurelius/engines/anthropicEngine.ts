@@ -22,7 +22,14 @@ async function runAnthropic({
   userPrompt,
   maxTokens = 8192,
   tools,
-}: RunAnthropicInput): Promise<{ text: string; tokensUsed: number; raw: any }> {
+}: RunAnthropicInput): Promise<{
+  text: string;
+  tokensUsed: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  tokensCachedIn?: number;
+  raw: any;
+}> {
   // TRIM (Cole's Railway deploy: Anthropic silently failing over to OpenAI).
   // Pasting a key into a hosting dashboard picks up a trailing newline or
   // stray space astonishingly often; sending it verbatim yields a 401
@@ -114,10 +121,18 @@ async function runAnthropic({
       );
     }
 
-    const tokensUsed =
-      (json?.usage?.input_tokens || 0) + (json?.usage?.output_tokens || 0);
+    // Split in/out, and keep cache reads separate. Output bills ~5x input,
+    // and cached input bills ~10% of input — the summed total this used to
+    // return could not price either correctly.
+    const tokensIn =
+      (json?.usage?.input_tokens || 0) +
+      (json?.usage?.cache_read_input_tokens || 0) +
+      (json?.usage?.cache_creation_input_tokens || 0);
+    const tokensOut = json?.usage?.output_tokens || 0;
+    const tokensCachedIn = json?.usage?.cache_read_input_tokens || 0;
+    const tokensUsed = tokensIn + tokensOut;
 
-    return { text, tokensUsed, raw: json };
+    return { text, tokensUsed, tokensIn, tokensOut, tokensCachedIn, raw: json };
   } catch (err: any) {
     console.error("[ANTHROPIC] Fetch error:", err);
     return {
@@ -140,6 +155,9 @@ export const anthropicAdapter: EngineAdapter = {
     return {
       text: result.text,
       tokensUsed: result.tokensUsed,
+      tokensIn: result.tokensIn,
+      tokensOut: result.tokensOut,
+      tokensCachedIn: result.tokensCachedIn,
       raw: result.raw,
     };
   },

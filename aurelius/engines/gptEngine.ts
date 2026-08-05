@@ -89,6 +89,9 @@ export const gptAdapter: EngineAdapter = {
       return {
         text,
         tokensUsed: completion.usage?.total_tokens ?? 0,
+        tokensIn: completion.usage?.prompt_tokens ?? 0,
+        tokensOut: completion.usage?.completion_tokens ?? 0,
+        tokensCachedIn: (completion.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0,
         raw: completion,
       };
     } catch (err: any) {

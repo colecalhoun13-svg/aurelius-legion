@@ -158,7 +158,8 @@ System · Athlete. Each is a lens, not a personality.
 **Capability engines (OG Parts VIII–XV — mostly built as `core/engine*` +
 `autonomy/`):** research · memory · autonomy loop (perception→planning→action→
 reflection) · tools · task · system · **calendar (built)** · training · wealth/FRED ·
-**business (parked — needs Cole's real data)**.
+**business (partially un-parked 2026-08-05 — see the state update below: the
+Client Engine is built; Offer/LeadGen/SOP/Analytics still need Cole's numbers)**.
 
 **Tools / Actions (OG Part VII):** planWeek · planDay · scheduleTasks ·
 breakGoalIntoSteps · generateTasks · overloadDetector · calendar read/write ·
@@ -221,8 +222,11 @@ lineage):**
 **The frontier (the real remaining work):**
 - **The acting layer — Autonomy Grant system (Block 4's unbuilt half).** The keystone
   of §2.5. Nothing today *finalizes*; everything defaults to propose.
-- **Outward engines / Business Engine (OG Part XI, Block 7)** — needs Cole's real
-  offers, pricing, clients. The income flywheel.
+- **Outward engines / Business Engine (OG Part XI, Block 7)** — the income flywheel.
+  Partially un-parked 2026-08-05: the Client Engine (Lead→Client→Engagement→
+  Invoice→Payment) and a media host for the outward content lane are built. What
+  still needs Cole: pricing, capacity, the standard, and — the binding
+  constraint — anything at all arriving in the pipeline.
 - **Always-on deployment** — Mac Mini + UGREEN. The one untested DoD claim ("runs for
   days") stays unproven until this lands.
 - Google OAuth still in Testing mode (weekly token expiry) until the consent screen is
@@ -688,3 +692,61 @@ America/Phoenix), the two-week soak proving "runs for days", then the
 reconvene: Workflows v1 (Cole-defined pipelines + mission tool-steps), the
 horizon watcher (event-driven prep + due-task firing), and market threshold
 alerts through the salience gate.
+
+---
+
+## State update — 2026-08-05 (whose business this is · Client Engine · spend)
+
+**The correction that reframes §4 and Block 7.** Cole is **employed** by the
+gym. The athletes he coaches in person belong to his employer — they are not
+his to sell to, price, migrate, or market at. The business Aurelius exists to
+build is his **own remote/online coaching business**.
+
+Every business document in this repo, including this one, previously encoded
+the opposite: local in-person as the real business, online held as `exploring`
+("under consideration, not committed"). Under that reading Aurelius optimised
+the wrong thing — the Sunday research lane's leading standing topic was
+literally *"how coaches grow high-school athlete enrollment at a gym they
+already work in"*, i.e. how to grow Cole's employer. That is now corrected at
+the source (`business/profile.ts`), not just in prose.
+
+What is true about the remote business, in Cole's words:
+
+- **Zero clients today.** Previously delivered by Google Sheets and text, so
+  the pattern is familiar and the roster is empty. A rebuild from zero, not a
+  migration.
+- **Three billing shapes at once** — monthly retainer · fixed 8–12 week block ·
+  one-off program sale. No single shape wins; the money model holds all three
+  per engagement.
+- **Nothing arrives on its own.** No inbound, no funnel, no referral flow. This
+  is the **binding constraint**, and it outranks every other business task.
+  Aurelius is required to say so rather than present an empty CRM as progress.
+- **He wants Aurelius to become the delivery platform** (programming, check-ins,
+  progress). Scoped as its own future block, gated on the `delivery_scope`
+  question — replacing the Sheet is small; an athlete-facing portal with logins
+  and video is a product with someone else's data in it.
+
+**Built in this pass.** Client Engine (`crm/`): Lead → Client → Engagement →
+Session → Invoice → Payment, with money in integer cents, Invoice (owed) and
+Payment (received) kept separate and one-to-many, and "overdue" derived at read
+time so it cannot go stale. Business page, chat tool, `/api/crm`. A media host
+(`media/host.ts`) that makes the outward content lane reachable at all — Meta
+fetches images by public URL and cannot accept an upload, so publishing had
+been impossible even with Instagram fully configured, while the doctor reported
+it "live". Inbox triage moved onto the spine at 05:30 (it existed but had never
+been scheduled). Curriculum gap-discovery fixed: it fired only once a track's
+seed list was nearly exhausted — roughly three years out — so the "then find
+what's missing" half of the design was never reached.
+
+**Spend is now measured.** Every engine reported a token count that nothing
+priced, summed, or warned on. Tokens are now split in/out/cached, priced
+against a dated hand-maintained table, recorded per call, and aggregated by job
+and model. An unknown model prices to **null, never zero** — unpriced calls are
+reported as unpriced rather than as free. `LLM_MONTHLY_BUDGET_USD` arms an
+alarm that fires once at 80% and once at 100% per month. These are estimates,
+not a billing feed, and every surface that shows a dollar figure says so.
+
+**Still parked, honestly.** Offer Engine · Lead Generation · SOP · Workflow ·
+Analytics · Brand, and the full Content Engine. Reels/video publishing is
+deferred to the Mac Mini — note that the Mini supplies *hosting*; the reels
+code path (video container + async status polling) is also still unwritten.

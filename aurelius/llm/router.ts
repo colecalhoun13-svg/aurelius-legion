@@ -89,6 +89,12 @@ export type LLMResponse = {
   engine: string;
   model: string;
   tokensUsed: number;
+  // Split counts for pricing — output bills ~5x input, cached input ~10%.
+  // Undefined when the provider didn't report them; the call is then recorded
+  // as UNPRICED rather than as costing nothing.
+  tokensIn?: number;
+  tokensOut?: number;
+  tokensCachedIn?: number;
   latencyMs: number;
   /** Native invoke_tool calls the provider returned as STRUCTURED objects —
    *  already normalized to the ToolDirective shape the executor runs. */
@@ -600,7 +606,15 @@ async function runAdapter(
   systemPrompt: string,
   userPrompt: string,
   withNativeTools = false
-): Promise<{ text: string; tokensUsed: number; latencyMs: number; toolCalls?: ToolDirective[] }> {
+): Promise<{
+  text: string;
+  tokensUsed: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  tokensCachedIn?: number;
+  latencyMs: number;
+  toolCalls?: ToolDirective[];
+}> {
   const adapter = adapters[provider];
   if (!adapter) {
     throw new Error(`No adapter found for provider "${provider}"`);
@@ -615,6 +629,9 @@ async function runAdapter(
   return {
     text: response.text || "",
     tokensUsed: response.tokensUsed || 0,
+    tokensIn: response.tokensIn,
+    tokensOut: response.tokensOut,
+    tokensCachedIn: response.tokensCachedIn,
     latencyMs,
     ...(toolCalls.length ? { toolCalls } : {}),
   };
@@ -745,7 +762,15 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
     ...(providerConfigured(choice.provider) ? [] : [{ provider: choice.provider, model: choice.model }]),
   ].slice(0, MAX_ATTEMPTS);
 
-  let primary: { text: string; tokensUsed: number; latencyMs: number; toolCalls?: ToolDirective[] } | null = null;
+  let primary: {
+    text: string;
+    tokensUsed: number;
+    tokensIn?: number;
+    tokensOut?: number;
+    tokensCachedIn?: number;
+    latencyMs: number;
+    toolCalls?: ToolDirective[];
+  } | null = null;
   let served = chain[0];
   let failedOver = false;
   let lastFailure = "unknown";
@@ -808,6 +833,9 @@ export async function routeLLM(task: LLMTask): Promise<LLMResponse> {
     engine: served.provider,
     model: served.model,
     tokensUsed: primary.tokensUsed,
+    tokensIn: primary.tokensIn,
+    tokensOut: primary.tokensOut,
+    tokensCachedIn: primary.tokensCachedIn,
     latencyMs: primary.latencyMs,
     toolCalls: primary.toolCalls?.length ? primary.toolCalls : undefined,
     failedOverFrom: failedOver && served.provider !== choice.provider ? choice.provider : undefined,
