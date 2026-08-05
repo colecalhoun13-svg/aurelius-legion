@@ -50,7 +50,15 @@ async function voiceOver(skeleton: string, instruction: string): Promise<string>
     // Strip any stray [TOOL:]/[SAVE:] directive — the catalog is in the prompt
     // but a briefing must never print a raw directive to Cole.
     if (!isEngineUnavailable(response.text)) {
-      return extractDirectives(response.text ?? "").cleanedText || response.text;
+      const clean = extractDirectives(response.text ?? "").cleanedText || response.text;
+      // SAY IT WHEN THE SPINE RAN DEGRADED. Chat has always appended a failover
+      // note; the rituals never did — so Cole read a week of briefings written
+      // by a substitute model with nothing on the page to say so. The failover
+      // was recorded only in a LogEntry field nobody opens.
+      if (response.failedOverFrom) {
+        return `${clean}\n\n_(${response.failedOverFrom} was unreachable — ${response.engine} wrote this one. Run /doctor.)_`;
+      }
+      return clean;
     }
   } catch (err) {
     console.warn("[rituals] voice-over failed, shipping deterministic briefing:", err);

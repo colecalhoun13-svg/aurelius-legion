@@ -171,6 +171,37 @@ async function main() {
   const { chooseModel } = await import("../llm/router.ts");
   const routed = chooseModel({ taskType: "chat", input: "x" });
   check("default routing targets Claude Sonnet 5", routed.model === "claude-sonnet-5");
+  // THE TEST THAT WOULD HAVE CAUGHT COLE'S WEEK. The assertion above is
+  // key-agnostic: chooseModel returns anthropic whether or not a key exists,
+  // so this suite passed green through 192 silent failovers. What matters is
+  // that the router, the doctor and preflight AGREE on which provider is the
+  // default — the disagreement is what let it hide.
+  {
+    const { DEFAULT_TIER, FRONTIER_MODELS } = await import("../llm/modelConfig.ts");
+    check(
+      "the default tier is declared once and the router routes to it",
+      routed.provider === DEFAULT_TIER.provider && routed.model === DEFAULT_TIER.model
+    );
+    check(
+      "the doctor probes the same model the router uses (no second hardcoded copy)",
+      (await import("node:fs"))
+        .readFileSync(new URL("../core/doctor.ts", import.meta.url), "utf8")
+        .includes("ROUTER_DEFAULT_MODEL")
+    );
+    check(
+      "preflight reads the default tier instead of restating it",
+      (await import("node:fs"))
+        .readFileSync(new URL("../core/preflight.ts", import.meta.url), "utf8")
+        .includes("DEFAULT_TIER") &&
+        !/defaultProvider = "anthropic"/.test(
+          (await import("node:fs")).readFileSync(new URL("../core/preflight.ts", import.meta.url), "utf8")
+        )
+    );
+    check(
+      "a frontier call never falls back to a mini model",
+      FRONTIER_MODELS.has(DEFAULT_TIER.model) && !FRONTIER_MODELS.has("gpt-5.4-mini")
+    );
+  }
   // Keyless env → the failover chain is length one → the old honest failure
   const { routeLLM } = await import("../llm/router.ts");
   const llmRes = await routeLLM({ taskType: "chat", operators: { primary: "strategy", secondaries: [] }, input: "smoke" });
