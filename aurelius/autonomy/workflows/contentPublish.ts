@@ -14,6 +14,8 @@ export type ContentPublishPayload = {
   channel?: string; // "instagram" (only channel for now)
   caption: string;
   imageUrl: string;
+  /** Set when the post came from the content queue, so the row can close out. */
+  draftId?: string;
 };
 
 /** Commit step — registered as the content.publish finalizer. Runs on Cole's confirm. */
@@ -23,5 +25,12 @@ export async function finalizeContentPublish(payload: ContentPublishPayload): Pr
     throw new Error(`no publisher wired for channel "${channel}" (only instagram today)`);
   }
   const result = await publishToInstagram({ caption: payload.caption, imageUrl: payload.imageUrl });
+  // Close the loop back to the queue. AFTER the publish call, never before:
+  // "staged" and "published" are different facts, and marking the second
+  // early is how a system starts reporting work it didn't actually do.
+  if (payload.draftId) {
+    const { markPublished } = await import("../../content/queue.ts");
+    await markPublished(payload.draftId, (result as any)?.permalink);
+  }
   return { channel, ...result };
 }

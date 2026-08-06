@@ -46,6 +46,24 @@ export const contentAdapter: ToolAdapter = {
       example: '[TOOL: content.publish_post {"caption": "500lb squat. 3 years.", "imageUrl": "https://.../pr.jpg"}]',
     },
     {
+      name: "queue",
+      description:
+        "What's in the content queue — everything drafted, edited, waiting on your confirm, or published, with an honest read on whether any of it actually went out. Use for 'what have I got written', 'what's in the queue', 'what's ready to post'.",
+      dataSchema: '{ status?: "draft"|"ready"|"staged"|"published"|"discarded" }',
+    },
+    {
+      name: "edit_draft",
+      description:
+        "Rewrite or retitle a kept draft, mark it ready, or discard it. The published version should be Cole's words, so editing is a first-class action — 'ready' and 'discarded' are the only statuses settable here; publishing sets the rest.",
+      dataSchema: '{ draftId: string, body?: string, title?: string, imageUrl?: string, status?: "draft"|"ready"|"discarded" }',
+    },
+    {
+      name: "publish_draft",
+      description:
+        "Stage a KEPT draft to publish — files a confirmation on the Bridge for Cole's tap. Never posts on its own. Refuses an Instagram draft with no public image URL rather than filing a proposal guaranteed to fail.",
+      dataSchema: "{ draftId: string }",
+    },
+    {
       name: "instagram_metrics",
       description:
         "Read-only Instagram performance: followers, reach, profile views over the last 30 days, plus recent posts and the top performer. Use for 'how's my Instagram doing', 'what's my reach', 'which post landed best'.",
@@ -85,12 +103,32 @@ ${data.notes ? `Notes to weave in: ${String(data.notes)}\n` : ""}Return ONLY the
           return { ok: false, output: null, error: res.text || "no engine available to draft with" };
         }
         const caption = extractDirectives(res.text ?? "").cleanedText || res.text;
+
+        // KEEP IT. This used to return the caption into a chat message and
+        // nothing else — `content.draft` was a declared action class with no
+        // executor, and the copy died with the conversation. It now runs as a
+        // real inward action (traced, reversible) and lands in the queue.
+        const exec = await executeAction({
+          actionClass: "content.draft",
+          sourceType: "content_draft",
+          prepare: async () => ({
+            title: `Drafted a ${channel} post`,
+            body: caption,
+            domain: "content",
+            payload: { channel, caption, title: String(data.topic).slice(0, 120) },
+          }),
+        });
+        const draftId = (exec.result as any)?.id;
+
         return {
           ok: true,
           output: {
-            summary: `Drafted a ${channel} caption — review it, then say "publish it" with an image.`,
+            summary: draftId
+              ? `Drafted a ${channel} post and kept it in the content queue — edit it there, then publish when you're happy.`
+              : `Drafted a ${channel} caption — review it, then say "publish it" with an image.`,
             channel,
             caption,
+            draftId,
           },
         };
       }
@@ -123,6 +161,47 @@ ${data.notes ? `Notes to weave in: ${String(data.notes)}\n` : ""}Return ONLY the
             summary: `Staged a ${channel} post on the Bridge — tap Confirm to publish. I never post on my own.${configured ? "" : ` (${channel} not connected yet.)`}`,
             bridgeSignalId: exec.bridgeSignalId,
             gated: !exec.finalized,
+          },
+        };
+      }
+
+      case "queue": {
+        const { listDrafts, queueState } = await import("../../content/queue.ts");
+        const [drafts, state] = await Promise.all([listDrafts({ status: data?.status }), queueState()]);
+        return {
+          ok: true,
+          output: {
+            // A queue full of unpublished drafts is not output, and the
+            // headline says so rather than reporting a tidy count.
+            summary: state.headline,
+            counts: { draft: state.draft, ready: state.ready, staged: state.staged, published: state.published },
+            drafts: drafts.map((d) => ({
+              id: d.id, channel: d.channel, title: d.title, status: d.status,
+              grounding: d.grounding, fromAngle: d.angle?.title ?? null,
+              hasImage: !!d.imageUrl, body: d.body.slice(0, 400),
+            })),
+          },
+        };
+      }
+
+      case "edit_draft": {
+        if (!data?.draftId) return { ok: false, output: null, error: "edit_draft needs draftId (from content.queue)." };
+        const { updateDraft } = await import("../../content/queue.ts");
+        const out = await updateDraft(String(data.draftId), data);
+        if (!out.ok) return { ok: false, output: null, error: out.error };
+        return { ok: true, output: { summary: "Updated." } };
+      }
+
+      case "publish_draft": {
+        if (!data?.draftId) return { ok: false, output: null, error: "publish_draft needs draftId (from content.queue)." };
+        const { stageForPublish } = await import("../../content/queue.ts");
+        const out = await stageForPublish(String(data.draftId));
+        if (!out.ok) return { ok: false, output: null, error: out.error };
+        return {
+          ok: true,
+          output: {
+            summary: "Staged on the Bridge — tap Confirm to publish. I never post on my own.",
+            bridgeSignalId: out.bridgeSignalId,
           },
         };
       }

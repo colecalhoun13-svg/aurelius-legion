@@ -857,6 +857,49 @@ model Engagement {
   @@index([status, nextBillingAt])
 }
 
+// A PIECE OF CONTENT THAT SURVIVES THE TAB CLOSING.
+//
+// `content.draft` was declared as an action class with nothing that executed
+// it, and the marketing engine's draftAsset returned a string that vanished
+// the moment the panel closed. So Cole could generate copy endlessly and keep
+// none of it — the funnel ran angle → asset → /dev/null.
+//
+// This is the queue between "written" and "published". Cole edits the body in
+// place (the first draft is Aurelius's; the published one should be his), and
+// publishing stays OUTWARD: `content.publish`, staged on the Bridge, his tap.
+model ContentDraft {
+  id      String  @id @default(cuid())
+  channel String  @default("instagram") // "instagram" | "email" | "landing" | "dm" | ...
+  format  String? // the marketing format it came from, when it came from one
+  title   String? // subject line for email; internal handle otherwise
+  body    String
+
+  // WHERE IT CAME FROM. An asset written off a researched angle and one
+  // improvised from a topic are not the same thing, and the difference has to
+  // survive into the queue or the grounding contract dies at the panel edge.
+  angleId   String?
+  angle     MarketingAngle? @relation(fields: [angleId], references: [id])
+  grounding String          @default("none")
+
+  // "draft"     — written, not reviewed
+  // "ready"     — Cole has read/edited it and would send it
+  // "staged"    — an outward publish proposal is pending his confirm
+  // "published" — it actually went out
+  // "discarded" — killed, kept so the same idea isn't re-proposed forever
+  status String @default("draft")
+
+  imageUrl       String? // Instagram needs a PUBLIC url — Meta fetches it itself
+  scheduledFor   DateTime?
+  bridgeSignalId String? // the staged publish proposal, when there is one
+  publishedAt    DateTime?
+  permalink      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+}
+
 // THE THING EVERYTHING POINTS AT.
 //
 // Marketing angles, outreach drafts and landing copy were all writing about
@@ -1020,7 +1063,8 @@ model MarketingAngle {
   replies     Int @default(0)
   conversions Int @default(0)
 
-  leads Lead[]
+  leads  Lead[]
+  drafts ContentDraft[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

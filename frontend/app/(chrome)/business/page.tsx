@@ -59,6 +59,14 @@ type Offer = {
 
 type OfferState = { hasActive: boolean; activeCount: number; draftCount: number; headline: string; blocker: string | null };
 
+type ContentDraft = {
+  id: string; channel: string; format: string | null; title: string | null; body: string;
+  status: string; grounding: string; imageUrl: string | null; permalink: string | null;
+  angle: { title: string } | null;
+};
+
+type ContentState = { draft: number; ready: number; staged: number; published: number; headline: string };
+
 const STAGES = ["new", "contacted", "conversing", "proposed"] as const;
 const SOURCES = ["manual", "referral", "instagram", "email", "word_of_mouth", "website", "other"] as const;
 
@@ -69,6 +77,7 @@ export default function BusinessPage() {
   const [data, setData] = useState<{
     pipeline: Snapshot; attention: Attention; clients: Client[]; leads: Lead[];
     marketing?: Marketing; offers?: Offer[]; offerState?: OfferState;
+    drafts?: ContentDraft[]; contentState?: ContentState;
   } | null>(null);
   // A failed load must never render as "you have no business" — that reads
   // identically to the real empty state and would be a lie about his data.
@@ -167,7 +176,7 @@ export default function BusinessPage() {
 
   if (!data) return <div className="p-6 text-aurelius-text/50">Loading…</div>;
 
-  const { pipeline: snap, attention, clients, leads, marketing, offers, offerState } = data;
+  const { pipeline: snap, attention, clients, leads, marketing, offers, offerState, drafts, contentState } = data;
   const openLeads = leads.filter((l) => !["won", "lost"].includes(l.status));
   const attentionCount =
     attention.blocksEnding.length + attention.renewalsDue.length + attention.followUpsOverdue.length + attention.unpaid.length;
@@ -259,7 +268,10 @@ export default function BusinessPage() {
       {/* ── 2. What you say ──────────────────────────────────────── */}
       <MarketingPanel marketing={marketing} hasOffer={offerState?.hasActive ?? false} onChange={load} />
 
-      {/* ── 3. The warm list ─────────────────────────────────────── */}
+      {/* ── 3. What you've written, and whether any of it went out ─ */}
+      <ContentQueue drafts={drafts ?? []} state={contentState} onChange={load} />
+
+      {/* ── 4. The warm list ─────────────────────────────────────── */}
       <WarmList onChange={load} empty={snap.empty} />
 
       {/* ── Add a lead ───────────────────────────────────────────── */}
@@ -816,7 +828,8 @@ function OfferPanel({ offers, state, onChange }: { offers: Offer[]; state?: Offe
 function MarketingPanel({ marketing, hasOffer, onChange }: { marketing?: Marketing; hasOffer: boolean; onChange: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [draft, setDraft] = useState<{ angle: string; body: string; trust: string } | null>(null);
+  const [draft, setDraft] = useState<{ angleId: string; angle: string; body: string; trust: string; format: string } | null>(null);
+  const [kept, setKept] = useState(false);
   const [format, setFormat] = useState("email");
   const angles = marketing?.angles ?? [];
 
@@ -879,7 +892,7 @@ function MarketingPanel({ marketing, hasOffer, onChange }: { marketing?: Marketi
                       disabled={busy}
                       onClick={async () => {
                         const j = await post({ kind: "draft", angleId: a.id, format });
-                        if (j) setDraft({ angle: a.title, body: j.body, trust: j.groundingNote });
+                        if (j) { setKept(false); setDraft({ angleId: a.id, angle: a.title, body: j.body, trust: j.groundingNote, format }); }
                       }}
                       className="text-[11px] text-aurelius-gold/70 hover:text-aurelius-gold disabled:opacity-40"
                     >
@@ -922,10 +935,186 @@ function MarketingPanel({ marketing, hasOffer, onChange }: { marketing?: Marketi
           </div>
           <pre className="whitespace-pre-wrap text-sm text-aurelius-text/85 font-sans leading-relaxed">{draft.body}</pre>
           <p className="text-[10px] text-amber-200/70 mt-3">{draft.trust}</p>
-          <p className="text-[10px] text-aurelius-text/40 mt-1">
-            A draft, nowhere else. Posting and sending are outward and stop for your confirm.
-          </p>
+          {/* Copy you generate and don't keep is copy you never wrote. This
+              button is the difference between a text generator and a pipeline. */}
+          <div className="flex items-center gap-3 mt-3">
+            <button
+              disabled={busy || kept}
+              onClick={async () => {
+                setBusy(true); setErr(null);
+                try {
+                  const res = await fetch("/api/crm/content", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      kind: "keep", body: draft.body, angleId: draft.angleId, format: draft.format,
+                      title: draft.angle,
+                      channel: draft.format.startsWith("instagram") ? "instagram" : draft.format === "email" ? "email" : "other",
+                    }),
+                  });
+                  const j = await res.json();
+                  if (!res.ok) throw new Error(j?.error ?? "Could not keep it");
+                  setKept(true); onChange();
+                } catch (e: any) { setErr(e?.message ?? String(e)); }
+                finally { setBusy(false); }
+              }}
+              className={btn}
+            >
+              {kept ? "Kept ✓" : "Keep it"}
+            </button>
+            <span className="text-[10px] text-aurelius-text/40">
+              A draft, nowhere else. Posting and sending are outward and stop for your confirm.
+            </span>
+          </div>
         </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * THE CONTENT QUEUE — writing that survives the tab closing.
+ *
+ * Cole edits in place, because the version that goes out should be his words,
+ * not Aurelius's. Publishing is outward: the button stages a proposal on the
+ * Bridge and nothing leaves until he taps Confirm.
+ */
+function ContentQueue({ drafts, state, onChange }: { drafts: ContentDraft[]; state?: ContentState; onChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [images, setImages] = useState<Record<string, string>>({});
+
+  const live = drafts.filter((d) => d.status !== "discarded");
+
+  async function post(body: Record<string, unknown>) {
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch("/api/crm/content", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error ?? "Failed");
+      onChange();
+      return j;
+    } catch (e: any) { setErr(e?.message ?? String(e)); return null; }
+    finally { setBusy(false); }
+  }
+
+  const btn = "px-3 py-1.5 rounded border border-aurelius-gold/50 text-aurelius-gold text-xs hover:bg-aurelius-gold/10 disabled:opacity-40";
+
+  return (
+    <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4">
+      <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80 mb-2">
+        What you&apos;ve written
+      </h2>
+      {/* A full queue is not output. The headline refuses to let a pile of
+          unpublished drafts read as progress. */}
+      <p className="text-xs text-aurelius-text/60 mb-3">{state?.headline ?? "Loading…"}</p>
+      {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200 mb-3">{err}</div>}
+
+      {live.length === 0 ? (
+        <p className="text-xs text-aurelius-text/50 leading-relaxed">
+          Write something from an angle above and hit <span className="text-aurelius-gold/70">Keep it</span> — it lands here,
+          where you can edit it into your own words and publish when you&apos;re happy.
+        </p>
+      ) : (
+        <ul className="divide-y divide-aurelius-gold/10">
+          {live.map((d) => (
+            <li key={d.id} className="py-2">
+              <button onClick={() => setOpen(open === d.id ? null : d.id)} className="w-full text-left flex justify-between items-start gap-4">
+                <div className="min-w-0">
+                  <div className="text-sm text-aurelius-text/90 truncate">{d.title ?? d.body.slice(0, 60)}</div>
+                  <div className="text-[11px] text-aurelius-text/40">
+                    {[d.channel, d.format?.replace(/_/g, " "), d.angle ? `from "${d.angle.title}"` : null].filter(Boolean).join(" · ")}
+                  </div>
+                </div>
+                <div className="text-right text-[11px] shrink-0">
+                  <div className={
+                    d.status === "published" ? "text-emerald-400/80"
+                    : d.status === "staged" ? "text-amber-300/80"
+                    : d.status === "ready" ? "text-aurelius-gold/70"
+                    : "text-aurelius-text/50"
+                  }>
+                    {d.status === "staged" ? "waiting on your confirm" : d.status}
+                  </div>
+                  {d.grounding === "none" && <div className="text-amber-300/60">unverified idea</div>}
+                </div>
+              </button>
+
+              {open === d.id && (
+                <div className="mt-2 space-y-2">
+                  {d.status === "published" ? (
+                    <>
+                      <pre className="whitespace-pre-wrap text-sm text-aurelius-text/80 font-sans leading-relaxed">{d.body}</pre>
+                      {d.permalink && (
+                        <a href={d.permalink} target="_blank" rel="noreferrer" className="text-[11px] text-aurelius-gold/70 hover:text-aurelius-gold">
+                          view it →
+                        </a>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {/* Editable, because the published version should be his. */}
+                      <textarea
+                        value={edits[d.id] ?? d.body}
+                        onChange={(e) => setEdits({ ...edits, [d.id]: e.target.value })}
+                        rows={7}
+                        className="w-full bg-black/50 border border-aurelius-gold/30 rounded px-3 py-2 text-sm text-aurelius-text leading-relaxed"
+                      />
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <button
+                          disabled={busy || (edits[d.id] ?? d.body) === d.body}
+                          onClick={() => post({ kind: "edit", draftId: d.id, body: edits[d.id] })}
+                          className={btn}
+                        >
+                          Save my version
+                        </button>
+                        {d.status === "draft" && (
+                          <button disabled={busy} onClick={() => post({ kind: "edit", draftId: d.id, status: "ready" })} className={btn}>
+                            Mark ready
+                          </button>
+                        )}
+                        {d.channel === "instagram" && (
+                          <input
+                            value={images[d.id] ?? d.imageUrl ?? ""}
+                            onChange={(e) => setImages({ ...images, [d.id]: e.target.value })}
+                            onBlur={() => images[d.id] !== undefined && post({ kind: "edit", draftId: d.id, imageUrl: images[d.id] })}
+                            placeholder="public image URL"
+                            className="bg-black/50 border border-aurelius-gold/30 rounded px-2 py-1.5 text-xs text-aurelius-text placeholder:text-aurelius-text/30 flex-1 min-w-[12rem]"
+                            title="Instagram fetches the image itself, so it has to be a public URL — an upload won't work."
+                          />
+                        )}
+                        {d.status !== "staged" && (
+                          <button
+                            disabled={busy}
+                            onClick={() => post({ kind: "publish", draftId: d.id })}
+                            className={btn}
+                            title="Stages it on the Bridge for your confirm. Nothing goes out until you tap."
+                          >
+                            Publish…
+                          </button>
+                        )}
+                        <button
+                          disabled={busy}
+                          onClick={() => post({ kind: "discard", draftId: d.id })}
+                          className="text-[11px] text-aurelius-text/40 hover:text-red-300 disabled:opacity-40"
+                        >
+                          discard
+                        </button>
+                      </div>
+                      {d.status === "staged" && (
+                        <p className="text-[10px] text-amber-200/70">
+                          Waiting on the Bridge for your confirm. Nothing has gone out.
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   );

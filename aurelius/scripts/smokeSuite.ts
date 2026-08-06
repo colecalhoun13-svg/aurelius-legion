@@ -1444,6 +1444,73 @@ async function main() {
     await prisma.marketingAngle.deleteMany({ where: { title: { startsWith: TAG } } });
   }
 
+  console.log("── the content queue: writing that survives the tab closing ──");
+  {
+    const { saveDraft, listDrafts, updateDraft, discardDraft, stageForPublish, queueState, markPublished } =
+      await import("../content/queue.ts");
+
+    // Hard rule 3, at the place it would actually persist: a queue is exactly
+    // where "…engine is not configured" would sit until it got staged to post.
+    check("an engine error is never filed as a draft",
+      (await saveDraft({ body: "Anthropic engine is not configured. Set ANTHROPIC_API_KEY." })).ok === false);
+    check("an empty draft is refused", (await saveDraft({ body: "  " })).ok === false);
+
+    const empty = await queueState();
+    check("with nothing kept it says copy you don't keep is copy you never wrote",
+      /never wrote|Nothing written/i.test(empty.headline));
+
+    // Grounding must survive the handoff from the marketing engine.
+    const angle = await prisma.marketingAngle.create({
+      data: { title: `${TAG} qangle`, hypothesis: "h", audience: "parent", grounding: "external" },
+    });
+    const kept = await saveDraft({ body: `${TAG} a caption long enough to be real`, angleId: angle.id, channel: "instagram" });
+    check("a draft is kept", kept.ok === true && !!kept.id);
+    const row = (await listDrafts({}))!.find((d) => d.id === kept.id)!;
+    check("it inherits the ANGLE's grounding, not the caller's claim", row.grounding === "external");
+
+    // Cole's edit is the artifact.
+    check("Cole can rewrite it", (await updateDraft(kept.id!, { body: `${TAG} my own words, rewritten` })).ok === true);
+    check("but it can't be emptied into nothing", (await updateDraft(kept.id!, { body: "x" })).ok === false);
+    check("marking it ready is allowed", (await updateDraft(kept.id!, { status: "ready" })).ok === true);
+    // "published" is a fact about the world, not a field to set. Conflating
+    // them is how a system starts reporting work it never did.
+    check("but 'published' cannot be set by hand",
+      /set by publishing/i.test((await updateDraft(kept.id!, { status: "published" })).error ?? ""));
+
+    // Instagram fetches the image itself — refuse rather than file a proposal
+    // that is guaranteed to fail on confirm.
+    const noImage = await stageForPublish(kept.id!);
+    check("an Instagram draft with no public image URL refuses to stage",
+      noImage.ok === false && /public image URL/i.test(noImage.error ?? ""));
+
+    await updateDraft(kept.id!, { imageUrl: "https://example.com/x.jpg" });
+    const staged = await stageForPublish(kept.id!);
+    check("with an image it stages — and only stages", staged.ok === true && !!staged.bridgeSignalId);
+    const afterStage = (await listDrafts({}))!.find((d) => d.id === kept.id)!;
+    check("publishing is OUTWARD: the draft is 'staged', never 'published', without Cole's tap",
+      afterStage.status === "staged" && afterStage.publishedAt === null);
+    check("and it won't double-stage", (await stageForPublish(kept.id!)).ok === false);
+
+    const bs = await prisma.bridgeSignal.findUnique({ where: { id: staged.bridgeSignalId! } });
+    check("the staged proposal is a pending confirm, not a receipt", bs?.status === "pending");
+
+    // Only the finalizer, after the real publish call, may say "published".
+    await markPublished(kept.id!, "https://instagram.com/p/xyz");
+    const done = (await listDrafts({ status: "published" }))!.find((d) => d.id === kept.id)!;
+    check("the finalizer closes the loop back to the queue", done.status === "published" && !!done.publishedAt);
+    check("an already-published draft can't be edited after the fact",
+      /already out/i.test((await updateDraft(kept.id!, { body: `${TAG} rewriting history here` })).error ?? ""));
+
+    // Reachability (rule 8): content.draft was a declared class with NO
+    // finalizer, so every draft gated as an unactionable proposal.
+    const { getActionFinalizer } = await import("../autonomy/actionRegistry.ts");
+    check("content.draft finally has a registered finalizer", typeof getActionFinalizer("content.draft") === "function");
+
+    await discardDraft(kept.id!);
+    await prisma.contentDraft.deleteMany({ where: { OR: [{ body: { startsWith: TAG } }, { title: { startsWith: TAG } }] } });
+    await prisma.marketingAngle.deleteMany({ where: { title: { startsWith: TAG } } });
+  }
+
   console.log("── the offer: the artifact everything points at ──");
   {
     const { parseOffer, draftOffer, activateOffer, retireOffer, offerReadiness, offerContextBlock, listOffers } =
