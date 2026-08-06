@@ -27,8 +27,16 @@
 //      most input tokens bill at ~10%. Ignoring that would overstate the cost
 //      of exactly the calls the caching was built to make cheap.
 
-/** When these numbers were last checked by hand. Shown wherever cost is. */
-export const PRICES_AS_OF = "2026-08-05";
+/**
+ * When these numbers were last checked by hand. Shown wherever cost is.
+ *
+ * CONFIDENCE, honestly stated: the Anthropic rows were checked against
+ * published pricing on this date. The OpenAI / Google / Groq / DeepSeek / xAI
+ * rows have NOT been verified since they were written and should be treated as
+ * rough. If a provider's spend starts mattering, verify its row before
+ * trusting the figure — and the provider console is always the real answer.
+ */
+export const PRICES_AS_OF = "2026-08-06";
 
 export type ModelPrice = {
   /** USD per 1M input tokens. */
@@ -46,11 +54,20 @@ export type ModelPrice = {
  */
 const PRICES: Record<string, ModelPrice> = {
   // ── Anthropic ──
-  "claude-opus": { inPer1M: 15, outPer1M: 75 },
+  // CORRECTED 2026-08-06. The first pass of this table was written from
+  // memory and was wrong in BOTH directions — opus at 15/75 (3x too high)
+  // and fable at 3/15 (3x too low, when it is the most expensive model on
+  // the list). That is precisely why rule 2 above exists: a hand-maintained
+  // table drifts, and a confidently wrong number is worse than an absent one.
+  "claude-opus": { inPer1M: 5, outPer1M: 25 },
+  // Sonnet 5 runs at an introductory $2/$10 through 2026-08-31 and returns to
+  // the standard $3/$15 on 2026-09-01. The standard rate is encoded, so for
+  // the remainder of August this OVERSTATES sonnet spend slightly. Erring
+  // high is the right direction for a budget alarm — it warns early, never late.
   "claude-sonnet": { inPer1M: 3, outPer1M: 15 },
-  "claude-haiku": { inPer1M: 0.8, outPer1M: 4 },
-  "claude-fable": { inPer1M: 3, outPer1M: 15 },
-  "claude-3-5-haiku": { inPer1M: 0.8, outPer1M: 4 },
+  "claude-haiku": { inPer1M: 1, outPer1M: 5 },
+  "claude-fable": { inPer1M: 10, outPer1M: 50 },
+  "claude-3-5-haiku": { inPer1M: 1, outPer1M: 5 },
   "claude-3-5-sonnet": { inPer1M: 3, outPer1M: 15 },
 
   // ── OpenAI ──

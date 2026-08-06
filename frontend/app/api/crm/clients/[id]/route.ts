@@ -4,10 +4,11 @@ import { clientDetail } from "../../../../../../aurelius/crm/service";
 export const dynamic = "force-dynamic";
 
 /** One client with engagements, sessions, invoices, payments and lifetime value. */
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+// Next 14 passes `params` as a plain object (the Promise form is Next 15).
+// Matching the convention the rest of app/api uses — see corpus/[id].
+export async function GET(_request: Request, { params }: { params: { id: string } }) {
   try {
-    const { id } = await params;
-    const detail = await clientDetail(id);
+    const detail = await clientDetail(params.id);
     if (!detail) return NextResponse.json({ error: "No such client." }, { status: 404 });
     return NextResponse.json(detail);
   } catch (error: any) {
