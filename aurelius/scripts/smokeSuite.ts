@@ -1243,6 +1243,22 @@ async function main() {
     }
   }
 
+  console.log("── reachability: no capability that nothing can invoke ──");
+  {
+    // THE SKELETON GATE. Every defect this catches previously shipped green:
+    // written, typechecked, smoke-tested, committed — and unreachable. tsc
+    // proves code compiles; this proves something can actually run it.
+    const { auditReachability } = await import("./reachabilityAudit.ts");
+    const findings = auditReachability();
+    const high = findings.filter((f) => f.severity === "high");
+    const medium = findings.filter((f) => f.severity === "medium");
+
+    for (const f of findings) console.log(`     ${f.severity === "high" ? "!" : "·"} ${f.area}: ${f.message}`);
+
+    check("every router is mounted, every tool and engine registered, every daily job claim-protected", high.length === 0);
+    check("nothing is built-but-unreachable (orphan endpoints, unlinkable pages)", medium.length === 0);
+  }
+
   console.log("── spend: what Aurelius costs, and the alarm before it hurts ──");
   {
     const { priceFor, costUsd, formatUsd, monthlyBudgetUsd } = await import("../llm/pricing.ts");

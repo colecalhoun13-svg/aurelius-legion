@@ -33,6 +33,15 @@ anyone (human or agent) working in this repo.
 7. **Verify live.** Every block ships with live-fire verification:
    `npx tsx scripts/smokeSuite.ts` (self-cleaning, real Postgres) plus
    `tsc --noEmit` both sides and a prod `next build`.
+8. **Built is not done — done is reachable.** The recurring defect in this
+   repo is code that compiles, passes smoke, and that nothing can invoke:
+   a publish path with no media host, a workflow with no schedule entry, a
+   gap-finder behind a condition that can't fire, token counts with no
+   reader, a money endpoint with no button. For every capability, name the
+   invoker (schedule entry · mounted route · registered tool · a control in
+   the UI) and its prerequisites, and make an unmet prerequisite report
+   `config`, never `live`. `npx tsx scripts/reachabilityAudit.ts` enforces
+   the mechanical half and runs inside the smoke suite.
 
 ## Gotchas (each of these has bitten us)
 

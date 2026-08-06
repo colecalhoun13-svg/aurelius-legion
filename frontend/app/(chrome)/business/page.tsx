@@ -59,6 +59,7 @@ export default function BusinessPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [openClient, setOpenClient] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [sport, setSport] = useState("");
   const [source, setSource] = useState<string>("referral");
@@ -335,25 +336,232 @@ export default function BusinessPage() {
           </h2>
           <ul className="divide-y divide-aurelius-gold/10">
             {clients.map((c) => (
-              <li key={c.id} className="py-2 flex justify-between items-center gap-4">
-                <div>
-                  <div className="text-aurelius-text/90 text-sm">{c.name}</div>
-                  <div className="text-[11px] text-aurelius-text/40">
-                    {[c.sport, c.status !== "active" ? c.status : null].filter(Boolean).join(" · ") || "—"}
+              <li key={c.id} className="py-2">
+                <button
+                  onClick={() => setOpenClient(openClient === c.id ? null : c.id)}
+                  className="w-full flex justify-between items-center gap-4 text-left hover:text-aurelius-gold"
+                >
+                  <div>
+                    <div className="text-aurelius-text/90 text-sm">{c.name}</div>
+                    <div className="text-[11px] text-aurelius-text/40">
+                      {[c.sport, c.status !== "active" ? c.status : null].filter(Boolean).join(" · ") || "—"}
+                    </div>
                   </div>
-                </div>
-                <div className="text-right text-[11px] text-aurelius-text/60">
-                  {c.engagements.length === 0
-                    ? <span className="text-amber-300/70">no engagement recorded</span>
-                    : c.engagements.map((e) => (
+                  <div className="text-right text-[11px] text-aurelius-text/60">
+                    {c.engagements.length === 0 ? (
+                      // This label used to be a dead end — the page said an
+                      // engagement was missing and gave no way to add one.
+                      <span className="text-amber-300/70">no engagement recorded — tap to add</span>
+                    ) : (
+                      c.engagements.map((e) => (
                         <div key={e.id}>{e.title} · {money(e.priceCents)}{e.shape === "monthly" ? "/mo" : ""}</div>
-                      ))}
-                </div>
+                      ))
+                    )}
+                  </div>
+                </button>
+                {openClient === c.id && <ClientMoneyPanel clientId={c.id} name={c.name} onChange={load} />}
               </li>
             ))}
           </ul>
         </section>
       )}
+    </div>
+  );
+}
+
+type Detail = {
+  client: { id: string; name: string };
+  engagements: { id: string; shape: string; title: string; priceCents: number; endsAt: string | null; nextBillingAt: string | null; status: string }[];
+  invoices: { id: string; amountCents: number; description: string | null; status: string; dueAt: string | null }[];
+  payments: { id: string; amountCents: number; method: string; receivedAt: string }[];
+  lifetime: string;
+};
+
+/**
+ * The money half of a client, and the only place it can be entered.
+ *
+ * Everything here is an INWARD book entry. "Invoice" records that an amount is
+ * owed — it does not send anything to anyone; sending is outward and stops for
+ * Cole's confirm. The button says so, because a button labelled "invoice" that
+ * silently emails a parent would be the worst kind of surprise.
+ */
+function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name: string; onChange: () => void }) {
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const [shape, setShape] = useState("monthly");
+  const [title, setTitle] = useState("");
+  const [price, setPrice] = useState("");
+  const [weeks, setWeeks] = useState("8");
+  const [payAmount, setPayAmount] = useState("");
+  const [payMethod, setPayMethod] = useState("venmo");
+  const [invAmount, setInvAmount] = useState("");
+  const [invDesc, setInvDesc] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/crm/clients/${clientId}`);
+      if (!res.ok) return setFailed(true);
+      setDetail(await res.json());
+      setFailed(false);
+    } catch {
+      setFailed(true);
+    }
+  }, [clientId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function post(body: Record<string, unknown>) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/crm/money", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...body, clientId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error ?? "Failed");
+      await load();
+      onChange();
+      return true;
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const field =
+    "bg-black/50 border border-aurelius-gold/30 rounded px-2 py-1.5 text-sm text-aurelius-text placeholder:text-aurelius-text/30";
+  const btn =
+    "px-3 py-1.5 rounded border border-aurelius-gold/50 text-aurelius-gold text-xs hover:bg-aurelius-gold/10 disabled:opacity-40";
+
+  if (failed) {
+    return (
+      <div className="mt-3 rounded border border-red-500/40 bg-red-950/20 p-3 text-xs text-red-200">
+        Couldn&apos;t load {name}&apos;s record — that&apos;s a loading failure, not an empty one.
+        <button onClick={load} className="ml-2 underline">Retry</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded border border-aurelius-gold/20 bg-black/50 p-3 space-y-4">
+      {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200">{err}</div>}
+
+      {detail && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px]">
+          <div>
+            <div className="uppercase tracking-[0.2em] text-aurelius-gold/50 mb-1">Engagements</div>
+            {detail.engagements.length === 0 ? (
+              <div className="text-aurelius-text/40">none</div>
+            ) : (
+              detail.engagements.map((e) => (
+                <div key={e.id} className="text-aurelius-text/80">
+                  {e.title} · {money(e.priceCents)}{e.shape === "monthly" ? "/mo" : ""}
+                  {e.endsAt && <span className="text-amber-200/70"> · ends {day(e.endsAt)}</span>}
+                  {e.nextBillingAt && <span className="text-aurelius-text/50"> · renews {day(e.nextBillingAt)}</span>}
+                </div>
+              ))
+            )}
+          </div>
+          <div>
+            <div className="uppercase tracking-[0.2em] text-aurelius-gold/50 mb-1">Owed</div>
+            {detail.invoices.filter((i) => i.status !== "paid" && i.status !== "void").length === 0 ? (
+              <div className="text-aurelius-text/40">nothing outstanding</div>
+            ) : (
+              detail.invoices
+                .filter((i) => i.status !== "paid" && i.status !== "void")
+                .map((i) => (
+                  <div key={i.id} className="text-aurelius-text/80">
+                    {money(i.amountCents)} {i.description ? `· ${i.description}` : ""}
+                    {i.dueAt && <span className="text-aurelius-text/50"> · due {day(i.dueAt)}</span>}
+                  </div>
+                ))
+            )}
+          </div>
+          <div>
+            <div className="uppercase tracking-[0.2em] text-aurelius-gold/50 mb-1">Received · {detail.lifetime} lifetime</div>
+            {detail.payments.length === 0 ? (
+              <div className="text-aurelius-text/40">nothing yet</div>
+            ) : (
+              detail.payments.slice(0, 4).map((p) => (
+                <div key={p.id} className="text-aurelius-text/80">
+                  {money(p.amountCents)} · {p.method} · {day(p.receivedAt)}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* what they bought */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <select value={shape} onChange={(e) => setShape(e.target.value)} className={field}>
+          <option value="monthly">monthly</option>
+          <option value="block">block</option>
+          <option value="program">program</option>
+        </select>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What they bought" className={`${field} flex-1 min-w-[10rem]`} />
+        <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="$" inputMode="decimal" className={`${field} w-24`} />
+        {shape === "block" && (
+          <input value={weeks} onChange={(e) => setWeeks(e.target.value)} placeholder="weeks" inputMode="numeric" className={`${field} w-20`} />
+        )}
+        <button
+          disabled={busy || !title.trim() || !price.trim()}
+          className={btn}
+          onClick={async () => {
+            const ok = await post({
+              kind: "engagement", shape, title: title.trim(),
+              price: Number(price), ...(shape === "block" ? { weeks: Number(weeks) || 8 } : {}),
+            });
+            if (ok) { setTitle(""); setPrice(""); }
+          }}
+        >
+          Add engagement
+        </button>
+      </div>
+
+      {/* money in */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} placeholder="Payment $" inputMode="decimal" className={`${field} w-28`} />
+        <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)} className={field}>
+          {["venmo", "zelle", "cash", "stripe", "paypal", "bank", "other"].map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+        <button
+          disabled={busy || !payAmount.trim()}
+          className={btn}
+          onClick={async () => {
+            const ok = await post({ kind: "payment", amount: Number(payAmount), method: payMethod });
+            if (ok) setPayAmount("");
+          }}
+        >
+          Record payment
+        </button>
+
+        <span className="w-px h-6 bg-aurelius-gold/20 mx-1" />
+
+        <input value={invAmount} onChange={(e) => setInvAmount(e.target.value)} placeholder="Owed $" inputMode="decimal" className={`${field} w-24`} />
+        <input value={invDesc} onChange={(e) => setInvDesc(e.target.value)} placeholder="For what" className={`${field} flex-1 min-w-[8rem]`} />
+        <button
+          disabled={busy || !invAmount.trim()}
+          className={btn}
+          title="Records that this is owed. Nothing is sent — sending is an outward action and needs your confirm."
+          onClick={async () => {
+            const ok = await post({ kind: "invoice", amount: Number(invAmount), description: invDesc.trim() || undefined });
+            if (ok) { setInvAmount(""); setInvDesc(""); }
+          }}
+        >
+          Mark owed
+        </button>
+      </div>
+      <p className="text-[10px] text-aurelius-text/40">
+        &quot;Mark owed&quot; puts the amount on the books. It does not send anything — sending is outward and stops for your confirm.
+      </p>
     </div>
   );
 }
