@@ -1603,6 +1603,21 @@ scheduleNamed("outreach_sweep", "30 7 * * *", "outreach sweep", async () => {
     console.error("[leadEngine] outreach sweep failed:", err);
   }
 });
+// Weekly marketing pass, Sun 16:00 — deliberately BEFORE weekly planning at
+// 18:00, so the week Cole plans can already contain "post this". Bounded to
+// ONE piece per run and refuses entirely when there's a backlog or no live
+// offer: the constraint on this business is his review time, not supply.
+scheduleNamed("marketing_pass", "0 16 * * 0", "weekly marketing pass", async () => {
+  try {
+    await runTraced("schedule", "marketing_pass", async () => {
+      const { runMarketingPass } = await import("./business/marketingPass.ts");
+      const out = await runMarketingPass();
+      console.log(`[marketing] weekly pass: ${out.ran ? `drafted a ${out.format}` : `skipped (${out.reason})`}`);
+    });
+  } catch (err) {
+    console.error("[marketing] weekly pass failed:", err);
+  }
+});
 // Nightly debrief at 21:30 — wraps the deterministic pulse (gap math) in voice.
 scheduleNamed("nightly_debrief", "30 21 * * *", "nightly debrief", async () => {
   try {

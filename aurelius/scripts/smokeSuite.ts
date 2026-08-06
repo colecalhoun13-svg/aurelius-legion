@@ -1511,6 +1511,56 @@ async function main() {
     await prisma.marketingAngle.deleteMany({ where: { title: { startsWith: TAG } } });
   }
 
+  console.log("── the weekly marketing pass: bounded on purpose ──");
+  {
+    const { runMarketingPass } = await import("../business/marketingPass.ts");
+
+    // With no live offer it must write NOTHING. Content pointing at nothing
+    // starts conversations Cole can't close and spends the audience he's building.
+    await prisma.offer.updateMany({ where: { status: "active" }, data: { status: "retired" } });
+    const noOffer = await runMarketingPass();
+    check("with no live offer the pass refuses to write at all", noOffer.ran === false && noOffer.reason === "no_offer");
+    check("and it says so on the Bridge instead of going quiet",
+      (await prisma.bridgeSignal.count({ where: { sourceId: "marketing:no_offer" } })) >= 1);
+
+    const offer = await prisma.offer.create({
+      data: {
+        name: `${TAG} live`, audience: "parents", promise: "p", shape: "monthly",
+        priceCents: 30000, status: "active", activatedAt: new Date(), grounding: "none",
+      },
+    });
+
+    // The review-burden guard: never add to a pile he hasn't worked through.
+    // This is the difference between a second operator and a spam machine.
+    const backlog = await Promise.all(
+      [1, 2, 3].map((i) =>
+        prisma.contentDraft.create({ data: { body: `${TAG} backlog piece number ${i}`, status: "ready" } })
+      )
+    );
+    const withBacklog = await runMarketingPass();
+    check("with 3 unused pieces waiting it writes nothing more", withBacklog.ran === false && /^backlog:/.test(withBacklog.reason));
+
+    await prisma.contentDraft.deleteMany({ where: { id: { in: backlog.map((b) => b.id) } } });
+    // No key here, so with the backlog cleared it must fail honestly at the
+    // engine rather than filing error text as a week's content.
+    const noEngine = await runMarketingPass();
+    check("with a clear queue and no engine it fails honestly, filing nothing",
+      noEngine.ran === false && noEngine.reason === "no_engine");
+    check("and no draft was created by the failed pass",
+      (await prisma.contentDraft.count({ where: { body: { startsWith: TAG } } })) === 0);
+
+    // Reachability (rule 8): the whole marketing side was pull-only.
+    // Read the spine from index.ts rather than the live registry: the smoke
+    // suite never boots the scheduler, so listSchedules() is empty here and
+    // asserting on it would pass for the wrong reason.
+    const spine = (await import("node:fs")).readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+    check("the marketing pass has a real schedule entry, not just a function",
+      /scheduleNamed\("marketing_pass"/.test(spine));
+
+    await prisma.offer.deleteMany({ where: { id: offer.id } });
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "marketing_pass" } });
+  }
+
   console.log("── the offer: the artifact everything points at ──");
   {
     const { parseOffer, draftOffer, activateOffer, retireOffer, offerReadiness, offerContextBlock, listOffers } =
