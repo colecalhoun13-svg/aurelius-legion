@@ -1394,6 +1394,56 @@ async function main() {
     else process.env.LLM_MONTHLY_BUDGET_USD = priorBudget;
   }
 
+  console.log("── marketing: evidence, never a confident guess ──");
+  {
+    // Cole's stated reason for building this: marketing is what he lacks most,
+    // so he CANNOT audit a marketing claim himself. That makes a fluent guess
+    // the worst possible output. These assert the honesty machinery, not taste.
+    const { parseAngles, recordOutcome, anglePerformance, proposeAngles, draftAsset, MARKETING_FORMATS } =
+      await import("../business/marketing.ts");
+
+    // Parsing is pure — testable without a key.
+    const parsed = parseAngles(
+      "TITLE: The parent's real fear\nAUDIENCE: parent of a varsity athlete\nHYPOTHESIS: they fear injury more than they want a scholarship\nRATIONALE: extrapolated, not researched\n---\n" +
+      "TITLE: The standard nobody states\nAUDIENCE: the athlete\nHYPOTHESIS: naming a concrete standard beats promising a result\nRATIONALE: from market_posture\n---\nJUNK WITHOUT FIELDS"
+    );
+    check("angle parsing reads well-formed blocks and drops malformed ones", parsed.length === 2);
+    check("a parsed angle keeps its rationale (what it rests on)", /extrapolated/.test(parsed[0]!.rationale));
+
+    // NO KEY HERE. It must refuse rather than invent marketing advice.
+    const proposed = await proposeAngles({ count: 2 });
+    check("with no engine it refuses to invent angles rather than guessing", proposed.ok === false);
+    check("and it still reports its grounding honestly as unbacked",
+      proposed.grounding === "none" && /NOT RESEARCH-BACKED|plausible guess/i.test(proposed.groundingNote));
+
+    // The results loop: his own data, and an honest read of how thin it is.
+    const angle = await prisma.marketingAngle.create({
+      data: { title: `${TAG} angle`, hypothesis: "h", audience: "parent", grounding: "none" },
+    });
+    const badDraft = await draftAsset(angle.id, "email");
+    check("asset drafting refuses too, rather than filing model-error text as copy", badDraft.ok === false);
+    check("an unknown format is rejected", (await draftAsset(angle.id, "telegram" as any)).ok === false);
+    check("every declared format is real", MARKETING_FORMATS.length >= 4);
+
+    await recordOutcome({ angleId: angle.id, used: 3, replies: 1 });
+    const thin = (await anglePerformance()).angles.find((a) => a.id === angle.id)!;
+    // 1 reply from 3 sends is NOT a 33% reply rate — it is noise, and calling
+    // it a rate would teach Cole something false about his own market.
+    check("a 3-send sample refuses to report a rate", thin.replyRate === null && /too early/i.test(thin.verdict));
+    check("using an angle moves it from proposed to active", thin.status === "active");
+
+    await recordOutcome({ angleId: angle.id, used: 9, replies: 2 });
+    const enough = (await anglePerformance()).angles.find((a) => a.id === angle.id)!;
+    check("past 10 sends it will finally report a rate", enough.replyRate === 25);
+
+    const perf = await anglePerformance();
+    check("the performance headline says plainly when the data is still too thin",
+      /too thin|hypothesis|enough to start/i.test(perf.headline));
+
+    await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.marketingAngle.deleteMany({ where: { title: { startsWith: TAG } } });
+  }
+
   console.log("── lead acquisition: the door into the pipeline ──");
   {
     // The council's unanimous finding: Lead→...→Payment is proven and STEP 1

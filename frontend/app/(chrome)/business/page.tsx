@@ -45,6 +45,12 @@ type Client = {
   engagements: { id: string; shape: string; title: string; priceCents: number }[];
 };
 
+type Marketing = {
+  totalUses: number;
+  headline: string;
+  angles: { id: string; title: string; audience: string; grounding: string; timesUsed: number; replies: number; verdict: string; status: string }[];
+};
+
 const STAGES = ["new", "contacted", "conversing", "proposed"] as const;
 const SOURCES = ["manual", "referral", "instagram", "email", "word_of_mouth", "website", "other"] as const;
 
@@ -52,7 +58,7 @@ const money = (cents: number) => `$${(cents / 100).toLocaleString("en-US", { min
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—");
 
 export default function BusinessPage() {
-  const [data, setData] = useState<{ pipeline: Snapshot; attention: Attention; clients: Client[]; leads: Lead[] } | null>(null);
+  const [data, setData] = useState<{ pipeline: Snapshot; attention: Attention; clients: Client[]; leads: Lead[]; marketing?: Marketing } | null>(null);
   // A failed load must never render as "you have no business" — that reads
   // identically to the real empty state and would be a lie about his data.
   const [loadFailed, setLoadFailed] = useState(false);
@@ -150,7 +156,7 @@ export default function BusinessPage() {
 
   if (!data) return <div className="p-6 text-aurelius-text/50">Loading…</div>;
 
-  const { pipeline: snap, attention, clients, leads } = data;
+  const { pipeline: snap, attention, clients, leads, marketing } = data;
   const openLeads = leads.filter((l) => !["won", "lost"].includes(l.status));
   const attentionCount =
     attention.blocksEnding.length + attention.renewalsDue.length + attention.followUpsOverdue.length + attention.unpaid.length;
@@ -226,6 +232,35 @@ export default function BusinessPage() {
                   <strong>{u.client}</strong> owes {money(u.outstandingCents)}
                   {u.description ? ` — ${u.description}` : ""}{u.overdue ? " (overdue)" : ""}
                 </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* ── Marketing angles: what you're saying, and whether it works ── */}
+      {marketing && marketing.angles.length > 0 && (
+        <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4">
+          <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80 mb-2">
+            Marketing angles
+          </h2>
+          {/* The honest read on the sample size comes FIRST — a 33% reply rate
+              from three sends is noise, and presenting it as a rate would
+              teach him something false about his own market. */}
+          <p className="text-xs text-aurelius-text/60 mb-3">{marketing.headline}</p>
+          <ul className="divide-y divide-aurelius-gold/10">
+            {marketing.angles.map((a) => (
+              <li key={a.id} className="py-2 flex justify-between items-start gap-4">
+                <div>
+                  <div className="text-sm text-aurelius-text/90">{a.title}</div>
+                  <div className="text-[11px] text-aurelius-text/40">{a.audience}</div>
+                </div>
+                <div className="text-right text-[11px]">
+                  <div className="text-aurelius-text/70">{a.verdict}</div>
+                  <div className={a.grounding === "external" ? "text-emerald-400/70" : a.grounding === "internal" ? "text-aurelius-gold/60" : "text-amber-300/70"}>
+                    {a.grounding === "external" ? "research-backed" : a.grounding === "internal" ? "from your own data" : "unverified guess"}
+                  </div>
+                </div>
               </li>
             ))}
           </ul>

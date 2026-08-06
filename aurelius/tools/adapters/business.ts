@@ -12,6 +12,30 @@ export const businessAdapter: ToolAdapter = {
     "Cole's business foundation: what's confirmed, what's still unknown, and drafting an offer from the confirmed facts. Pre-offer by design — it elicits Cole's truth, never invents it.",
   actions: [
     {
+      name: "propose_angles",
+      description:
+        "Propose research-backed MARKETING ANGLES for the remote business — testable hypotheses about what will make a specific person reply. Runs a real research pass first and reports its grounding honestly: if it could not retrieve sources it SAYS the angles are model priors, not findings. Use for 'what should I be saying', 'help me market', 'what angle works'.",
+      dataSchema: "{ count?: number (1-6, default 3), audience?: string }",
+    },
+    {
+      name: "draft_asset",
+      description:
+        "Write one marketing asset FROM an angle — email, instagram_post, instagram_carousel, dm, or landing_section. Carries the angle's grounding with it so Cole is never handed copy without being told how much to trust the idea underneath. INWARD: drafts only, never publishes or sends.",
+      dataSchema: '{ angleId: string, format: "email"|"instagram_post"|"instagram_carousel"|"dm"|"landing_section" }',
+    },
+    {
+      name: "record_outcome",
+      description:
+        "Record what actually HAPPENED to an angle — how many times used, how many replied, how many converted, and optionally which lead it produced. This is what makes Cole's own market data outrank generic research over time.",
+      dataSchema: "{ angleId: string, used?: number, replies?: number, conversions?: number, leadId?: string }",
+    },
+    {
+      name: "angle_performance",
+      description:
+        "What Cole's own results say about which angles work — with an honest read on whether the sample is big enough to mean anything yet. Use for 'what's working', 'which angle should I use'.",
+      dataSchema: "{} (no fields)",
+    },
+    {
       name: "snapshot",
       description:
         "Where the business actually stands: confirmed facts, open questions, and what each gap is blocking. Use when Cole asks about his business, positioning, offers, or 'what do you know about my business'.",
@@ -55,6 +79,43 @@ export const businessAdapter: ToolAdapter = {
     },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
+    // ── marketing: evidence-carrying, never a bare assertion ──
+    if (action === "propose_angles" || action === "draft_asset" || action === "record_outcome" || action === "angle_performance") {
+      try {
+        const mk = await import("../../business/marketing.ts");
+        if (action === "propose_angles") {
+          const out = await mk.proposeAngles({ count: Number(data?.count) || undefined, audience: data?.audience });
+          if (!out.ok) return { ok: false, output: null, error: out.error ?? "could not propose angles" };
+          return {
+            ok: true,
+            output: {
+              grounding: out.grounding,
+              // Surfaced deliberately: Cole cannot audit marketing advice
+              // himself, so how much to trust it must travel WITH it.
+              trustThis: out.groundingNote,
+              sources: out.sources,
+              angles: out.angles,
+              nextStep: "Pick one and draft an asset from it (business.draft_asset), then record what happens (business.record_outcome).",
+            },
+          };
+        }
+        if (action === "draft_asset") {
+          if (!data?.angleId) throw new Error("draft_asset needs angleId (from propose_angles / angle_performance).");
+          const out = await mk.draftAsset(String(data.angleId), data.format);
+          if (!out.ok) return { ok: false, output: null, error: out.error ?? "draft failed" };
+          return { ok: true, output: { angle: out.angle, grounding: out.grounding, trustThis: out.groundingNote, body: out.body } };
+        }
+        if (action === "record_outcome") {
+          if (!data?.angleId) throw new Error("record_outcome needs angleId.");
+          const out = await mk.recordOutcome(data as any);
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: await mk.anglePerformance() };
+        }
+        return { ok: true, output: await mk.anglePerformance() };
+      } catch (err: any) {
+        return { ok: false, output: null, error: err?.message ?? String(err) };
+      }
+    }
     const P = await import("../../business/positioning.ts");
     try {
       if (action === "snapshot") {

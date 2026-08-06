@@ -760,9 +760,14 @@ model Lead {
   convertedClient   Client?   @relation(fields: [convertedClientId], references: [id])
   convertedAt       DateTime?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // WHICH ANGLE BROUGHT THEM. The whole attribution chain: angle → lead →
+  // client → payment. Without it Cole never learns which of his marketing
+  // actually earns, and keeps guessing — the exact thing he built this for.
+  angleId String?
+  angle   MarketingAngle? @relation(fields: [angleId], references: [id])
 
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
   @@index([status, nextActionAt])
   @@index([source])
 }
@@ -922,4 +927,47 @@ model Payment {
   @@index([clientId, receivedAt])
   @@index([invoiceId])
   @@index([receivedAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// THE MARKETING ENGINE — evidence, not guesses.
+//
+// Cole's stated reason for building Aurelius: marketing is what he lacks
+// most, so he cannot tell a good marketing guess from a bad one. That makes
+// a fluent LLM the WORST possible shape for this feature — a confident
+// improvisation he has no way to audit.
+//
+// So an angle is a HYPOTHESIS with its evidence attached, and it is judged
+// by what actually happens. Generic research gives the first bet; Cole's own
+// results overwrite it. That second loop is the point: in six months, what
+// happened to HIS market is worth more than every research pass combined.
+// ═══════════════════════════════════════════════════════════════════
+
+model MarketingAngle {
+  id         String @id @default(cuid())
+  title      String // short handle: "The parent's real fear"
+  hypothesis String // what this claims will resonate, and with whom
+  audience   String // who it speaks to — parent, athlete, referring coach
+
+  // PROVENANCE. Without this the whole feature is a guess in a nice voice.
+  // "external" = real sources retrieved · "internal" = the corpus/his own
+  // results · "none" = model priors, and it must SAY so out loud.
+  grounding String  @default("none")
+  sources   Json? // [{ title, url, source }] — what it was actually built on
+  rationale String? // why this should work, in terms of the evidence above
+
+  status String @default("proposed") // "proposed" | "active" | "retired"
+
+  // THE RESULTS LOOP. Derived truth beats researched truth the moment it
+  // exists. Counters are incremented by recordOutcome, never guessed.
+  timesUsed   Int @default(0)
+  replies     Int @default(0)
+  conversions Int @default(0)
+
+  leads Lead[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
 }
