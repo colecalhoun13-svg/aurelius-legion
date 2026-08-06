@@ -1444,6 +1444,69 @@ async function main() {
     await prisma.marketingAngle.deleteMany({ where: { title: { startsWith: TAG } } });
   }
 
+  console.log("── the offer: the artifact everything points at ──");
+  {
+    const { parseOffer, draftOffer, activateOffer, retireOffer, offerReadiness, offerContextBlock, listOffers } =
+      await import("../business/offers.ts");
+
+    // Parsing is pure. A half-offer must be rejected outright: a row with no
+    // promise is worse than no row, because it looks like something.
+    const good = parseOffer(
+      "NAME: The Standard\nWHO: parents of varsity throwers\nPROMISE: your kid learns to run their own body\n" +
+      "SHAPE: block, 10 weeks\nFORMAT: weekly video review\nPROOF: tested lifts at week 1 and 10\n" +
+      "WHY HIM: he coaches understanding, not compliance\nASSUMPTIONS: pricing not set"
+    );
+    check("offer parsing reads a complete offer", good !== null && good.name === "The Standard");
+    check("offer parsing takes the shape and the duration", good!.shape === "block" && good!.durationWeeks === 10);
+    check("offer parsing keeps the assumptions rather than dropping them", /pricing not set/i.test(good!.assumptions ?? ""));
+    check("a half-offer is refused, not half-filed", parseOffer("NAME: Thing\nSHAPE: monthly") === null);
+
+    // NO KEY HERE — it must refuse rather than invent something to sell.
+    check("with no engine it refuses to invent an offer", (await draftOffer()).ok === false);
+
+    // The empty state is a first-class, loudly-reported condition.
+    const before = await offerReadiness();
+    check("with nothing live it reports no active offer", before.hasActive === false);
+    const emptyBlock = await offerContextBlock();
+    check("and the prompt block FORBIDS inventing one rather than going silent",
+      /NO ACTIVE OFFER/i.test(emptyBlock) && /do not invent/i.test(emptyBlock));
+
+    const draft = await prisma.offer.create({
+      data: { name: `${TAG} offer`, audience: "parents", promise: "p", shape: "block", grounding: "none" },
+    });
+    // The single most expensive hallucination available to this system would
+    // be a confident price, because Cole would quote it. So it must not exist.
+    check("a drafted offer carries no price", draft.priceCents === null);
+    check("activating without a price is refused, with the reason",
+      /no price|Aurelius will not pick/i.test((await activateOffer(draft.id)).error ?? ""));
+    check("a nonsense price is refused", (await activateOffer(draft.id, { priceCents: -5 })).ok === false);
+
+    const live = await activateOffer(draft.id, { priceCents: 45000 });
+    check("activating with Cole's price makes it live", live.ok === true && live.offer.status === "active");
+
+    const block = await offerContextBlock();
+    check("the live offer reaches the prompt with its price", /\$450/.test(block) && new RegExp(`${TAG} offer`).test(block));
+    check("and the prompt forbids quoting any other number", /Never quote a price other than/i.test(block));
+    check("readiness flips to live", (await offerReadiness()).hasActive === true);
+
+    await retireOffer(draft.id);
+    check("a retired offer leaves the prompt entirely", !new RegExp(`${TAG} offer`).test(await offerContextBlock()));
+    check("but is still listed for attribution",
+      (await listOffers("retired")).some((o) => o.id === draft.id));
+
+    // Reachability (rule 8): the risk line's business branch had a param no
+    // production caller passed. Assert the offer state actually lands in it.
+    const { riskLineFrom } = await import("../productivity/service.ts");
+    const calm = { tasks: [], overdue: [], plan: { focus: null }, stats: { followThrough: null } };
+    const noOffer = riskLineFrom(calm as any, [], 0, {
+      empty: true, activeClients: 0, openLeads: 0, staleFollowUps: 0,
+      overdueInvoiceCents: 0, blocksEndingSoon: 0, hasActiveOffer: false, draftOffers: 2,
+    });
+    check("with no offer the risk line names THAT, not 'go do outreach'", /no offer defined/i.test(noOffer));
+
+    await prisma.offer.deleteMany({ where: { name: { startsWith: TAG } } });
+  }
+
   console.log("── lead acquisition: the door into the pipeline ──");
   {
     // The council's unanimous finding: Lead→...→Payment is proven and STEP 1

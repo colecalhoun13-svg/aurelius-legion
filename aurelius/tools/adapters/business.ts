@@ -36,6 +36,29 @@ export const businessAdapter: ToolAdapter = {
       dataSchema: "{} (no fields)",
     },
     {
+      name: "draft_offer",
+      description:
+        "Draft ONE concrete offer as a real, durable draft — name, who it's for, the promise, the shape (monthly/block/program), what happens week to week, and the proof. Research-informed and honestly labelled. NEVER sets a price: Cole has not set remote pricing, and a guessed number would get quoted to a buyer. Use for 'what should I sell', 'build me an offer', 'what's my package'.",
+      dataSchema: '{ shape?: "monthly"|"block"|"program" }',
+    },
+    {
+      name: "list_offers",
+      description:
+        "Cole's offers and their state — drafts, what's live, what's retired — plus whether marketing currently has anything to point at. Use for 'what am I selling', 'what's my offer'.",
+      dataSchema: '{ status?: "draft"|"active"|"retired" }',
+    },
+    {
+      name: "activate_offer",
+      description:
+        "Make a drafted offer LIVE, with its price in cents. Refuses without a price — activating is what makes marketing and outreach quote it. This is Cole's decision; never do it unprompted.",
+      dataSchema: "{ offerId: string, priceCents: number }",
+    },
+    {
+      name: "retire_offer",
+      description: "Stop selling an offer. Kept for attribution, never surfaced as current again.",
+      dataSchema: "{ offerId: string }",
+    },
+    {
       name: "snapshot",
       description:
         "Where the business actually stands: confirmed facts, open questions, and what each gap is blocking. Use when Cole asks about his business, positioning, offers, or 'what do you know about my business'.",
@@ -116,6 +139,47 @@ export const businessAdapter: ToolAdapter = {
         return { ok: false, output: null, error: err?.message ?? String(err) };
       }
     }
+    // ── offers: the artifact marketing and outreach point at ──
+    if (action === "draft_offer" || action === "list_offers" || action === "activate_offer" || action === "retire_offer") {
+      try {
+        const O = await import("../../business/offers.ts");
+        if (action === "draft_offer") {
+          const out = await O.draftOffer({ shape: data?.shape });
+          if (!out.ok) return { ok: false, output: null, error: out.error ?? "could not draft an offer" };
+          return {
+            ok: true,
+            output: {
+              offerId: out.offerId,
+              offer: out.offer,
+              grounding: out.grounding,
+              trustThis: out.groundingNote,
+              price: "not set — Aurelius will not pick a number for you",
+              nextStep:
+                "It's a DRAFT: nothing points at it yet. Read it, set the price you'd actually charge, then activate it (business.activate_offer).",
+            },
+          };
+        }
+        if (action === "list_offers") {
+          const [offers, readiness] = await Promise.all([O.listOffers(data?.status), O.offerReadiness()]);
+          return { ok: true, output: { headline: readiness.headline, blocker: readiness.blocker, offers } };
+        }
+        if (action === "activate_offer") {
+          if (!data?.offerId) throw new Error("activate_offer needs offerId (from list_offers).");
+          const out = await O.activateOffer(String(data.offerId), {
+            priceCents: data?.priceCents != null ? Number(data.priceCents) : undefined,
+          });
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: { offer: out.offer, summary: "Live. Marketing and outreach now quote this exactly." } };
+        }
+        if (!data?.offerId) throw new Error("retire_offer needs offerId.");
+        const out = await O.retireOffer(String(data.offerId));
+        if (!out.ok) return { ok: false, output: null, error: out.error };
+        return { ok: true, output: await O.offerReadiness() };
+      } catch (err: any) {
+        return { ok: false, output: null, error: err?.message ?? String(err) };
+      }
+    }
+
     const P = await import("../../business/positioning.ts");
     try {
       if (action === "snapshot") {

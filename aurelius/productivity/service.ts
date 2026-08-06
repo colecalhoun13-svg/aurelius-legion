@@ -530,7 +530,16 @@ export async function getDeck(dateStr?: string) {
     ).length,
   };
 
-  const biggestRisk = riskLineFrom(today, behindProjects, overdueTotal);
+  // THE BUSINESS BELONGS IN THE RISK LINE. `riskLineFrom` grew a business
+  // branch but this — its only production caller — was still passing three
+  // arguments, so "your pipeline is empty" could reach the smoke suite and
+  // nothing else. Built is not done; done is reachable (CLAUDE.md rule 8).
+  //
+  // Failure here must not take the deck down: the deck is the home screen,
+  // and a CRM hiccup blanking it would be a far worse outcome than a risk
+  // line that falls back to the task ladder.
+  const businessRisk = await businessRiskInputs().catch(() => undefined);
+  const biggestRisk = riskLineFrom(today, behindProjects, overdueTotal, businessRisk);
 
   return {
     date: dstr,
@@ -546,6 +555,37 @@ export async function getDeck(dateStr?: string) {
     bridge: pendingSignals,
     overnight,
     activity: today.activity,
+  };
+}
+
+/**
+ * The business, shaped for the risk ladder. Lives here rather than in crm/ so
+ * the deck has exactly one thing to call, and so a missing CRM table can never
+ * blank the home screen.
+ */
+async function businessRiskInputs() {
+  const [{ pipelineSnapshot, whatNeedsAttention }, { offerReadiness }] = await Promise.all([
+    import("../crm/service.ts"),
+    import("../business/offers.ts"),
+  ]);
+  const [snap, attention, offers] = await Promise.all([
+    pipelineSnapshot(),
+    whatNeedsAttention(14),
+    offerReadiness(),
+  ]);
+  return {
+    empty: snap.empty,
+    activeClients: snap.activeClients,
+    openLeads: snap.openLeads,
+    staleFollowUps: attention.followUpsOverdue.length,
+    // Only genuinely OVERDUE invoices are money you should be chasing today;
+    // an unpaid invoice inside its terms is not a fire.
+    overdueInvoiceCents: attention.unpaid
+      .filter((i: any) => i.overdue)
+      .reduce((s: number, i: any) => s + i.outstandingCents, 0),
+    blocksEndingSoon: attention.blocksEnding.length,
+    hasActiveOffer: offers.hasActive,
+    draftOffers: offers.draftCount,
   };
 }
 
@@ -568,6 +608,9 @@ export function riskLineFrom(
     staleFollowUps: number;
     overdueInvoiceCents: number;
     blocksEndingSoon: number;
+    /** Whether there is anything defined to sell. Optional so old callers still typecheck. */
+    hasActiveOffer?: boolean;
+    draftOffers?: number;
   }
 ): string {
   let biggestRisk: string;
@@ -607,16 +650,25 @@ export function riskLineFrom(
       overdueTotal === 1
         ? `1 task is overdue: "${today.overdue[0].title}" — close it before it becomes a habit.`
         : `${overdueTotal} tasks are overdue — oldest: "${today.overdue[0].title}". Close them before they become a habit.`;
-  } else if (today.tasks.length === 0 && today.plan?.focus == null) {
-    biggestRisk = `No focus set and nothing on the deck — the risk is drift. Name one thing that matters today.`;
   } else if (business?.empty) {
     // The line this replaces was "Nothing's on fire." With zero clients and
     // zero leads that was the single most misleading sentence the system
     // could say: the deck being clear is not the same as the business being
     // fine, and a calm phone is exactly what lets an empty pipeline persist.
-    biggestRisk =
-      `Your deck is clear and your pipeline is empty — no clients, no open leads. That's the fire. ` +
-      `Nothing arrives on its own, so today's real work is one outreach, not one task.`;
+    //
+    // Deliberately ABOVE the drift branch: an empty deck and an empty pipeline
+    // together used to produce "name one thing that matters today", which is
+    // strictly worse advice than naming the thing that actually matters.
+    //
+    // With no offer defined, name THAT instead — telling him to go do outreach
+    // when he has nothing to offer sends him into a conversation he can't close.
+    biggestRisk = business.hasActiveOffer === false
+      ? `Your pipeline is empty and you have no offer defined${business.draftOffers ? ` (${business.draftOffers} drafted, none priced)` : ""} — ` +
+        `so every message you send has nothing to sell. Define and price one thing today; outreach after that.`
+      : `Your deck is clear and your pipeline is empty — no clients, no open leads. That's the fire. ` +
+        `Nothing arrives on its own, so today's real work is one outreach, not one task.`;
+  } else if (today.tasks.length === 0 && today.plan?.focus == null) {
+    biggestRisk = `No focus set and nothing on the deck — the risk is drift. Name one thing that matters today.`;
   } else if (business && business.activeClients === 0 && business.openLeads > 0) {
     biggestRisk =
       `${business.openLeads} lead${business.openLeads === 1 ? "" : "s"} open and nobody signed yet. ` +

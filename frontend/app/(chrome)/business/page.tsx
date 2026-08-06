@@ -51,6 +51,14 @@ type Marketing = {
   angles: { id: string; title: string; audience: string; grounding: string; timesUsed: number; replies: number; verdict: string; status: string }[];
 };
 
+type Offer = {
+  id: string; name: string; audience: string; promise: string; shape: string;
+  format: string | null; proof: string | null; edge: string | null; assumptions: string | null;
+  priceCents: number | null; durationWeeks: number | null; status: string; grounding: string;
+};
+
+type OfferState = { hasActive: boolean; activeCount: number; draftCount: number; headline: string; blocker: string | null };
+
 const STAGES = ["new", "contacted", "conversing", "proposed"] as const;
 const SOURCES = ["manual", "referral", "instagram", "email", "word_of_mouth", "website", "other"] as const;
 
@@ -58,7 +66,10 @@ const money = (cents: number) => `$${(cents / 100).toLocaleString("en-US", { min
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—");
 
 export default function BusinessPage() {
-  const [data, setData] = useState<{ pipeline: Snapshot; attention: Attention; clients: Client[]; leads: Lead[]; marketing?: Marketing } | null>(null);
+  const [data, setData] = useState<{
+    pipeline: Snapshot; attention: Attention; clients: Client[]; leads: Lead[];
+    marketing?: Marketing; offers?: Offer[]; offerState?: OfferState;
+  } | null>(null);
   // A failed load must never render as "you have no business" — that reads
   // identically to the real empty state and would be a lie about his data.
   const [loadFailed, setLoadFailed] = useState(false);
@@ -156,7 +167,7 @@ export default function BusinessPage() {
 
   if (!data) return <div className="p-6 text-aurelius-text/50">Loading…</div>;
 
-  const { pipeline: snap, attention, clients, leads, marketing } = data;
+  const { pipeline: snap, attention, clients, leads, marketing, offers, offerState } = data;
   const openLeads = leads.filter((l) => !["won", "lost"].includes(l.status));
   const attentionCount =
     attention.blocksEnding.length + attention.renewalsDue.length + attention.followUpsOverdue.length + attention.unpaid.length;
@@ -238,36 +249,17 @@ export default function BusinessPage() {
         </section>
       )}
 
-      {/* ── Marketing angles: what you're saying, and whether it works ── */}
-      {marketing && marketing.angles.length > 0 && (
-        <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4">
-          <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80 mb-2">
-            Marketing angles
-          </h2>
-          {/* The honest read on the sample size comes FIRST — a 33% reply rate
-              from three sends is noise, and presenting it as a rate would
-              teach him something false about his own market. */}
-          <p className="text-xs text-aurelius-text/60 mb-3">{marketing.headline}</p>
-          <ul className="divide-y divide-aurelius-gold/10">
-            {marketing.angles.map((a) => (
-              <li key={a.id} className="py-2 flex justify-between items-start gap-4">
-                <div>
-                  <div className="text-sm text-aurelius-text/90">{a.title}</div>
-                  <div className="text-[11px] text-aurelius-text/40">{a.audience}</div>
-                </div>
-                <div className="text-right text-[11px]">
-                  <div className="text-aurelius-text/70">{a.verdict}</div>
-                  <div className={a.grounding === "external" ? "text-emerald-400/70" : a.grounding === "internal" ? "text-aurelius-gold/60" : "text-amber-300/70"}>
-                    {a.grounding === "external" ? "research-backed" : a.grounding === "internal" ? "from your own data" : "unverified guess"}
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      {/* The funnel, in order: what you sell → what you say → who you say it
+          to → who's in → who's paying. Each section stays on screen when it's
+          empty, because an empty one is the instruction. */}
 
-      {/* ── The warm list ────────────────────────────────────────── */}
+      {/* ── 1. What you sell ─────────────────────────────────────── */}
+      <OfferPanel offers={offers ?? []} state={offerState} onChange={load} />
+
+      {/* ── 2. What you say ──────────────────────────────────────── */}
+      <MarketingPanel marketing={marketing} hasOffer={offerState?.hasActive ?? false} onChange={load} />
+
+      {/* ── 3. The warm list ─────────────────────────────────────── */}
       <WarmList onChange={load} empty={snap.empty} />
 
       {/* ── Add a lead ───────────────────────────────────────────── */}
@@ -458,6 +450,8 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
   const [payMethod, setPayMethod] = useState("venmo");
   const [invAmount, setInvAmount] = useState("");
   const [invDesc, setInvDesc] = useState("");
+  const [sessionKind, setSessionKind] = useState("check_in");
+  const [sessionNotes, setSessionNotes] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -524,6 +518,28 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
                   {e.title} · {money(e.priceCents)}{e.shape === "monthly" ? "/mo" : ""}
                   {e.endsAt && <span className="text-amber-200/70"> · ends {day(e.endsAt)}</span>}
                   {e.nextBillingAt && <span className="text-aurelius-text/50"> · renews {day(e.nextBillingAt)}</span>}
+                  {/* The re-sign conversation the risk line nags about now has
+                      a button to end it — either outcome, one tap. */}
+                  {e.status === "active" && (
+                    <span className="ml-2">
+                      <button
+                        disabled={busy}
+                        onClick={() => post({ kind: "engagement_patch", engagementId: e.id, status: "completed" })}
+                        className="text-[10px] text-aurelius-text/40 hover:text-aurelius-text/70 disabled:opacity-40"
+                      >
+                        completed
+                      </button>
+                      <span className="text-aurelius-text/20"> · </span>
+                      <button
+                        disabled={busy}
+                        onClick={() => post({ kind: "engagement_patch", engagementId: e.id, status: "cancelled" })}
+                        className="text-[10px] text-aurelius-text/40 hover:text-red-300 disabled:opacity-40"
+                      >
+                        cancelled
+                      </button>
+                    </span>
+                  )}
+                  {e.status !== "active" && <span className="text-aurelius-text/40"> · {e.status}</span>}
                 </div>
               ))
             )}
@@ -621,7 +637,297 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
       <p className="text-[10px] text-aurelius-text/40">
         &quot;Mark owed&quot; puts the amount on the books. It does not send anything — sending is outward and stops for your confirm.
       </p>
+
+      {/* Delivery. `logSession` existed from the first CRM commit with no way
+          to call it from the app — a check-in Cole can't log from his phone
+          after a call is a check-in that never gets logged. */}
+      <div className="flex flex-wrap gap-2 items-center pt-1 border-t border-aurelius-gold/10">
+        <select value={sessionKind} onChange={(e) => setSessionKind(e.target.value)} className={field}>
+          {["check_in", "call", "video_review", "test", "session"].map((k) => (
+            <option key={k} value={k}>{k.replace(/_/g, " ")}</option>
+          ))}
+        </select>
+        <input
+          value={sessionNotes} onChange={(e) => setSessionNotes(e.target.value)}
+          placeholder="What happened" className={`${field} flex-1 min-w-[10rem]`}
+        />
+        <button
+          disabled={busy}
+          className={btn}
+          onClick={async () => {
+            const ok = await post({ kind: "session", sessionKind, notes: sessionNotes.trim() || undefined });
+            if (ok) setSessionNotes("");
+          }}
+        >
+          Log it
+        </button>
+
+        <span className="w-px h-6 bg-aurelius-gold/20 mx-1" />
+
+        <button
+          disabled={busy}
+          className="text-[11px] text-aurelius-text/40 hover:text-aurelius-text/70 disabled:opacity-40"
+          onClick={() => post({ kind: "client_patch", status: "paused" })}
+        >
+          pause client
+        </button>
+        <button
+          disabled={busy}
+          className="text-[11px] text-aurelius-text/40 hover:text-aurelius-text/70 disabled:opacity-40"
+          onClick={() => post({ kind: "client_patch", status: "ended" })}
+        >
+          mark ended
+        </button>
+      </div>
     </div>
+  );
+}
+
+/**
+ * THE OFFER — the thing every message points at.
+ *
+ * Always rendered, including (especially) when it is empty: with no offer, the
+ * emptiness IS the finding, and hiding the section would let Cole go do
+ * outreach for something that has no shape, no length and no price.
+ *
+ * Aurelius drafts; Cole prices and activates. The price field is his because a
+ * confidently-wrong number is the one hallucination here that gets quoted to a
+ * real buyer.
+ */
+function OfferPanel({ offers, state, onChange }: { offers: Offer[]; state?: OfferState; onChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [prices, setPrices] = useState<Record<string, string>>({});
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const live = offers.filter((o) => o.status === "active");
+  const drafts = offers.filter((o) => o.status === "draft");
+
+  async function post(body: Record<string, unknown>) {
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch("/api/crm/offers", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error ?? "Failed");
+      onChange();
+      return j;
+    } catch (e: any) { setErr(e?.message ?? String(e)); return null; }
+    finally { setBusy(false); }
+  }
+
+  const btn = "px-3 py-1.5 rounded border border-aurelius-gold/50 text-aurelius-gold text-xs hover:bg-aurelius-gold/10 disabled:opacity-40";
+
+  return (
+    <section className={`rounded border p-4 ${state?.hasActive ? "border-aurelius-gold/20 bg-black/30" : "border-amber-500/40 bg-amber-950/10"}`}>
+      <div className="flex justify-between items-baseline gap-4 mb-2">
+        <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80">What you sell</h2>
+        <button disabled={busy} onClick={() => post({ kind: "draft" })} className={btn}>
+          {busy ? "Working…" : "Draft one"}
+        </button>
+      </div>
+      <p className={`text-xs mb-3 leading-relaxed ${state?.hasActive ? "text-aurelius-text/60" : "text-amber-200/90"}`}>
+        {state?.headline ?? "Loading…"}
+      </p>
+      {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200 mb-3">{err}</div>}
+
+      {offers.length === 0 ? (
+        <p className="text-xs text-aurelius-text/50 leading-relaxed">
+          Aurelius will research how remote coaching offers are structured and draft one from your confirmed facts.
+          It won&apos;t set a price — that number is yours, and a guessed one would end up quoted to a parent.
+        </p>
+      ) : (
+        <ul className="divide-y divide-aurelius-gold/10">
+          {[...live, ...drafts].map((o) => (
+            <li key={o.id} className="py-3">
+              <button onClick={() => setExpanded(expanded === o.id ? null : o.id)} className="w-full text-left flex justify-between items-start gap-4">
+                <div>
+                  <div className="text-sm text-aurelius-text/90">
+                    {o.name}
+                    <span className="ml-2 text-[10px] uppercase tracking-wider text-aurelius-text/40">
+                      {o.shape}{o.durationWeeks ? ` · ${o.durationWeeks}wk` : ""}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-aurelius-text/40">{o.audience}</div>
+                </div>
+                <div className="text-right text-[11px] shrink-0">
+                  <div className={o.status === "active" ? "text-emerald-400/80" : "text-amber-300/70"}>
+                    {o.status === "active" ? `live · ${o.priceCents != null ? money(o.priceCents) : "no price"}` : "draft"}
+                  </div>
+                  <div className={o.grounding === "external" ? "text-emerald-400/60" : o.grounding === "internal" ? "text-aurelius-gold/60" : "text-amber-300/60"}>
+                    {o.grounding === "external" ? "research-backed" : o.grounding === "internal" ? "from your own data" : "unverified guess"}
+                  </div>
+                </div>
+              </button>
+
+              {expanded === o.id && (
+                <div className="mt-2 space-y-2 text-[11px] text-aurelius-text/75 leading-relaxed">
+                  <p><span className="text-aurelius-gold/60">Promise · </span>{o.promise}</p>
+                  {o.format && <p><span className="text-aurelius-gold/60">Week to week · </span>{o.format}</p>}
+                  {o.proof && <p><span className="text-aurelius-gold/60">Proof · </span>{o.proof}</p>}
+                  {o.edge && <p><span className="text-aurelius-gold/60">Edge · </span>{o.edge}</p>}
+                  {/* Assumptions are shown, never quietly dropped — they are
+                      the difference between a drafted offer and a claim. */}
+                  {o.assumptions && <p className="text-amber-200/70"><span className="text-amber-300/80">Assumed · </span>{o.assumptions}</p>}
+
+                  <div className="flex flex-wrap gap-2 items-center pt-1">
+                    {o.status === "active" ? (
+                      <button disabled={busy} onClick={() => post({ kind: "retire", offerId: o.id })}
+                        className="text-[11px] text-aurelius-text/40 hover:text-aurelius-text/70 disabled:opacity-40">
+                        stop selling this
+                      </button>
+                    ) : (
+                      <>
+                        <input
+                          value={prices[o.id] ?? ""} onChange={(e) => setPrices({ ...prices, [o.id]: e.target.value })}
+                          placeholder={o.shape === "monthly" ? "$ / month" : "$ total"} inputMode="decimal"
+                          className="bg-black/50 border border-aurelius-gold/30 rounded px-2 py-1.5 text-sm text-aurelius-text placeholder:text-aurelius-text/30 w-32"
+                        />
+                        <button
+                          disabled={busy || !(prices[o.id] ?? "").trim()}
+                          onClick={() => post({ kind: "activate", offerId: o.id, price: Number(prices[o.id]) })}
+                          className={btn}
+                          title="Makes this the offer every draft, email and DM points at."
+                        >
+                          Make it live
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/**
+ * MARKETING — angles, the copy they produce, and what actually happened.
+ *
+ * This was read-only and hidden at zero angles, which meant the whole engine
+ * was unreachable from the one screen Cole opens (CLAUDE.md rule 8: name the
+ * invoker). It now renders always, and every claim carries its grounding —
+ * he can't audit marketing advice, so how much to trust it travels with it.
+ */
+function MarketingPanel({ marketing, hasOffer, onChange }: { marketing?: Marketing; hasOffer: boolean; onChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [draft, setDraft] = useState<{ angle: string; body: string; trust: string } | null>(null);
+  const [format, setFormat] = useState("email");
+  const angles = marketing?.angles ?? [];
+
+  async function post(body: Record<string, unknown>) {
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch("/api/crm/marketing", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error ?? "Failed");
+      return j;
+    } catch (e: any) { setErr(e?.message ?? String(e)); return null; }
+    finally { setBusy(false); }
+  }
+
+  const btn = "px-3 py-1.5 rounded border border-aurelius-gold/50 text-aurelius-gold text-xs hover:bg-aurelius-gold/10 disabled:opacity-40";
+
+  return (
+    <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4">
+      <div className="flex justify-between items-baseline gap-4 mb-2">
+        <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80">What you say</h2>
+        <button disabled={busy} onClick={async () => { if (await post({ kind: "propose", count: 3 })) onChange(); }} className={btn}>
+          {busy ? "Researching…" : "Propose angles"}
+        </button>
+      </div>
+
+      {/* The honest read on sample size comes FIRST — a 33% reply rate from
+          three sends is noise, and printing it as a rate teaches him something
+          false about his own market. */}
+      <p className="text-xs text-aurelius-text/60 mb-3">
+        {marketing?.headline ?? "No angles yet. An angle is a testable claim about what makes one specific person reply."}
+      </p>
+      {!hasOffer && angles.length > 0 && (
+        <p className="text-[11px] text-amber-200/80 mb-3">
+          No offer is live, so this copy can start a conversation but can&apos;t close one. Define an offer above first.
+        </p>
+      )}
+      {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200 mb-3">{err}</div>}
+
+      {angles.length > 0 && (
+        <>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-[10px] uppercase tracking-[0.2em] text-aurelius-gold/50">write as</span>
+            <select value={format} onChange={(e) => setFormat(e.target.value)}
+              className="bg-black/50 border border-aurelius-gold/30 rounded px-2 py-1 text-xs text-aurelius-text">
+              {["email", "instagram_post", "instagram_carousel", "dm", "landing_section"].map((f) => (
+                <option key={f} value={f}>{f.replace(/_/g, " ")}</option>
+              ))}
+            </select>
+          </div>
+          <ul className="divide-y divide-aurelius-gold/10">
+            {angles.map((a) => (
+              <li key={a.id} className="py-2 flex justify-between items-start gap-4">
+                <div className="min-w-0">
+                  <div className="text-sm text-aurelius-text/90">{a.title}</div>
+                  <div className="text-[11px] text-aurelius-text/40">{a.audience}</div>
+                  <div className="flex gap-3 mt-1">
+                    <button
+                      disabled={busy}
+                      onClick={async () => {
+                        const j = await post({ kind: "draft", angleId: a.id, format });
+                        if (j) setDraft({ angle: a.title, body: j.body, trust: j.groundingNote });
+                      }}
+                      className="text-[11px] text-aurelius-gold/70 hover:text-aurelius-gold disabled:opacity-40"
+                    >
+                      write one
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={async () => { if (await post({ kind: "outcome", angleId: a.id, used: 1 })) onChange(); }}
+                      className="text-[11px] text-aurelius-text/50 hover:text-aurelius-text/80 disabled:opacity-40"
+                      title="You used this angle once. Counting uses is what makes your own results outrank the research."
+                    >
+                      used it
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={async () => { if (await post({ kind: "outcome", angleId: a.id, replies: 1 })) onChange(); }}
+                      className="text-[11px] text-emerald-400/70 hover:text-emerald-300 disabled:opacity-40"
+                    >
+                      got a reply
+                    </button>
+                  </div>
+                </div>
+                <div className="text-right text-[11px] shrink-0">
+                  <div className="text-aurelius-text/70">{a.verdict}</div>
+                  <div className={a.grounding === "external" ? "text-emerald-400/70" : a.grounding === "internal" ? "text-aurelius-gold/60" : "text-amber-300/70"}>
+                    {a.grounding === "external" ? "research-backed" : a.grounding === "internal" ? "from your own data" : "unverified guess"}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {draft && (
+        <div className="mt-4 rounded border border-aurelius-gold/25 bg-black/50 p-3">
+          <div className="flex justify-between items-baseline gap-4 mb-2">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-aurelius-gold/50">{draft.angle}</div>
+            <button onClick={() => setDraft(null)} className="text-[11px] text-aurelius-text/40 hover:text-aurelius-text/70">close</button>
+          </div>
+          <pre className="whitespace-pre-wrap text-sm text-aurelius-text/85 font-sans leading-relaxed">{draft.body}</pre>
+          <p className="text-[10px] text-amber-200/70 mt-3">{draft.trust}</p>
+          <p className="text-[10px] text-aurelius-text/40 mt-1">
+            A draft, nowhere else. Posting and sending are outward and stop for your confirm.
+          </p>
+        </div>
+      )}
+    </section>
   );
 }
 

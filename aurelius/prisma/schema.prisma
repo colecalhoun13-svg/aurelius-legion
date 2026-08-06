@@ -766,8 +766,9 @@ model Lead {
   angleId String?
   angle   MarketingAngle? @relation(fields: [angleId], references: [id])
 
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([status, nextActionAt])
   @@index([source])
 }
@@ -842,12 +843,67 @@ model Engagement {
   invoices Invoice[]
   payments Payment[]
 
+  // WHAT WAS SOLD. Nullable because engagements predate the Offer table and
+  // because Cole can always sell something bespoke — but when it IS set, the
+  // attribution chain closes: angle → lead → offer → engagement → payment.
+  offerId String?
+  offer   Offer?  @relation(fields: [offerId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([clientId, status])
   @@index([status, endsAt])
   @@index([status, nextBillingAt])
+}
+
+// THE THING EVERYTHING POINTS AT.
+//
+// Marketing angles, outreach drafts and landing copy were all writing about
+// an offer that existed only as prose inside a KnowledgeProposal — which
+// meant every asset re-improvised the promise and the price. An offer with
+// no durable row is an offer Cole cannot sell twice the same way.
+//
+// Price is integer cents, like the rest of the money layer. Nullable, because
+// an unpriced draft is a real state and rendering a guessed price as fact is
+// exactly the failure this repo keeps having.
+model Offer {
+  id       String @id @default(cuid())
+  name     String
+  audience String // the exact person it is for
+  promise  String // the outcome in the buyer's language
+
+  // Cole's three billing shapes — same vocabulary as Engagement.shape, so a
+  // sale can be raised straight off the offer without translation.
+  shape String // "monthly" | "block" | "program"
+
+  format      String? // what happens week to week
+  proof       String? // how results get demonstrated
+  edge        String? // the one line no competing coach can copy
+  assumptions String? // what had to be guessed — kept, never quietly dropped
+
+  priceCents    Int?
+  currency      String @default("usd")
+  durationWeeks Int? // "block" mainly; null for open-ended monthly
+
+  // "draft"   — proposed, not sellable, never injected as the live offer
+  // "active"  — what marketing and outreach point at. Cole's hand only.
+  // "retired" — kept for attribution; never surfaced as current.
+  status String @default("draft")
+
+  // Same provenance contract as MarketingAngle: an offer built from model
+  // priors must say so rather than borrow the authority of research.
+  grounding String @default("none")
+  sources   Json?
+
+  engagements Engagement[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  activatedAt DateTime?
+  retiredAt   DateTime?
+
+  @@index([status])
 }
 
 // A coaching touchpoint. Deliberately delivery-agnostic: Cole runs on Google

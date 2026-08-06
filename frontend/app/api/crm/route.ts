@@ -6,6 +6,7 @@ import {
   listLeads,
 } from "../../../../aurelius/crm/service";
 import { anglePerformance } from "../../../../aurelius/business/marketing";
+import { listOffers, offerReadiness } from "../../../../aurelius/business/offers";
 
 // DB-backed — never statically evaluate at build time.
 export const dynamic = "force-dynamic";
@@ -13,14 +14,16 @@ export const dynamic = "force-dynamic";
 /** Everything the Business page needs, in one round trip. */
 export async function GET() {
   try {
-    const [pipeline, attention, clients, leads, marketing] = await Promise.all([
+    const [pipeline, attention, clients, leads, marketing, offers, offerState] = await Promise.all([
       pipelineSnapshot(),
       whatNeedsAttention(14),
       listClients({}),
       listLeads({ limit: 200 }),
       anglePerformance(),
+      listOffers(),
+      offerReadiness(),
     ]);
-    return NextResponse.json({ pipeline, attention, clients, leads, marketing });
+    return NextResponse.json({ pipeline, attention, clients, leads, marketing, offers, offerState });
   } catch (error: any) {
     console.error("CRM API error:", error);
     return NextResponse.json({ error: error?.message ?? "Failed to load the business" }, { status: 500 });

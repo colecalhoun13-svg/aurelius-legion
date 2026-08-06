@@ -191,6 +191,11 @@ export async function draftAsset(angleId: string, format: MarketingFormat): Prom
   }
 
   const { businessContextBlock } = await import("./positioning.ts");
+  // WHAT IS ACTUALLY BEING SOLD. Without this the copy invents a package and
+  // a price every time, and Cole ends up with five emails describing five
+  // different businesses. With no active offer the block says so explicitly
+  // and forbids inventing one — an absent block reads as "no constraint".
+  const { offerContextBlock } = await import("./offers.ts");
   const shape: Record<MarketingFormat, string> = {
     email: "A short email. Subject line on the first line prefixed 'SUBJECT:', then the body. Under 150 words.",
     instagram_post: "A single Instagram caption. First line has to earn the second. Under 120 words.",
@@ -206,6 +211,7 @@ export async function draftAsset(angleId: string, format: MarketingFormat): Prom
     omitToolCatalog: true,
     input:
       `${await businessContextBlock()}\n\n` +
+      `${await offerContextBlock()}\n\n` +
       `═══ THE ANGLE YOU ARE WRITING FROM ═══\n` +
       `${angle.title}\nAudience: ${angle.audience}\nHypothesis: ${angle.hypothesis}\nRests on: ${angle.rationale ?? "—"}\n\n` +
       `Write: ${shape[format]}\n\n` +
