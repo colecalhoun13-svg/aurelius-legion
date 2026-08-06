@@ -1394,6 +1394,64 @@ async function main() {
     else process.env.LLM_MONTHLY_BUDGET_USD = priorBudget;
   }
 
+  console.log("── the badge: receipts are not decisions ──");
+  {
+    const { needsDecision, surfaceSignal, AWAITING_DECISION } = await import("../core/bridge.ts");
+
+    // The 2026-08-06 council measured 460 "pending" signals against ONE real
+    // decision. Cause: the schema defaults status to "pending" and most writers
+    // never set it, so every ritual digest and wiki rewrite looked like
+    // something Cole had to rule on.
+    check("a ritual receipt is not a decision",
+      needsDecision({ kind: "background_result", severity: "info" }) === false);
+    check("a receipt carrying a real button IS a decision",
+      needsDecision({ kind: "background_result", severity: "info", actions: [{ label: "Confirm", action: "confirm_action" }] }) === true);
+    check("a dismiss-only button doesn't make a receipt a decision",
+      needsDecision({ kind: "background_result", severity: "info", actions: [{ label: "Dismiss", action: "dismiss" }] }) === false);
+    check("a critical receipt IS a decision (a failed backup is Cole's to act on)",
+      needsDecision({ kind: "background_result", severity: "critical" }) === true);
+    check("risks and opportunities are decisions", needsDecision({ kind: "risk" }) && needsDecision({ kind: "opportunity" }));
+    check("the awaiting-decision set is defined once, and excludes receipts",
+      !(AWAITING_DECISION as readonly string[]).includes("noted"));
+
+    const receipt = await surfaceSignal({
+      kind: "background_result", sourceType: `${TAG}_receipt`, severity: "info",
+      title: `${TAG} studied 2 units`, body: "a report, not a request",
+    });
+    const decision = await surfaceSignal({
+      kind: "risk", sourceType: `${TAG}_decision`, severity: "attention",
+      title: `${TAG} needs a ruling`, body: "this one is Cole's call",
+    });
+    const rows = await prisma.bridgeSignal.findMany({
+      where: { id: { in: [receipt.id, decision.id] } }, select: { id: true, status: true },
+    });
+    check("a receipt files as 'noted' and never reaches the badge",
+      rows.find((r) => r.id === receipt.id)?.status === "noted");
+    check("a decision still files as 'pending'",
+      rows.find((r) => r.id === decision.id)?.status === "pending");
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: { startsWith: TAG } } });
+  }
+
+  console.log("── the risk line: money outranks tidiness ──");
+  {
+    const { riskLineFrom } = await import("../productivity/service.ts");
+    const calmDeck = { tasks: [{ title: "x" }], overdue: [], plan: { focus: "ship" }, stats: { followThrough: 90 } };
+    const noBiz = { empty: false, activeClients: 2, openLeads: 1, staleFollowUps: 0, overdueInvoiceCents: 0, blocksEndingSoon: 0 };
+
+    // The sentence this replaces was "Nothing's on fire" — said to a man with
+    // zero clients and zero leads, which is the one fire that matters.
+    check("an empty pipeline is named as the fire, not called calm",
+      /pipeline is empty/i.test(riskLineFrom(calmDeck as any, [], 0, { ...noBiz, empty: true, activeClients: 0, openLeads: 0 })));
+    check("unpaid money outranks a tidy deck",
+      /overdue and unchased/i.test(riskLineFrom(calmDeck as any, [], 0, { ...noBiz, overdueInvoiceCents: 25000 })));
+    check("a block about to lapse outranks task backlog",
+      /re-sign conversation/i.test(riskLineFrom({ ...calmDeck, overdue: [{ title: "t" }] } as any, [], 5, { ...noBiz, blocksEndingSoon: 1 })));
+    check("a stale follow-up outranks a tidy deck",
+      /goes cold/i.test(riskLineFrom(calmDeck as any, [], 0, { ...noBiz, staleFollowUps: 2 })));
+    check("with no business data it degrades to the task ladder, not a crash",
+      typeof riskLineFrom(calmDeck as any, [], 0) === "string");
+  }
+
   console.log("── funded-key safety: the guards that only matter once it runs ──");
   {
     // These three were all latent while no key was funded. They stop being

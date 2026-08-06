@@ -125,7 +125,9 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
   try {
     const stale = await prisma.bridgeSignal.findMany({
       where: {
-        status: { in: ["pending", "surfaced"] },
+        // "noted" included: receipts don't await a decision, but they must
+        // still age out or they accumulate forever (468 rows had already).
+        status: { in: ["pending", "surfaced", "noted"] },
         // Critical never auto-expires (post-sweep council): the boot reaper's
         // "may have already shipped — verify before re-confirming" warnings
         // must outlive any clock; only Cole closes those.

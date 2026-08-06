@@ -385,7 +385,14 @@ model BridgeSignal {
   title      String
   body       String // markdown
   actions    Json? // [{ label, action, payload }]
-  status     String    @default("pending") // "pending" | "surfaced" | "acknowledged" | "acting" (transient confirm claim) | "acted" | "dismissed" | "expired"
+  // "pending" | "surfaced" = AWAITING A DECISION (these drive the badge)
+  // "noted"     = a receipt: work happened, nothing for Cole to rule on
+  // "acknowledged" | "acting" (transient confirm claim) | "acted" | "dismissed" | "expired"
+  // The default is "pending" and most writers never set it, which is how 460
+  // receipts came to look like 460 outstanding decisions. surfaceSignal()
+  // derives the right one (core/bridge.ts::needsDecision) — prefer it over a
+  // raw create for exactly this reason.
+  status     String    @default("pending")
   surfacedAt DateTime?
   expiresAt  DateTime?
   createdAt  DateTime  @default(now())

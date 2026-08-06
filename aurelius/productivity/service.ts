@@ -559,9 +559,31 @@ export async function getDeck(dateStr?: string) {
 export function riskLineFrom(
   today: { tasks: any[]; overdue: any[]; plan: any; stats: { followThrough: number | null } },
   behindProjects: Array<{ name: string; progressPct: number; daysToTarget: number | null }>,
-  overdueTotal: number
+  overdueTotal: number,
+  /** The business, when it's known. Money risk outranks task risk. */
+  business?: {
+    empty: boolean;
+    activeClients: number;
+    openLeads: number;
+    staleFollowUps: number;
+    overdueInvoiceCents: number;
+    blocksEndingSoon: number;
+  }
 ): string {
   let biggestRisk: string;
+  // MONEY FIRST. An unpaid invoice or a block about to lapse costs real
+  // revenue; an overdue task costs tidiness. These sit above the task ladder
+  // deliberately — the previous ordering meant the phone reported a clean
+  // deck while a client's block ran out unrenewed.
+  if (business && business.overdueInvoiceCents > 0) {
+    return `$${(business.overdueInvoiceCents / 100).toFixed(2)} is overdue and unchased — that's money you've already earned. Chase it today.`;
+  }
+  if (business && business.blocksEndingSoon > 0) {
+    return `${business.blocksEndingSoon} training block${business.blocksEndingSoon === 1 ? "" : "s"} end${business.blocksEndingSoon === 1 ? "s" : ""} within the week — the re-sign conversation happens now, not after it lapses.`;
+  }
+  if (business && business.staleFollowUps > 0) {
+    return `${business.staleFollowUps} lead follow-up${business.staleFollowUps === 1 ? " is" : "s are"} past due. A warm lead goes cold in days, and you have no others waiting.`;
+  }
   if (behindProjects.length > 0) {
     // Worst = closest to target with least progress. Sort by slack (days left
     // minus a progress cushion) ascending; the smallest slack is the sharpest.
@@ -587,6 +609,18 @@ export function riskLineFrom(
         : `${overdueTotal} tasks are overdue — oldest: "${today.overdue[0].title}". Close them before they become a habit.`;
   } else if (today.tasks.length === 0 && today.plan?.focus == null) {
     biggestRisk = `No focus set and nothing on the deck — the risk is drift. Name one thing that matters today.`;
+  } else if (business?.empty) {
+    // The line this replaces was "Nothing's on fire." With zero clients and
+    // zero leads that was the single most misleading sentence the system
+    // could say: the deck being clear is not the same as the business being
+    // fine, and a calm phone is exactly what lets an empty pipeline persist.
+    biggestRisk =
+      `Your deck is clear and your pipeline is empty — no clients, no open leads. That's the fire. ` +
+      `Nothing arrives on its own, so today's real work is one outreach, not one task.`;
+  } else if (business && business.activeClients === 0 && business.openLeads > 0) {
+    biggestRisk =
+      `${business.openLeads} lead${business.openLeads === 1 ? "" : "s"} open and nobody signed yet. ` +
+      `The deck is calm; the conversion isn't. Move one lead forward today.`;
   } else {
     biggestRisk = `Nothing's on fire. Protect the focus block and do the work you already named.`;
   }
@@ -607,7 +641,27 @@ export async function getBiggestRisk(
   const overdueTotal = await prisma.task.count({
     where: { dueDate: { lt: start }, status: { notIn: ["done", "abandoned"] } },
   });
-  return riskLineFrom(today, behind, overdueTotal);
+  // The business is part of the risk picture, not a separate report. Failing
+  // to read it must never break the risk line — it degrades to the task-only
+  // ladder, which is what it was before.
+  let business: Parameters<typeof riskLineFrom>[3];
+  try {
+    const { pipelineSnapshot, whatNeedsAttention } = await import("../crm/service.ts");
+    const [snap, attention] = await Promise.all([pipelineSnapshot(), whatNeedsAttention(7)]);
+    business = {
+      empty: snap.empty,
+      activeClients: snap.activeClients,
+      openLeads: snap.openLeads,
+      staleFollowUps: attention.followUpsOverdue.length,
+      overdueInvoiceCents: attention.unpaid
+        .filter((i) => i.overdue)
+        .reduce((s, i) => s + i.outstandingCents, 0),
+      blocksEndingSoon: attention.blocksEnding.length,
+    };
+  } catch {
+    /* business layer unavailable — the task ladder still stands */
+  }
+  return riskLineFrom(today, behind, overdueTotal, business);
 }
 
 // ── Aurelius activity (what the background is doing) ─────────────────

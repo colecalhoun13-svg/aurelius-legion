@@ -129,12 +129,25 @@ export async function executeAction(args: {
       ],
     },
   });
-  // The phone Bridge: every ask reaches Cole's thumb with Confirm/Dismiss
-  // buttons (Cole's directive — the web Bridge alone starves the loop).
-  // Fire-and-forget; dormant-safe without a Telegram token.
-  import("../telegram/bot.ts")
-    .then((m) => m.pushBridgeAsk({ id: sig.id, title: sig.title, body: sig.body, status: sig.status, actions: sig.actions }))
-    .catch(() => {});
+  // The phone Bridge: an ask reaches Cole's thumb with Confirm/Dismiss buttons
+  // (his directive — the web Bridge alone starves the loop).
+  //
+  // BUT THROUGH SALIENCE, not unconditionally. This used to push every single
+  // gated ask the instant it was prepared. That was invisible while nothing
+  // generated; with a funded key, 05:30 inbox triage prepares up to ten asks in
+  // a burst and Cole's phone buzzed ten times before he woke up. Ten buzzes at
+  // 05:30 is how a bridge gets muted, and a muted bridge loses the outward
+  // confirms too — the ones that actually matter.
+  //
+  // Low-salience asks still file instantly and still show on the Bridge and in
+  // the badge; they simply wait for the 07:00 briefing, which already counts
+  // what's waiting. Nothing is lost, only batched.
+  const { shouldPushNow } = await import("../core/salience.ts");
+  if (shouldPushNow({ kind: sig.kind, severity: sig.severity, domain: sig.domain, dueAt: null })) {
+    import("../telegram/bot.ts")
+      .then((m) => m.pushBridgeAsk({ id: sig.id, title: sig.title, body: sig.body, status: sig.status, actions: sig.actions }))
+      .catch(() => {});
+  }
   return { finalized: false, reason: gateReason, bridgeSignalId: sig.id };
 }
 

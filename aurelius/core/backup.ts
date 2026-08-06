@@ -69,16 +69,24 @@ export async function runDbBackup(): Promise<{ ok: boolean; file?: string; bytes
         select: { id: true },
       });
       if (!already) {
-        await prisma.bridgeSignal.create({
-          data: {
-            kind: "background_result",
-            domain: "personal",
-            sourceType: "backup_failure",
-            severity: "attention",
-            status: "surfaced",
-            title: "Nightly backup FAILED — the brain has no fresh copy",
-            body: `pg_dump error: ${msg.slice(0, 300)}\n\nUntil this is fixed, the newest dump is whatever last succeeded. ${/ENOENT/.test(msg) ? "Fix: install postgresql-client in the image/host." : "Check DATABASE_URL reachability and pg_dump/server version compatibility."}`,
-          },
+        // Was a raw create at severity "attention" — so it never went through
+        // salience (never buzzed), carried no action (so the queue sweep
+        // classified it a notice) and EXPIRED at 14 days. "The brain has no
+        // fresh copy" would silently age out of the only place it appeared.
+        //
+        // Now: critical, through surfaceSignal so it pushes, and carrying an
+        // acknowledge action so the sweep treats it as a decision rather than
+        // a notice to garbage-collect.
+        const { surfaceSignal } = await import("./bridge.ts");
+        await surfaceSignal({
+          kind: "risk",
+          domain: "personal",
+          sourceType: "backup_failure",
+          sourceId: `backup_failure:${new Date().toLocaleDateString("en-CA")}`,
+          severity: "critical",
+          title: "Nightly backup FAILED — the brain has no fresh copy",
+          body: `pg_dump error: ${msg.slice(0, 300)}\n\nUntil this is fixed, the newest dump is whatever last succeeded. ${/ENOENT/.test(msg) ? "Fix: install postgresql-client in the image/host." : "Check DATABASE_URL reachability and pg_dump/server version compatibility."}`,
+          actions: [{ label: "Acknowledged", action: "acknowledge", payload: {} }],
         });
       }
     } catch {
