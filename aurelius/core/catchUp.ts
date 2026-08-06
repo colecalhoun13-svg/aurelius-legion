@@ -58,6 +58,14 @@ const JOBS: CatchUpJob[] = [
     },
   },
   {
+    name: "outreach_sweep",
+    hour: 7,
+    minute: 30,
+    // Drafting yesterday's outreach at 4pm is still useful; at 9pm it isn't.
+    expiresHour: 18,
+    run: async () => (await import("../crm/leadEngine.ts")).runOutreachSweep({}),
+  },
+  {
     name: "initiative_pulse",
     hour: 8,
     run: async () => (await import("../autonomy/initiative.ts")).runInitiativePulse(),

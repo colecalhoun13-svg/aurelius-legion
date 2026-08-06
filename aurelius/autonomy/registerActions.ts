@@ -8,6 +8,7 @@
 import { registerActionFinalizer, registerActionInverse } from "./actionRegistry.ts";
 import { finalizeScheduleProtection } from "./workflows/scheduleProtection.ts";
 import { finalizeInboxDraft } from "./workflows/inboxTriage.ts";
+import { finalizeOutreachDraft } from "../crm/leadEngine.ts";
 import { finalizeContentPublish } from "./workflows/contentPublish.ts";
 import { finalizeResearchIngest } from "./workflows/researchIngest.ts";
 import { confirmHeuristic, retireHeuristic } from "../compiled/chatCompiler.ts";
@@ -25,6 +26,9 @@ export function registerAllActions(): void {
     return deleteCalendarEvent(result?.externalId);
   });
   registerActionFinalizer("inbox.triage_draft", finalizeInboxDraft);
+  // Inward: writes a Gmail DRAFT and advances the lead's follow-up date.
+  // Sending stays outward (outreach.send) and non-grantable.
+  registerActionFinalizer("outreach.draft", finalizeOutreachDraft);
   // Outward: publishing content. executeAction always GATES this (outward class),
   // so the finalizer only runs on Cole's Bridge confirm.
   registerActionFinalizer("content.publish", finalizeContentPublish);

@@ -82,7 +82,8 @@ internal synthesis jobs out of the semantic reuse cache, both sides.
 ## Scheduled spine (all traced via core/trace.ts)
 
 02:00 db backup · 05:30 inbox triage (drafts only — never sends; the 07:00
-briefing names what's waiting) · 06:00 RSS · 06:30 market pulse · 06:45 schedule-protection
+briefing names what's waiting) · 07:30 outreach sweep (drafts to leads whose
+follow-up is due, bounded to 3/run — Gmail drafts only, never sends) · 06:00 RSS · 06:30 market pulse · 06:45 schedule-protection
 (acts if granted, else proposes) · 07:00 morning briefing (carries the risk
 line + checks last night's "tomorrow starts with") · 08:00 initiative ·
 13:00 midday check (silent when on pace) · 21:15 queue sweep (keyhole
@@ -135,3 +136,12 @@ in NORTH_STAR. Two deliberate exceptions have shipped:
   Invoice → Payment, because the remote business is the point and it had
   nowhere to record a client. Money is integer cents; Invoice (owed) and
   Payment (received) are separate; "overdue" is derived, never stored.
+- **The Lead Engine** (`crm/leadEngine.ts`) — un-parked after the 2026-08-06
+  council found step 1 of the funnel absent from the code: every caller of
+  `addLead` was Cole typing, and `LEAD_SOURCES` offered values nothing could
+  produce. Three doors: the WARM LIST (the only channel that works at zero
+  audience), the public `/intake` endpoint (the one unauthenticated write —
+  narrow, sanitised, rate-limited), and inbound capture. Drafting is
+  `outreach.draft`, **inward** — it writes a Gmail draft and nothing else.
+  Sending stays `outreach.send`, outward, non-grantable. The sweep is bounded
+  to 3/run because the constraint is Cole's review capacity, not generation.

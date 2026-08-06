@@ -140,6 +140,10 @@ const API_KEY = process.env.AURELIUS_API_KEY?.trim();
 // matched the old regex — Express doesn't collapse dot-segments pre-route).
 const AUTH_EXEMPT = new Set([
   "/health", "/",
+  // Public lead intake. A prospect has no API key; a funnel that demands one
+  // captures nobody. Narrow by construction (creates a Lead, nothing else),
+  // input-sanitised, and rate-limited per IP at the route.
+  "/intake",
   "/api/calendar/auth", "/api/calendar/callback",
   "/api/gmail/auth", "/api/gmail/callback",
   "/api/instagram/auth", "/api/instagram/callback",
@@ -185,6 +189,33 @@ app.use("/api/corrections", correctionsRouter);
 app.use("/api/gmail", gmailRouter);
 app.use("/api/instagram", instagramRouter);
 app.use("/api/crm", crmRouter);
+
+// PUBLIC LEAD INTAKE. Deliberately outside THE LOCK: a prospect filling in a
+// form has no API key, and a funnel that requires one captures nobody. This is
+// the only unauthenticated write in the system, so it is narrow by
+// construction — it creates a Lead and nothing else, every field is length-
+// capped and directive-defused, and it triggers no outward action. Rate-limited
+// per-IP so a bot cannot flood the pipeline Cole is trying to read.
+const intakeHits = new Map<string, { n: number; resetAt: number }>();
+app.post("/intake", async (req: Request, res: Response) => {
+  const ip = String(req.ip ?? req.socket.remoteAddress ?? "unknown");
+  const now = Date.now();
+  const win = intakeHits.get(ip);
+  if (!win || now > win.resetAt) intakeHits.set(ip, { n: 1, resetAt: now + 3600_000 });
+  else if (++win.n > 5) {
+    return res.status(429).json({ error: "Too many submissions. Try again later, or email directly." });
+  }
+  try {
+    const { captureInboundLead } = await import("./crm/leadEngine.ts");
+    const out = await captureInboundLead(req.body ?? {});
+    if (!out.ok) return res.status(400).json({ error: out.error });
+    // Never leak the lead id to an anonymous caller.
+    return res.json({ ok: true, message: "Thanks — Cole will come back to you personally." });
+  } catch (err: any) {
+    console.error("[intake] failed:", err?.message ?? err);
+    return res.status(500).json({ error: "Couldn't record that. Please email instead." });
+  }
+});
 
 app.get("/", (req: Request, res: Response) => {
   res.send("Aurelius OS backend is running");
@@ -1556,6 +1587,20 @@ scheduleNamed("morning_briefing", "0 7 * * *", "morning briefing", async () => {
     });
   } catch (err) {
     console.error("[rituals] morning failed:", err);
+  }
+});
+// Outreach sweep at 07:30 — straight after the briefing, so the day starts
+// with the prospecting already drafted rather than as another intention.
+// Bounded to 3 drafts/run: the constraint is Cole's review capacity, not
+// generation. Inward only — it writes Gmail drafts and never contacts anyone.
+scheduleNamed("outreach_sweep", "30 7 * * *", "outreach sweep", async () => {
+  try {
+    await runTraced("schedule", "outreach_sweep", async () => {
+      const { runOutreachSweep } = await import("./crm/leadEngine.ts");
+      await runOutreachSweep({});
+    });
+  } catch (err) {
+    console.error("[leadEngine] outreach sweep failed:", err);
   }
 });
 // Nightly debrief at 21:30 — wraps the deterministic pulse (gap math) in voice.

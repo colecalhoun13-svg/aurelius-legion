@@ -32,6 +32,7 @@ import {
   findClientByName,
   fromCents,
 } from "../../crm/service.ts";
+import { importWarmList, draftOutreach, runOutreachSweep } from "../../crm/leadEngine.ts";
 
 /**
  * Accept a client id OR a name, because Cole will always say "Jake".
@@ -164,6 +165,27 @@ export const crmAdapter: ToolAdapter = {
       example: '[TOOL: crm.record_payment {"client": "Jake Miller", "amount": 300, "method": "venmo"}]',
     },
     {
+      name: "import_warm_list",
+      description:
+        "Add the people Cole already knows — former athletes, their parents, coaches, anyone who might say yes or know someone who would. THE most useful action in this tool: he has no inbound, so the warm list is the only channel that works at zero audience. Deduped, and every entry gets a follow-up date immediately.",
+      dataSchema:
+        '{ entries: [{ name: string, email?: string, phone?: string, sport?: string, relationship?: string, context?: string }], source?: string }',
+      example:
+        '[TOOL: crm.import_warm_list {"entries": [{"name": "Jake Miller", "email": "dana@example.com", "sport": "football", "relationship": "former athlete", "context": "trained with him 2 years, went to state"}]}]',
+    },
+    {
+      name: "draft_outreach",
+      description:
+        "Research one lead and draft a personal message to them into Gmail drafts. INWARD — it never sends. Use for 'write to Jake', 'draft something for that lead'.",
+      dataSchema: '{ leadId: string }',
+    },
+    {
+      name: "outreach_sweep",
+      description:
+        "Draft outreach for every lead whose follow-up is due (bounded to 3). Runs daily at 07:30 on its own; use this to run it now.",
+      dataSchema: "{ max?: number }",
+    },
+    {
       name: "outstanding",
       description: "Who owes money, oldest first, with overdue flagged. Use for 'who owes me', 'what's unpaid'.",
       dataSchema: "{} (no fields)",
@@ -289,6 +311,40 @@ export const crmAdapter: ToolAdapter = {
           const p = await recordPayment({ ...(data as any), clientId });
           return { ok: true, output: { paymentId: p.id, amount: fromCents(p.amountCents, p.currency), method: p.method, receivedAt: p.receivedAt } };
         }
+
+        case "import_warm_list": {
+          const entries = Array.isArray(data.entries) ? data.entries : [];
+          if (entries.length === 0) throw new Error("import_warm_list needs an entries array of at least one person.");
+          const res = await importWarmList(entries, { source: data.source });
+          return {
+            ok: true,
+            output: {
+              ...res,
+              message:
+                res.created === 0
+                  ? "Everyone on that list was already in the pipeline."
+                  : `${res.created} added, each with a follow-up due today. The 07:30 sweep will draft the first messages, or run crm.outreach_sweep now.`,
+            },
+          };
+        }
+
+        case "draft_outreach": {
+          if (!data.leadId) throw new Error("draft_outreach needs leadId (from list_leads).");
+          const res = await draftOutreach(String(data.leadId));
+          if (!res.ok) return { ok: false, output: null, error: res.error ?? "draft failed" };
+          return {
+            ok: true,
+            output: {
+              bridgeSignalId: res.bridgeSignalId,
+              message: res.gated
+                ? "Drafted and waiting on your confirm — confirming files it in Gmail drafts. It does not send."
+                : "Drafted into your Gmail drafts. Nothing was sent.",
+            },
+          };
+        }
+
+        case "outreach_sweep":
+          return { ok: true, output: await runOutreachSweep({ max: Number(data.max) || undefined }) };
 
         case "outstanding": {
           const rows = await outstandingInvoices();

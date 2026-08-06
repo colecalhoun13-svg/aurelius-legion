@@ -68,6 +68,29 @@ crmRouter.get("/outstanding", async (_req: Request, res: Response) => {
   }
 });
 
+// ── lead acquisition ─────────────────────────────────────────────────
+
+/** Bulk-add the people Cole already knows. */
+crmRouter.post("/warm-list", async (req: Request, res: Response) => {
+  try {
+    const { importWarmList } = await import("../crm/leadEngine.ts");
+    const body = req.body ?? {};
+    res.json(await importWarmList(Array.isArray(body.entries) ? body.entries : [], { source: body.source }));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+/** Draft outreach for every lead whose follow-up is due. */
+crmRouter.post("/outreach/sweep", async (req: Request, res: Response) => {
+  try {
+    const { runOutreachSweep } = await import("../crm/leadEngine.ts");
+    res.json(await runOutreachSweep({ max: Number(req.body?.max) || undefined }));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
 // ── leads ────────────────────────────────────────────────────────────
 
 crmRouter.get("/leads", async (req: Request, res: Response) => {
@@ -91,6 +114,18 @@ crmRouter.post("/leads", async (req: Request, res: Response) => {
 crmRouter.patch("/leads/:id", async (req: Request, res: Response) => {
   try {
     res.json(await updateLead(String(req.params.id), req.body ?? {}));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+/** Draft a personal message to one lead. Inward — writes a Gmail draft only. */
+crmRouter.post("/leads/:id/draft", async (req: Request, res: Response) => {
+  try {
+    const { draftOutreach } = await import("../crm/leadEngine.ts");
+    const out = await draftOutreach(String(req.params.id));
+    if (!out.ok) return res.status(400).json({ error: out.error });
+    res.json(out);
   } catch (err) {
     fail(res, err);
   }

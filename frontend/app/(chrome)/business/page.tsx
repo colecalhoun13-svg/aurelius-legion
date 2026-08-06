@@ -232,6 +232,9 @@ export default function BusinessPage() {
         </section>
       )}
 
+      {/* ── The warm list ────────────────────────────────────────── */}
+      <WarmList onChange={load} empty={snap.empty} />
+
       {/* ── Add a lead ───────────────────────────────────────────── */}
       <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4">
         <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80 mb-3">
@@ -310,6 +313,27 @@ export default function BusinessPage() {
                             className="text-[11px] text-emerald-400/80 hover:text-emerald-300 disabled:opacity-40"
                           >
                             signed
+                          </button>
+                          <button
+                            onClick={async () => {
+                              setBusy(true); setError(null);
+                              try {
+                                const res = await fetch("/api/crm/leads/draft", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ kind: "draft", leadId: l.id }),
+                                });
+                                const j = await res.json();
+                                if (!res.ok) throw new Error(j?.error ?? "Draft failed");
+                                await load();
+                              } catch (e: any) { setError(e?.message ?? String(e)); }
+                              finally { setBusy(false); }
+                            }}
+                            disabled={busy}
+                            className="text-[11px] text-aurelius-gold/70 hover:text-aurelius-gold disabled:opacity-40"
+                            title="Researches them and drafts a message into your Gmail drafts. Never sends."
+                          >
+                            draft
                           </button>
                           <button
                             onClick={() => moveLead(l.id, "lost")} disabled={busy}
@@ -573,5 +597,115 @@ function Stat({ label, value, hint, alert }: { label: string; value: string; hin
       <div className="text-xl text-aurelius-text/90 mt-1">{value}</div>
       {hint && <div className={`text-[11px] mt-0.5 ${alert ? "text-red-300/80" : "text-aurelius-text/40"}`}>{hint}</div>}
     </div>
+  );
+}
+
+/**
+ * THE WARM LIST — the only channel that works at zero audience.
+ *
+ * Cole has no inbound. A funnel needs traffic he doesn't have; a warm list
+ * needs a text box. So this is deliberately the lowest-friction thing on the
+ * page: paste names, one per line, optionally `Name, email, how you know them`.
+ * Everything is optional except a name, because a list you have to format is a
+ * list that never gets pasted.
+ */
+function WarmList({ onChange, empty }: { onChange: () => void; empty: boolean }) {
+  const [open, setOpen] = useState(empty);
+  const [raw, setRaw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  // "Jake Miller, dana@x.com, mum coached with me" → structured, forgivingly.
+  const parsed = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split(",").map((p) => p.trim());
+      const email = parts.find((p) => /\S+@\S+\.\S+/.test(p));
+      const name = parts[0] ?? "";
+      const context = parts.filter((p) => p !== name && p !== email).join(", ") || undefined;
+      return { name, email, context };
+    })
+    .filter((e) => e.name.length > 1);
+
+  async function post(body: Record<string, unknown>) {
+    setBusy(true); setErr(null); setResult(null);
+    try {
+      const res = await fetch("/api/crm/leads/draft", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error ?? "Failed");
+      return j;
+    } catch (e: any) { setErr(e?.message ?? String(e)); return null; }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <section className="rounded border border-aurelius-gold/30 bg-black/40 p-4">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex justify-between items-center text-left"
+      >
+        <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80">
+          The warm list
+        </h2>
+        <span className="text-aurelius-gold/50 text-xs">{open ? "hide" : "open"}</span>
+      </button>
+
+      {open && (
+        <div className="mt-3 space-y-3">
+          <p className="text-xs text-aurelius-text/60 leading-relaxed">
+            The ten people you could message this week who might say yes — or who know someone who would.
+            Old athletes, their parents, coaches you know. One per line. Add an email and how you know them
+            if you have it: <span className="text-aurelius-text/40">Jake Miller, dana@example.com, trained him two years</span>
+          </p>
+          <textarea
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
+            rows={6}
+            placeholder={"Jake Miller, dana@example.com, trained him two years\nSarah Chen, coached her sister\nCoach Davis, sends me athletes"}
+            className="w-full bg-black/50 border border-aurelius-gold/30 rounded px-3 py-2 text-sm text-aurelius-text placeholder:text-aurelius-text/25 font-mono"
+          />
+          {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200">{err}</div>}
+          {result && <div className="rounded border border-emerald-500/40 bg-emerald-950/20 p-2 text-xs text-emerald-200">{result}</div>}
+          <div className="flex flex-wrap gap-2 items-center">
+            <button
+              disabled={busy || parsed.length === 0}
+              onClick={async () => {
+                const j = await post({ kind: "warm_list", entries: parsed });
+                if (j) { setResult(`${j.created} added${j.skipped ? `, ${j.skipped} already known` : ""}. Each has a follow-up due today.`); setRaw(""); onChange(); }
+              }}
+              className="px-3 py-2 rounded border border-aurelius-gold/50 text-aurelius-gold text-sm hover:bg-aurelius-gold/10 disabled:opacity-40"
+            >
+              {busy ? "Adding…" : `Add ${parsed.length || ""} to the pipeline`}
+            </button>
+            <button
+              disabled={busy}
+              onClick={async () => {
+                const j = await post({ kind: "sweep" });
+                if (j) {
+                  setResult(
+                    j.due === 0
+                      ? "Nothing due — every open lead already has a future follow-up date."
+                      : `${j.due} due · ${j.drafted + j.gated} drafted${j.gated ? ` (${j.gated} waiting on your confirm)` : ""}. Nothing was sent.`
+                  );
+                  onChange();
+                }
+              }}
+              className="px-3 py-2 rounded border border-aurelius-gold/30 text-aurelius-text/80 text-sm hover:text-aurelius-gold disabled:opacity-40"
+              title="Drafts messages for every lead whose follow-up is due. Writes Gmail drafts only."
+            >
+              Draft what&apos;s due
+            </button>
+          </div>
+          <p className="text-[10px] text-aurelius-text/40">
+            Drafts land in your Gmail drafts for you to read and send. Aurelius never messages anyone on its own.
+          </p>
+        </div>
+      )}
+    </section>
   );
 }

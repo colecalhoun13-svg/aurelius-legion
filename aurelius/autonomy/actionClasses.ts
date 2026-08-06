@@ -103,6 +103,14 @@ export const ACTION_CLASSES: ActionClass[] = [
     gate: "always Cole's confirm",
   },
   {
+    key: "outreach.draft",
+    operator: "business",
+    tier: "inward",
+    description:
+      "Research a lead and draft a personal outreach message into Gmail drafts. Never contacts anyone.",
+    gate: "the send button — sending is the separate outward class outreach.send",
+  },
+  {
     key: "outreach.send",
     operator: "business",
     tier: "outward",

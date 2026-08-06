@@ -1,0 +1,334 @@
+// aurelius/crm/leadEngine.ts
+//
+// LEAD ACQUISITION — the only part of this system that can produce a dollar.
+//
+// The 2026-08-06 council was unanimous: Lead → Client → Engagement → Invoice →
+// Payment is built and proven, and step 1 does not exist in code. Every caller
+// of `addLead` was Cole typing. `LEAD_SOURCES` offered "instagram" and
+// "website" as values with nothing that could ever produce them. A beautifully
+// instrumented cash register in a shop with no door.
+//
+// This is the door. Three ways in, in the order they can actually work for a
+// coach with no audience:
+//
+//   1. THE WARM LIST — the only channel that works at zero followers. Cole
+//      names people he already knows; Aurelius researches each against his
+//      offer, drafts a personal message into Gmail DRAFTS, and tracks the
+//      follow-up. This needs no send scope, no Meta token, no media host, and
+//      no funnel. It is the shortest path from this repo to a first client.
+//   2. INBOUND CAPTURE — a public intake endpoint and inbound-email parsing,
+//      so a lead can arrive without Cole typing it.
+//   3. THE FOLLOW-UP SPINE — a warm lead goes cold in days. Nothing here is
+//      worth building if the second message never gets sent.
+//
+// AUTONOMY. Drafting is INWARD (`outreach.draft`) — reversible, it only ever
+// writes a Gmail draft. SENDING is `outreach.send`, outward, always Cole's
+// confirm, non-grantable. That split is the whole safety story: Aurelius can
+// do the work of prospecting without ever contacting anyone on its own.
+//
+// PEOPLE, NOT RECORDS. These are real people, often minors and their parents.
+// Nothing here fabricates a claim about them, nothing writes a message that
+// asserts a result Cole hasn't produced, and every draft is his to read before
+// it goes anywhere.
+
+import { prisma } from "../core/db/prisma.ts";
+import { runLLM } from "../llm/runLLM.ts";
+import { engineUnavailableText } from "../llm/nonAnswer.ts";
+import { executeAction } from "../autonomy/executor.ts";
+import { addLead, LEAD_SOURCES } from "./service.ts";
+
+export const OUTREACH_DRAFT_CLASS = "outreach.draft";
+
+// ── 1. THE WARM LIST ─────────────────────────────────────────────────
+
+export type WarmListEntry = {
+  name: string;
+  email?: string;
+  phone?: string;
+  /** How Cole knows them — the single most useful thing for personalising. */
+  context?: string;
+  sport?: string;
+  relationship?: string; // "former athlete" | "parent" | "coach" | "friend"
+};
+
+/**
+ * Import the people Cole already knows. Deduped on email, then on exact name,
+ * so pasting the same list twice doesn't create twenty ghosts.
+ */
+export async function importWarmList(
+  entries: WarmListEntry[],
+  opts: { source?: string } = {}
+): Promise<{ created: number; skipped: number; leads: { id: string; name: string }[] }> {
+  const source = opts.source && (LEAD_SOURCES as readonly string[]).includes(opts.source) ? opts.source : "word_of_mouth";
+  const leads: { id: string; name: string }[] = [];
+  let skipped = 0;
+
+  for (const raw of entries) {
+    const name = (raw.name ?? "").trim();
+    if (!name) { skipped++; continue; }
+    const email = raw.email?.trim() || null;
+
+    const existing = await prisma.lead.findFirst({
+      where: email ? { OR: [{ email }, { name }] } : { name },
+      select: { id: true },
+    });
+    if (existing) { skipped++; continue; }
+
+    const lead = await addLead({
+      name,
+      email: email ?? undefined,
+      phone: raw.phone,
+      sport: raw.sport,
+      source,
+      referredBy: raw.relationship,
+      notes: raw.context,
+      // Every imported lead gets a due date immediately. A warm list with no
+      // next action is a list, not a pipeline — and the whole failure mode
+      // here is good intentions that never get a second contact.
+      nextAction: "First message",
+      nextActionAt: new Date(),
+    });
+    leads.push({ id: lead.id, name: lead.name });
+  }
+  return { created: leads.length, skipped, leads };
+}
+
+// ── 2. DRAFTING ──────────────────────────────────────────────────────
+
+/**
+ * Draft ONE personal outreach message for a lead.
+ *
+ * Grounded in Cole's actual business facts (so it can't invent an offer) and
+ * in what he said about this person. Guarded by `engineUnavailableText`: a
+ * model error must never become a message to a real human being — the same
+ * defect that had to be fixed in inbox triage, and far worse here, because
+ * this one is addressed to someone who might have become a client.
+ */
+export async function draftOutreach(leadId: string): Promise<{
+  ok: boolean;
+  gated?: boolean;
+  bridgeSignalId?: string;
+  error?: string;
+}> {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!lead) return { ok: false, error: `No lead with id ${leadId}.` };
+  if (["won", "lost"].includes(lead.status)) {
+    return { ok: false, error: `${lead.name} is already ${lead.status} — not drafting.` };
+  }
+
+  const { businessContextBlock } = await import("../business/positioning.ts");
+  const context = await businessContextBlock();
+
+  const priorTouches = await prisma.bridgeSignal.count({
+    where: { sourceType: "outreach_draft", sourceId: { startsWith: `outreach:${lead.id}` } },
+  });
+  const isFollowUp = priorTouches > 0 || !!lead.lastContactAt;
+
+  return executeAction({
+    actionClass: OUTREACH_DRAFT_CLASS,
+    sourceType: "outreach_draft",
+    // Touch-numbered so a follow-up isn't deduped against the first message.
+    sourceId: `outreach:${lead.id}:${priorTouches + 1}`,
+    prepare: async () => {
+      const res = await runLLM({
+        taskType: "chat",
+        operators: { primary: "business", secondaries: ["content"] },
+        noReuse: true,
+        omitToolCatalog: true,
+        input:
+          `${context}\n\n` +
+          `Write ${isFollowUp ? "a SHORT follow-up" : "a first message"} from Cole to someone he already knows. ` +
+          `This is a real person, not a marketing segment.\n\n` +
+          `WHO: ${lead.name}\n` +
+          (lead.sport ? `SPORT: ${lead.sport}\n` : "") +
+          (lead.referredBy ? `RELATIONSHIP: ${lead.referredBy}\n` : "") +
+          (lead.notes ? `WHAT COLE SAID ABOUT THEM: ${lead.notes}\n` : "") +
+          `\nRULES — these are not style preferences:\n` +
+          `- Never claim a result, statistic, or outcome that isn't in the confirmed facts above. If you want to ` +
+          `  reference proof and none is stated, say nothing rather than inventing one.\n` +
+          `- Cole is a standard-setter, not a guarantee coach. State what's required, never "we'll get you X".\n` +
+          `- If the athlete is school-age, the parent is usually the buyer — write so both recognise it.\n` +
+          `- No pitch-deck voice, no "hope this finds you well", no fake urgency, no emoji.\n` +
+          `- Under 120 words. One clear ask, and make the ask easy to say no to.\n` +
+          (isFollowUp
+            ? `- This is a FOLLOW-UP. Acknowledge that lightly, add one new thing, do not repeat the first pitch.\n`
+            : "") +
+          `\nReturn ONLY the message body — no subject line, no signature block.`,
+      });
+      const body = (res.text ?? "").trim();
+
+      // A model error addressed to a prospective client is worse than silence.
+      if (!body || body.length < 30 || engineUnavailableText(body)) {
+        throw new Error(
+          `No usable outreach draft for ${lead.name} — the model returned an error or empty text. Skipped rather than sent to a real person.`
+        );
+      }
+
+      return {
+        title: `Outreach drafted — ${lead.name}${isFollowUp ? " (follow-up)" : ""}`,
+        body:
+          `**To:** ${lead.name}${lead.email ? ` <${lead.email}>` : " (no email on file)"}\n` +
+          (lead.notes ? `**Context:** ${lead.notes}\n` : "") +
+          `\n**Draft:**\n\n${body}\n\n` +
+          `_Confirm files this in your Gmail drafts. It does not send — sending is outward and stays your call._`,
+        domain: "business",
+        payload: { leadId: lead.id, to: lead.email, name: lead.name, body, touch: priorTouches + 1 },
+      };
+    },
+  }).then(
+    (exec) => ({ ok: true, gated: !exec.finalized, bridgeSignalId: exec.bridgeSignalId }),
+    (err) => ({ ok: false, error: err?.message ?? String(err) })
+  );
+}
+
+/**
+ * Commit a drafted outreach: file it in Gmail drafts and advance the lead.
+ *
+ * INWARD by construction — `draftReply` writes a draft, it does not send. The
+ * lead's follow-up date moves out so the pipeline keeps a next action on every
+ * open lead, which is the discipline the whole engine exists to enforce.
+ */
+export async function finalizeOutreachDraft(payload: any): Promise<{ draftId?: string; leadId: string }> {
+  const { leadId, to, body, name } = payload ?? {};
+  if (!leadId) throw new Error("outreach draft payload missing leadId");
+
+  let draftId: string | undefined;
+  if (to) {
+    const { draftReply } = await import("../gmail/engine.ts");
+    const res: any = await draftReply({
+      to,
+      subject: `Quick one, ${String(name ?? "").split(" ")[0] || "hey"}`,
+      body,
+    });
+    draftId = res?.id ?? res?.draftId;
+  }
+
+  const FOLLOW_UP_DAYS = 4; // a warm lead goes cold in about a week
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      status: "contacted",
+      lastContactAt: new Date(),
+      nextAction: "Follow up if no reply",
+      nextActionAt: new Date(Date.now() + FOLLOW_UP_DAYS * 86400_000),
+    },
+  });
+  return { draftId, leadId };
+}
+
+// ── 3. THE SWEEP ─────────────────────────────────────────────────────
+
+/**
+ * Draft what's due. Scheduled, bounded, and deliberately small.
+ *
+ * MAX_PER_RUN is 3, not 20. The council's sharpest warning was that a funded
+ * key multiplies generation without touching Cole's review capacity — twenty
+ * drafts he never reads is not twenty leads worked, it is a muted bridge. Three
+ * a day is twenty-one a week, which is more outreach than he has ever sent, and
+ * each one arrives with room to be read.
+ */
+const MAX_PER_RUN = 3;
+
+export async function runOutreachSweep(opts: { max?: number } = {}): Promise<{
+  due: number;
+  drafted: number;
+  gated: number;
+  failed: number;
+  skipped: string[];
+}> {
+  const max = Math.min(opts.max ?? MAX_PER_RUN, 10);
+  const due = await prisma.lead.findMany({
+    where: {
+      status: { notIn: ["won", "lost", "dormant"] },
+      nextActionAt: { not: null, lte: new Date() },
+    },
+    orderBy: { nextActionAt: "asc" },
+    take: max,
+  });
+
+  const result = { due: due.length, drafted: 0, gated: 0, failed: 0, skipped: [] as string[] };
+  for (const lead of due) {
+    const res = await draftOutreach(lead.id);
+    if (!res.ok) {
+      result.failed++;
+      result.skipped.push(`${lead.name}: ${res.error}`);
+      continue;
+    }
+    if (res.gated) result.gated++;
+    else result.drafted++;
+  }
+  console.log(
+    `[leadEngine] due ${result.due} · drafted ${result.drafted} · proposed ${result.gated} · failed ${result.failed}`
+  );
+  return result;
+}
+
+// ── 4. INBOUND CAPTURE ───────────────────────────────────────────────
+
+/**
+ * A lead that arrived on its own. This is what makes "instagram" and "website"
+ * real values rather than enum decoration.
+ *
+ * UNTRUSTED INPUT — this is reachable from a public form. Everything is length-
+ * capped and directive-defused before it can reach a prompt, and it creates a
+ * Lead and nothing else: no autonomous reply, no outward action.
+ */
+export async function captureInboundLead(input: {
+  name: string;
+  email?: string;
+  phone?: string;
+  sport?: string;
+  message?: string;
+  source?: string;
+}): Promise<{ ok: boolean; leadId?: string; error?: string }> {
+  const { defuseDirectives } = await import("../llm/directiveParser.ts");
+  const clean = (s: string | undefined, max: number) =>
+    s ? defuseDirectives(String(s).slice(0, max)).trim() : undefined;
+
+  const name = clean(input.name, 120);
+  if (!name) return { ok: false, error: "A lead needs a name." };
+
+  const email = clean(input.email, 200);
+  // Don't create a duplicate when someone submits the form twice.
+  const existing = email ? await prisma.lead.findFirst({ where: { email }, select: { id: true } }) : null;
+  if (existing) {
+    await prisma.lead.update({
+      where: { id: existing.id },
+      data: { nextAction: "They wrote in again — reply", nextActionAt: new Date() },
+    });
+    return { ok: true, leadId: existing.id };
+  }
+
+  const lead = await addLead({
+    name,
+    email,
+    phone: clean(input.phone, 40),
+    sport: clean(input.sport, 60),
+    source: (LEAD_SOURCES as readonly string[]).includes(input.source ?? "") ? input.source : "website",
+    notes: clean(input.message, 2000),
+    nextAction: "Reply — they reached out first",
+    nextActionAt: new Date(),
+  });
+
+  // An inbound lead is the rarest event in this business. It is a decision,
+  // it is time-critical, and it should reach the phone immediately.
+  try {
+    const { surfaceSignal } = await import("../core/bridge.ts");
+    await surfaceSignal({
+      kind: "opportunity",
+      domain: "business",
+      sourceType: "inbound_lead",
+      sourceId: `lead:${lead.id}`,
+      severity: "attention",
+      title: `New inbound lead — ${lead.name}`,
+      body:
+        `${lead.name}${lead.email ? ` (${lead.email})` : ""} reached out${lead.sport ? ` about ${lead.sport}` : ""}.\n\n` +
+        (lead.notes ? `> ${lead.notes.slice(0, 500)}\n\n` : "") +
+        `They came to you. Reply today — response time is the whole conversion lever at this stage.`,
+      actions: [{ label: "Draft a reply", action: "draft_outreach", payload: { leadId: lead.id } }],
+    });
+  } catch {
+    /* the lead is captured either way */
+  }
+  return { ok: true, leadId: lead.id };
+}

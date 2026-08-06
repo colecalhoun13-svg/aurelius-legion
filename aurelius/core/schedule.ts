@@ -45,7 +45,7 @@ const DISABLED_KEY = "schedule_disabled";
 // Exported for the cockpit's spine-health strip (final council): the roster
 // of claimed jobs IS the list of rows the instrument draws.
 export const ONCE_PER_DAY = new Set([
-  "rss_ingest", "market_pulse", "schedule_protection", "morning_briefing", "inbox_triage",
+  "rss_ingest", "market_pulse", "schedule_protection", "morning_briefing", "inbox_triage", "outreach_sweep",
   "initiative_pulse", "midday_check", "nightly_debrief", "weekend_pulse",
   "persona_observer", "weekly_planning", "freshness_sweep", "weekly_scoreboard",
   "capability_gaps", "decision_curriculum", "curriculum_ingest", "db_backup",

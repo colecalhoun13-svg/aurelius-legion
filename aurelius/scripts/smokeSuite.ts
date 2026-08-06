@@ -1394,6 +1394,67 @@ async function main() {
     else process.env.LLM_MONTHLY_BUDGET_USD = priorBudget;
   }
 
+  console.log("── lead acquisition: the door into the pipeline ──");
+  {
+    // The council's unanimous finding: Lead→...→Payment is proven and STEP 1
+    // does not exist. Every caller of addLead was Cole typing; LEAD_SOURCES
+    // offered "instagram" and "website" with no code that could produce them.
+    const { importWarmList, captureInboundLead, runOutreachSweep, draftOutreach } =
+      await import("../crm/leadEngine.ts");
+
+    const warm = await importWarmList([
+      { name: `${TAG} Warm One`, email: `${TAG}one@example.com`, context: "trained him two years", relationship: "former athlete" },
+      { name: `${TAG} Warm Two`, context: "his mum coached with me" },
+      { name: "" },
+    ]);
+    check("the warm list imports the people Cole already knows", warm.created === 2 && warm.skipped === 1);
+
+    const again = await importWarmList([{ name: `${TAG} Warm One`, email: `${TAG}one@example.com` }]);
+    check("re-pasting the same list doesn't duplicate anyone", again.created === 0 && again.skipped === 1);
+
+    const imported = await prisma.lead.findMany({ where: { name: { startsWith: TAG } } });
+    check("every imported lead gets a follow-up date immediately (a list is not a pipeline)",
+      imported.length === 2 && imported.every((l) => l.nextActionAt !== null && !!l.nextAction));
+
+    // Inbound: the values that previously had no producer.
+    const inbound = await captureInboundLead({
+      name: `${TAG} Inbound`, email: `${TAG}in@example.com`, sport: "soccer",
+      message: "saw your stuff, my daughter needs speed work",
+    });
+    check("an inbound lead can arrive without Cole typing it", inbound.ok && !!inbound.leadId);
+    const inboundLead = await prisma.lead.findUnique({ where: { id: inbound.leadId! } });
+    check("inbound leads carry a real source, not an enum with no producer",
+      inboundLead?.source === "website" && inboundLead?.nextActionAt !== null);
+    const dupe = await captureInboundLead({ name: `${TAG} Inbound`, email: `${TAG}in@example.com` });
+    check("submitting the form twice doesn't create a second lead", dupe.leadId === inbound.leadId);
+    check("an inbound lead reaches the phone as a decision",
+      (await prisma.bridgeSignal.count({ where: { sourceType: "inbound_lead", sourceId: `lead:${inbound.leadId}` } })) === 1);
+
+    // Drafting is INWARD and keyless-honest: no engine here, so it must refuse
+    // rather than write an error into a message addressed to a real person.
+    const drafted = await draftOutreach(imported[0]!.id);
+    check("outreach refuses to draft error text at a real human (hard rule 3)", drafted.ok === false);
+
+    const sweep = await runOutreachSweep({});
+    check("the sweep finds what's due and is bounded to protect review capacity",
+      sweep.due > 0 && sweep.due <= 3);
+
+    // outreach.draft must be INWARD-grantable; outreach.send must never be.
+    const { ACTION_CLASSES } = await import("../autonomy/actionClasses.ts");
+    const draftClass = ACTION_CLASSES.find((c: any) => c.key === "outreach.draft");
+    const sendClass = ACTION_CLASSES.find((c: any) => c.key === "outreach.send");
+    check("drafting outreach is inward (it only writes a Gmail draft)", draftClass?.tier === "inward");
+    check("sending outreach stays outward and non-grantable", sendClass?.tier === "outward");
+    const { hasActionFinalizer } = await import("../autonomy/actionRegistry.ts");
+    const { registerAllActions } = await import("../autonomy/registerActions.ts");
+    registerAllActions();
+    check("outreach.draft has a real finalizer (not a dead toggle on the dial)",
+      hasActionFinalizer("outreach.draft") === true);
+
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["inbound_lead", "outreach_draft"] } } });
+    await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+  }
+
   console.log("── the badge: receipts are not decisions ──");
   {
     const { needsDecision, surfaceSignal, AWAITING_DECISION } = await import("../core/bridge.ts");
