@@ -276,6 +276,33 @@ export async function runOutreachSweep(opts: { max?: number } = {}): Promise<{
  * capped and directive-defused before it can reach a prompt, and it creates a
  * Lead and nothing else: no autonomous reply, no outward action.
  */
+/**
+ * Resolve a short public `ref` to the angle that earned the lead.
+ *
+ * ATTRIBUTION IS THE POINT OF THE RESULTS LOOP. `Lead.angleId` existed but
+ * inbound capture never set it, so the only way an angle got credit was Cole
+ * remembering which post produced which stranger — i.e. never. A ref is the
+ * first 8 characters of a draft id or an angle id, short enough to live in a
+ * link. A draft resolves to the angle it was written from, so credit lands on
+ * the idea rather than the individual post.
+ *
+ * Ambiguous or unknown refs resolve to null and the lead is still captured —
+ * losing a lead over a bad tracking code would be the worst possible trade.
+ */
+export async function resolveRef(ref: string | undefined): Promise<string | null> {
+  const clean = (ref ?? "").trim().replace(/[^a-zA-Z0-9]/g, "").slice(0, 30);
+  if (clean.length < 6) return null;
+  const drafts = await prisma.contentDraft
+    .findMany({ where: { id: { startsWith: clean } }, select: { angleId: true }, take: 2 })
+    .catch(() => []);
+  if (drafts.length === 1) return drafts[0]!.angleId;
+  const angles = await prisma.marketingAngle
+    .findMany({ where: { id: { startsWith: clean } }, select: { id: true }, take: 2 })
+    .catch(() => []);
+  if (angles.length === 1) return angles[0]!.id;
+  return null;
+}
+
 export async function captureInboundLead(input: {
   name: string;
   email?: string;
@@ -283,6 +310,8 @@ export async function captureInboundLead(input: {
   sport?: string;
   message?: string;
   source?: string;
+  /** Short code from the link they came through — see resolveRef. */
+  ref?: string;
 }): Promise<{ ok: boolean; leadId?: string; error?: string }> {
   const { defuseDirectives } = await import("../llm/directiveParser.ts");
   const clean = (s: string | undefined, max: number) =>
@@ -292,12 +321,20 @@ export async function captureInboundLead(input: {
   if (!name) return { ok: false, error: "A lead needs a name." };
 
   const email = clean(input.email, 200);
+  // Which idea earned them. Resolved before the dedup branch so a second
+  // submission through a different post still records the newer attribution.
+  const angleId = await resolveRef(input.ref).catch(() => null);
+
   // Don't create a duplicate when someone submits the form twice.
   const existing = email ? await prisma.lead.findFirst({ where: { email }, select: { id: true } }) : null;
   if (existing) {
     await prisma.lead.update({
       where: { id: existing.id },
-      data: { nextAction: "They wrote in again — reply", nextActionAt: new Date() },
+      data: {
+        nextAction: "They wrote in again — reply",
+        nextActionAt: new Date(),
+        ...(angleId ? { angleId } : {}),
+      },
     });
     return { ok: true, leadId: existing.id };
   }
@@ -312,6 +349,11 @@ export async function captureInboundLead(input: {
     nextAction: "Reply — they reached out first",
     nextActionAt: new Date(),
   });
+  // The chain angle → lead → client → payment only closes if this hop happens.
+  // Best-effort: a tracking write must never cost the lead itself.
+  if (angleId) {
+    await prisma.lead.update({ where: { id: lead.id }, data: { angleId } }).catch(() => {});
+  }
 
   // An inbound lead is the rarest event in this business. It is a decision,
   // it is time-critical, and it should reach the phone immediately.

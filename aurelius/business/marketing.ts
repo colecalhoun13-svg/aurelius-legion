@@ -274,7 +274,13 @@ export async function recordOutcome(input: {
  * false. Anything under 10 uses is reported as too early to read.
  */
 export async function anglePerformance() {
-  const angles = await prisma.marketingAngle.findMany({ orderBy: { createdAt: "desc" } });
+  const angles = await prisma.marketingAngle.findMany({
+    orderBy: { createdAt: "desc" },
+    // LEADS ARE THE OUTCOME THAT MATTERS. Replies are counted by hand and so
+    // get counted rarely; a lead attributed through an intake ref lands on its
+    // own, which makes it the one number here that can be trusted to be complete.
+    include: { _count: { select: { leads: true } } },
+  });
   const rows = angles.map((a) => {
     const enough = a.timesUsed >= 10;
     return {
@@ -286,12 +292,17 @@ export async function anglePerformance() {
       timesUsed: a.timesUsed,
       replies: a.replies,
       conversions: a.conversions,
+      leads: a._count.leads,
       replyRate: enough ? Math.round((a.replies / a.timesUsed) * 100) : null,
-      verdict: !a.timesUsed
-        ? "never used"
-        : enough
-          ? `${Math.round((a.replies / a.timesUsed) * 100)}% reply rate over ${a.timesUsed} sends`
-          : `too early to read — ${a.replies}/${a.timesUsed} so far (needs 10+ to mean anything)`,
+      verdict: a._count.leads > 0
+        // One real lead outranks any rate. It is the only number here that
+        // arrived on its own rather than being remembered and typed in.
+        ? `${a._count.leads} lead${a._count.leads === 1 ? "" : "s"} came from this${a.timesUsed ? ` over ${a.timesUsed} sends` : ""}`
+        : !a.timesUsed
+          ? "never used"
+          : enough
+            ? `${Math.round((a.replies / a.timesUsed) * 100)}% reply rate over ${a.timesUsed} sends, no leads yet`
+            : `too early to read — ${a.replies}/${a.timesUsed} so far (needs 10+ to mean anything)`,
     };
   });
   const totalUses = rows.reduce((s, r) => s + r.timesUsed, 0);

@@ -1610,6 +1610,47 @@ async function main() {
     check("an inbound lead reaches the phone as a decision",
       (await prisma.bridgeSignal.count({ where: { sourceType: "inbound_lead", sourceId: `lead:${inbound.leadId}` } })) === 1);
 
+    // ATTRIBUTION. Lead.angleId existed but inbound capture never set it, so
+    // the only way an angle got credit was Cole remembering which post produced
+    // which stranger — i.e. never, which quietly broke the whole results loop.
+    {
+      const { resolveRef } = await import("../crm/leadEngine.ts");
+      const { anglePerformance } = await import("../business/marketing.ts");
+      const angle = await prisma.marketingAngle.create({
+        data: { title: `${TAG} refangle`, hypothesis: "h", audience: "parent", grounding: "external" },
+      });
+      const post = await prisma.contentDraft.create({
+        data: { body: `${TAG} a post long enough to be real`, angleId: angle.id, channel: "instagram" },
+      });
+
+      check("a ref from a POST resolves to the ANGLE it was written from — credit lands on the idea",
+        (await resolveRef(post.id.slice(0, 8))) === angle.id);
+      check("a ref pointing straight at an angle also resolves", (await resolveRef(angle.id.slice(0, 8))) === angle.id);
+      check("an unknown ref resolves to null rather than guessing", (await resolveRef("zzzzzzzz")) === null);
+      check("a too-short ref is ignored", (await resolveRef("ab")) === null);
+
+      const attributed = await captureInboundLead({
+        name: `${TAG} FromPost`, email: `${TAG}post@example.com`, ref: post.id.slice(0, 8),
+      });
+      const row = await prisma.lead.findUnique({ where: { id: attributed.leadId! } });
+      check("a lead arriving through a post's link is attributed to its angle", row?.angleId === angle.id);
+
+      // A bad tracking code must never cost the lead itself.
+      const junkRef = await captureInboundLead({ name: `${TAG} JunkRef`, email: `${TAG}junk@example.com`, ref: "!!!!!!" });
+      check("a broken ref still captures the lead", junkRef.ok === true);
+
+      // One real lead outranks any hand-typed rate.
+      const perf = (await anglePerformance()).angles.find((a) => a.id === angle.id)!;
+      check("angle performance counts leads, the one number that arrives on its own", perf.leads === 1);
+      check("and a real lead outranks a reply rate in the verdict", /1 lead came from this/i.test(perf.verdict));
+
+      // Clean up ONLY what this block made. A blanket TAG delete here wiped
+      // the warm-list leads the outreach sweep asserts on further down.
+      await prisma.lead.deleteMany({ where: { id: { in: [attributed.leadId!, junkRef.leadId!] } } });
+      await prisma.contentDraft.deleteMany({ where: { id: post.id } });
+      await prisma.marketingAngle.deleteMany({ where: { id: angle.id } });
+    }
+
     // Drafting is INWARD and keyless-honest: no engine here, so it must refuse
     // rather than write an error into a message addressed to a real person.
     const drafted = await draftOutreach(imported[0]!.id);

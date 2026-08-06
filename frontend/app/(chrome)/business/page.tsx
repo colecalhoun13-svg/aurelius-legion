@@ -188,6 +188,12 @@ export default function BusinessPage() {
         <p className="text-xs text-aurelius-text/50 mt-1">
           The remote coaching business you own. Athletes at the gym aren&apos;t here — those are your employer&apos;s.
         </p>
+        {/* The front door, from the inside. /start is public and outside the
+            app lock — this is how Cole finds it, checks what a stranger sees,
+            and grabs the link to put anywhere. */}
+        <a href="/start" target="_blank" rel="noreferrer" className="text-[11px] text-aurelius-gold/60 hover:text-aurelius-gold mt-1 inline-block">
+          see your front door (/start) — the page prospects land on →
+        </a>
       </header>
 
       {error && (
@@ -1102,6 +1108,20 @@ function ContentQueue({ drafts, state, onChange }: { drafts: ContentDraft[]; sta
                         >
                           discard
                         </button>
+                      </div>
+                      {/* The link that closes the loop. Without a ref in the
+                          post, a lead who arrives from it is untraceable and
+                          the angle never gets credit — which is the whole
+                          reason his own results can outrank generic research. */}
+                      <div className="text-[10px] text-aurelius-text/50">
+                        Put this link in the post so the lead traces back to this idea:{" "}
+                        <code
+                          className="text-aurelius-gold/70 cursor-pointer"
+                          onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/start?ref=${d.id.slice(0, 8)}`)}
+                          title="click to copy"
+                        >
+                          /start?ref={d.id.slice(0, 8)}
+                        </code>
                       </div>
                       {d.status === "staged" && (
                         <p className="text-[10px] text-amber-200/70">
