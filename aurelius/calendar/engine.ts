@@ -13,6 +13,7 @@
 
 import { prisma } from "../core/db/prisma.ts";
 import { runTraced } from "../core/trace.ts";
+import { resolveOperatorId } from "../knowledge/store.ts";
 import {
   calendarFetch,
   isCalendarConnected,
@@ -52,6 +53,29 @@ function eventTimes(e: GoogleEvent): { startAt: Date; endAt: Date; allDay: boole
 
 export async function syncCalendar(opts: { daysBack?: number; daysAhead?: number } = {}) {
   if (!(await isCalendarConnected())) {
+    // Was a bare early return. The 15-min poller wraps this in runTraced with
+    // kind "poll", so a token that expired overnight produced status "ok"
+    // forever while the calendar was dead and nothing ever told Cole. A
+    // disconnect is now surfaced once (deduped by day) so it reaches him.
+    try {
+      const { surfaceSignal } = await import("../core/bridge.ts");
+      await surfaceSignal({
+        kind: "risk",
+        domain: "personal",
+        sourceType: "calendar_sync",
+        sourceId: `calendar_disconnected:${new Date().toLocaleDateString("en-CA")}`,
+        severity: "attention",
+        title: "Calendar disconnected — Aurelius is flying blind on your schedule",
+        body:
+          "The Google refresh token is no longer valid, so the calendar has stopped syncing. Until it's " +
+          "reconnected the briefing has no schedule, and anything that reasons about your free time is " +
+          "refusing to guess rather than inventing availability.\n\n" +
+          "Fix: reconnect at /api/calendar/auth. If this keeps happening weekly, the OAuth consent screen " +
+          "is still in Testing mode — publishing it stops the seven-day expiry.",
+      });
+    } catch {
+      /* the sync's honesty must not depend on the Bridge being up */
+    }
     return { ok: false as const, reason: "not_connected" as const };
   }
   // Prune guard (go-live council): anything created/updated after this moment
@@ -136,6 +160,12 @@ export async function syncCalendar(opts: { daysBack?: number; daysAhead?: number
   } catch (err) {
     console.warn("[calendar] conflict scan failed (non-fatal):", (err as any)?.message ?? err);
   }
+
+  // Record that a sync actually completed. This is what lets
+  // assertCalendarUsable tell "no events on the calendar" apart from "the sync
+  // stopped running three days ago" — two states that look identical in the
+  // CalendarEvent table and mean opposite things for availability.
+  await markSyncSucceeded();
 
   return { ok: true as const, upserted, removed, window: { from: timeMin, to: timeMax } };
 }
@@ -229,20 +259,98 @@ export type DayAvailability = {
   freeMinutes: number;
 };
 
-export async function findAvailability(opts: {
-  days?: number;
-  minMinutes?: number;
-  dayStartHour?: number;
-  dayEndHour?: number;
-} = {}): Promise<DayAvailability[]> {
+/** Where the last SUCCESSFUL sync is recorded. System scope — never embedded. */
+const SYNC_MARKER = { scope: "system", key: "calendar_last_sync_ok" };
+
+/** Sync runs every 15 min; two hours of silence means it is not running. */
+const MAX_SYNC_AGE_MS = 2 * 60 * 60 * 1000;
+
+async function markSyncSucceeded(): Promise<void> {
+  try {
+    const opId = await resolveOperatorId("global");
+    if (!opId) return;
+    await prisma.knowledgeEntry.upsert({
+      where: { operatorId_scope_key: { operatorId: opId, ...SYNC_MARKER } },
+      update: { value: new Date().toISOString() as any, updatedBy: "calendar" },
+      create: {
+        operatorId: opId,
+        ...SYNC_MARKER,
+        value: new Date().toISOString() as any,
+        sourceType: "calendar_sync",
+        createdBy: "system",
+      },
+    });
+  } catch {
+    /* the marker is diagnostic; never fail a good sync over it */
+  }
+}
+
+/**
+ * THE PHANTOM-AVAILABILITY GUARD.
+ *
+ * `findAvailability` reads the LOCAL CalendarEvent table, not Google. So when
+ * the OAuth refresh token expires — which NORTH_STAR §4 flags as the most
+ * likely recurring failure, roughly weekly while the consent screen is in
+ * Testing mode — the table simply stops being updated and every hour looks
+ * free. Schedule-protection then places holds against availability that does
+ * not exist, confidently, forever, while the flight recorder says "ok".
+ *
+ * Guarding at the call sites was tried and is why this bug exists:
+ * `planning/tools.ts` remembered to check `isCalendarConnected()` and
+ * `scheduleProtection.ts` did not. So the check lives HERE, where it cannot be
+ * forgotten, and it checks freshness as well as connection — a connected
+ * calendar whose sync died three hours ago is exactly as misleading as a
+ * disconnected one.
+ *
+ * Throws by design. A caller that genuinely wants graceful degradation catches
+ * it (planning does); a caller that must not act on fiction lets it propagate
+ * to runTraced, which pages Cole.
+ */
+export async function assertCalendarUsable(): Promise<void> {
+  const { isCalendarConnected } = await import("./googleAuth.ts");
+  if (!(await isCalendarConnected())) {
+    throw new Error(
+      "Calendar is not connected, so availability is unknown — an empty schedule here would be fiction, not free time. " +
+        "Reconnect at /api/calendar/auth."
+    );
+  }
+  const opId = await resolveOperatorId("global").catch(() => null);
+  if (!opId) return; // can't verify freshness; connection check stands
+  const row = await prisma.knowledgeEntry
+    .findUnique({ where: { operatorId_scope_key: { operatorId: opId, ...SYNC_MARKER } } })
+    .catch(() => null);
+  const last = row?.value ? new Date(String(row.value)) : null;
+  if (!last || Number.isNaN(last.getTime())) return; // never synced yet — connection check stands
+  const age = Date.now() - last.getTime();
+  if (age > MAX_SYNC_AGE_MS) {
+    throw new Error(
+      `Calendar last synced ${Math.round(age / 3_600_000)}h ago (sync runs every 15 min), so the local schedule is stale ` +
+        `and every hour would read as free. Refusing to compute availability from it. Most likely the Google refresh token ` +
+        `expired — reconnect at /api/calendar/auth, and publish the OAuth consent screen to stop it recurring weekly.`
+    );
+  }
+}
+
+/**
+ * The slot arithmetic, as a PURE function over events you already have.
+ *
+ * Split out from `findAvailability` so the guard and the maths are separable:
+ * the guard belongs on the path that reads the live table (where a stale
+ * calendar means fiction), while the arithmetic is deterministic and can be
+ * verified against known events without any credential at all. The alternative
+ * was an opt-out flag on findAvailability, and an opt-out is precisely how the
+ * phantom-availability bug would come back.
+ */
+export function computeAvailability(
+  events: Array<{ startAt: Date; endAt: Date; raw?: unknown }>,
+  opts: { days?: number; minMinutes?: number; dayStartHour?: number; dayEndHour?: number; from?: Date } = {}
+): DayAvailability[] {
   const days = Math.min(opts.days ?? 7, 30);
   const minMinutes = opts.minMinutes ?? 60;
   const startHour = opts.dayStartHour ?? 8;
   const endHour = opts.dayEndHour ?? 21;
 
-  const now = new Date();
-  const horizon = new Date(now.getTime() + days * 86400_000);
-  const events = await listEventsRange(new Date(now.getTime() - 86400_000), horizon);
+  const now = opts.from ?? new Date();
 
   const out: DayAvailability[] = [];
   for (let i = 0; i < days; i++) {
@@ -296,6 +404,29 @@ export async function findAvailability(opts: {
     });
   }
   return out;
+}
+
+/**
+ * Availability from the LIVE local calendar mirror — guarded.
+ *
+ * The guard lives here, not at the call sites, because call-site guarding is
+ * exactly what failed: `planning/tools.ts` remembered `isCalendarConnected()`
+ * and `scheduleProtection.ts` did not, so schedule-protection placed holds
+ * against a schedule that had stopped syncing. Anything reading real
+ * availability now passes through this door.
+ */
+export async function findAvailability(opts: {
+  days?: number;
+  minMinutes?: number;
+  dayStartHour?: number;
+  dayEndHour?: number;
+} = {}): Promise<DayAvailability[]> {
+  await assertCalendarUsable();
+  const days = Math.min(opts.days ?? 7, 30);
+  const now = new Date();
+  const horizon = new Date(now.getTime() + days * 86400_000);
+  const events = await listEventsRange(new Date(now.getTime() - 86400_000), horizon);
+  return computeAvailability(events, { ...opts, from: now });
 }
 
 // A protected focus/deep-work block — the thing worth defending from double-booking.

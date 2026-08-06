@@ -49,15 +49,11 @@ async function researchFor(query: string): Promise<{ text: string; grounding: st
   try {
     const { runResearch } = await import("../research/researchEngine.ts");
     const res: any = await runResearch({
-      // Context corrected 2026-08-05. This used to say "growing an in-person
-      // practice at a local gym", which aimed every business research pass at
-      // the wrong business — Cole is EMPLOYED at that gym and its athletes
-      // aren't his to sell to. The subject is the remote business he owns.
-      query:
-        `${query} — context: a strength coach specialising in high-school and college athletes. ` +
-        `He is employed full-time at a gym (those athletes belong to the employer, not to him) and is ` +
-        `building his OWN remote/online coaching business alongside it. The remote business currently has ` +
-        `zero clients and no inbound lead flow. Answer for the remote business, not the gym job.`,
+      // Context DERIVED, not written here. This literal was corrected once
+      // already (2026-08-05) and the correction missed proposeOffer's separate
+      // copy, which kept aiming at the employer's athletes for another day.
+      // One derivation now serves every prompt in this file.
+      query: `${query} — context: ${await businessResearchContext()}`,
       operator: "business",
       depth: "deep",
       subject: query.slice(0, 80),
@@ -281,12 +277,23 @@ export async function recordGapAnswer(key: string, answer: string): Promise<{ ok
  * model that can see the gaps stops filling them in.
  */
 export async function businessContextBlock(): Promise<string> {
-  const facts = await knownFacts();
-  if (facts.length === 0) return "";
-  const gaps = await openGaps();
+  // The one line that must survive an empty or unreadable fact table. Every
+  // other sentence here is derived; this one is a boundary, and a boundary
+  // that disappears when a query fails is not a boundary. `proposeOffer`
+  // spent a day telling the model to grow "the high-school athletes at his
+  // gym" because the employment rule lived only in prose, not in the prompt.
+  const BOUNDARY =
+    "HARD BOUNDARY — Cole is EMPLOYED at a gym. The athletes he coaches there belong to his " +
+    "employer. They are NEVER the audience for an offer, price, campaign, or outreach, however " +
+    "commercially sensible that looks. Every commercial idea serves his own REMOTE business.";
+
+  const facts = await knownFacts().catch(() => []);
+  if (facts.length === 0) return BOUNDARY;
+  const gaps = await openGaps().catch(() => []);
   const lines = [
     "═══ COLE'S BUSINESS — CONFIRMED FACTS ═══",
     "Everything below came from Cole directly. Reason FROM it; never contradict it, never re-derive a generic persona.",
+    BOUNDARY,
     "",
     ...facts.map((f) => `• ${f.key.replace(/_/g, " ")}: ${f.value}`),
   ];
@@ -298,6 +305,18 @@ export async function businessContextBlock(): Promise<string> {
     );
   }
   return lines.join("\n");
+}
+
+/** One line of the same truth, for search queries rather than prompts. */
+export async function businessResearchContext(): Promise<string> {
+  const facts = await knownFacts().catch(() => []);
+  const get = (k: string) => facts.find((f) => f.key === k)?.value ?? "";
+  const audience = get("remote_audience") || get("ideal_client") || "high-school and college athletes";
+  return (
+    `a strength coach building his OWN remote/online coaching business serving ${audience.slice(0, 200)}. ` +
+    `He is employed full-time at a gym whose athletes are NOT his to sell to. The remote business has ` +
+    `no clients and no inbound lead flow yet. Answer for the remote business, never the gym job.`
+  );
 }
 
 /** Where the business actually stands — facts, and what would sharpen them. */
@@ -335,8 +354,12 @@ export async function proposeOffer(): Promise<
 
   // Research-informed, not improvised (Cole's standard): the draft sees how
   // comparable coaches actually structure this before it proposes anything.
+  // Was: "...offers for high-school athletes at a local gym". That researched
+  // how to sell to Cole's employer's athletes. The subject comes from the
+  // facts now, so it tracks the business rather than a stale literal.
   const evidence = await researchFor(
-    "how sports performance coaches structure offers for high-school athletes at a local gym — formats, session cadence, what parents respond to"
+    "how independent coaches structure and price REMOTE/online athletic coaching offers — " +
+      "formats, check-in cadence, what buyers respond to when they never meet the coach in person"
   );
   const response = await runLLM({
     taskType: "chat",
@@ -344,12 +367,15 @@ export async function proposeOffer(): Promise<
     noReuse: true,
     omitToolCatalog: true,
     input: `
+${await businessContextBlock()}
+
 Draft ONE concrete offer for Cole's coaching business, from the confirmed facts below.
 
 Rules:
 - Ground every element in a stated fact. Where you must assume something, mark it "ASSUMPTION:" on its own line — do not smuggle guesses in as fact.
 - Cole is a STANDARD-SETTER, not a promise/guarantee coach: state what's required and why, never "we'll get you X".
-- Serve the NEAR-TERM goal (growing the high-school athletes at his gym), not an online fantasy.
+- Serve the REMOTE business described in the context above. Never write an offer aimed at the
+  athletes at the gym that employs him — those are his employer's clients, not his.
 - Lead with the buyer's job, not "training". The measured metrics are the proof — use them.
 - His method edge (athletes who understand and can leverage their own bodies, not compliance-followers) must be the spine of the promise, not a footnote.
 - Parents typically buy at this age; write the promise so both athlete and parent recognise it.

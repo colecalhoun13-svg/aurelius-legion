@@ -71,6 +71,17 @@ const PRICES: Record<string, ModelPrice> = {
   "claude-3-5-sonnet": { inPer1M: 3, outPer1M: 15 },
 
   // ── OpenAI ──
+  // The router's ACTUAL model IDs (llm/router.ts:117,136-137,676,685) are the
+  // gpt-5.4 family. This table only carried gpt-4o/gpt-4.1, so priceFor()
+  // returned null for every OpenAI call — and OpenAI is both the `structured`
+  // tier and the primary failover target. The null-not-zero rule meant those
+  // calls reported as UNPRICED rather than free, which is the honest failure,
+  // but the budget alarm was structurally blind to a large share of spend.
+  // Found by the 2026-08-06 council. Rates below are estimates pending
+  // verification — see the confidence note on PRICES_AS_OF.
+  "gpt-5.4-mini": { inPer1M: 0.4, outPer1M: 1.6 },
+  "gpt-5.4": { inPer1M: 2.5, outPer1M: 10 },
+  "gpt-5": { inPer1M: 2.5, outPer1M: 10 },
   "gpt-4o-mini": { inPer1M: 0.15, outPer1M: 0.6 },
   "gpt-4o": { inPer1M: 2.5, outPer1M: 10 },
   "gpt-4.1-mini": { inPer1M: 0.4, outPer1M: 1.6 },

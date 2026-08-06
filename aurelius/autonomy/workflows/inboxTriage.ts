@@ -14,6 +14,7 @@
 import { prisma } from "../../core/db/prisma.ts";
 import { gmailAuth, listInbox, readMessage, draftReply, type InboxItem } from "../../gmail/engine.ts";
 import { runLLM } from "../../llm/runLLM.ts";
+import { engineUnavailableText } from "../../llm/nonAnswer.ts";
 import { executeAction } from "../executor.ts";
 
 const ACTION_CLASS = "inbox.triage_draft";
@@ -109,6 +110,21 @@ export async function runInboxTriage(opts: { max?: number } = {}): Promise<Inbox
               `From: ${defuseDirectives(full.from)}\nSubject: ${defuseDirectives(full.subject)}\n\n${defuseDirectives(full.body.slice(0, 4000))}`,
           });
           const replyBody = (draft.text ?? "").trim();
+
+          // HARD RULE 3 — never file error text as content. This path had no
+          // guard, which was survivable only because no key was funded and the
+          // job never ran. With a live key it is the highest-consequence gap in
+          // the repo: a rate-limit, a 529, or a "Missing ANTHROPIC_API_KEY"
+          // becomes the body of a Gmail draft addressed to a real person under
+          // Cole's name, and the Bridge card presents it as a reply to confirm.
+          // Refusing here loses one draft; not refusing loses a prospect.
+          if (!replyBody || replyBody.length < 12 || engineUnavailableText(replyBody)) {
+            throw new Error(
+              `No usable draft for "${item.subject}" — the model returned an error or empty text. ` +
+                `Skipped rather than filing it as a reply.`
+            );
+          }
+
           return {
             title: `Reply drafted — ${item.subject}`,
             // Honest button (Outsider's spec): say what Confirm actually DOES.

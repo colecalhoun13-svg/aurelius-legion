@@ -661,6 +661,25 @@ const FALLBACK_ORDER = ["anthropic", "openai", "groq", "gemini", "deepseek", "xa
 // six providers keep their task types (core architecture); groq/deepseek/xai
 // answer in prose. Failover preserves the class: a directive-bearing turn
 // never silently lands on a prose-only model mid-conversation.
+/**
+ * Every model this router can reach, from any path — tier, alias, or failover.
+ *
+ * Exported so the smoke suite can assert each one is PRICED. The 2026-08-06
+ * council found that the whole gpt-5.4 family was absent from the price table,
+ * making the budget alarm blind to the `structured` tier and the primary
+ * failover target. Adding the missing rows fixes today; this list is what stops
+ * it recurring the next time a model ID changes, because the test fails before
+ * anyone notices a suspiciously cheap month.
+ */
+export function routableModels(): string[] {
+  return [
+    ...Object.values(TIERS).map((t) => t.model),
+    ...Object.values(ENGINE_ALIASES).map((a) => a.model),
+    ...Object.values(FALLBACK_MODELS),
+    ...Object.values(FRONTIER_FALLBACK_MODELS),
+  ].filter((m, i, all) => !!m && all.indexOf(m) === i);
+}
+
 export const DIRECTIVE_CAPABLE = new Set(["anthropic", "openai", "gemini"]);
 // TIER-AWARE FALLBACK (deploy triage). This used to be a flat provider→model
 // map, so a STRATEGIC call that failed over to OpenAI landed on gpt-5.4-mini —

@@ -68,10 +68,29 @@ export async function claimDailyRun(jobName: string, day = localDayKey()): Promi
       console.warn(`[schedule] claim store unreachable for ${jobName} — running unclaimed:`, err?.message ?? err);
       return true;
     }
-    // Someone owns it. Take over only a stale "running" claim (dead process).
+    // Someone owns it. Two claims can be taken over, for different reasons:
+    //
+    //   "running" older than 30 min — a dead process. The original rule.
+    //   "failed"                    — the run threw. This was NOT reclaimable,
+    //     which meant a single transient error (a 529, a cold database, an
+    //     expired token) permanently consumed the day: catch-up would find the
+    //     row present, decline the claim, and the job simply never ran again
+    //     until tomorrow. For the 07:00 briefing that is the whole point of the
+    //     job lost to one bad minute. A failed run is exactly the case that
+    //     SHOULD be retried, and retry is bounded by the day key — at most one
+    //     more attempt per catch-up pass, never a hot loop.
+    //
+    // "done" is deliberately absent: a completed job must never re-fire.
     try {
       const takeover = await prisma.jobRun.updateMany({
-        where: { jobName, day, status: "running", updatedAt: { lt: new Date(Date.now() - 30 * 60_000) } },
+        where: {
+          jobName,
+          day,
+          OR: [
+            { status: "running", updatedAt: { lt: new Date(Date.now() - 30 * 60_000) } },
+            { status: "failed" },
+          ],
+        },
         data: { status: "running" }, // bumps updatedAt — the takeover marker
       });
       return takeover.count === 1;

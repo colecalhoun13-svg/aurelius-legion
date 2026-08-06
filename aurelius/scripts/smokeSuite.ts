@@ -125,7 +125,11 @@ async function main() {
     ],
     skipDuplicates: true,
   });
-  const avail = (await findAvailability({ days: 2, minMinutes: 60 })).find((d) => d.date === calDay);
+  // The MATHS is now tested through the pure function — no credential needed,
+  // and no opt-out flag on the guarded path for the maths to sneak through.
+  const { computeAvailability } = await import("../calendar/engine.ts");
+  const calEvents = await prisma.calendarEvent.findMany({ where: { externalId: { startsWith: TAG } } });
+  const avail = computeAvailability(calEvents, { days: 2, minMinutes: 60 }).find((d) => d.date === calDay);
   check("availability gap math (3 slots, 210 busy min)", avail?.slots.length === 3 && avail?.busyMinutes === 210);
   await prisma.calendarEvent.deleteMany({ where: { externalId: { startsWith: TAG } } });
 
@@ -858,14 +862,32 @@ async function main() {
     const { runScheduleProtection } = await import("../autonomy/workflows/scheduleProtection.ts");
     await revokeAutonomy("calendar.schedule_protection"); // ensure off
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: "schedule_protection" } }); // deterministic: clear dedup state
+    // THE 2026-08-06 COUNCIL'S FINDING: this workflow called findAvailability
+    // with no connection check, so a silently-expired Google token meant it
+    // placed holds against a schedule that had stopped syncing — confidently,
+    // daily, while the trace said "ok". The guard now lives in
+    // findAvailability, so the real path refuses.
+    let spRefused = false;
+    try { await runScheduleProtection({ days: 3, blockMinutes: 60 }); } catch { spRefused = true; }
+    check("schedule-protection refuses to act on a dead calendar (was: placed phantom holds)", spRefused);
+
+    // The gate logic is still proven, on KNOWN availability rather than fiction.
+    const tomorrow = new Date(Date.now() + 86400_000);
+    const dayKey = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+    const fakeAvailability = [{
+      date: dayKey,
+      slots: [{ start: `${dayKey}T09:00:00.000Z`, end: `${dayKey}T12:00:00.000Z`, minutes: 180 }],
+      busyMinutes: 0,
+      freeMinutes: 180,
+    }] as any;
     const beforeEvents = await prisma.calendarEvent.count({ where: { title: "Deep Work (protected)" } });
-    const sp = await runScheduleProtection({ days: 3, blockMinutes: 60 });
+    const sp = await runScheduleProtection({ days: 3, blockMinutes: 60, availability: fakeAvailability });
     const afterEvents = await prisma.calendarEvent.count({ where: { title: "Deep Work (protected)" } });
     check(
       "schedule-protection proposes holds when ungranted, writes no calendar events",
       sp.opportunities >= 1 && sp.gated === sp.opportunities && sp.finalized === 0 && afterEvents === beforeEvents
     );
-    const sp2 = await runScheduleProtection({ days: 3, blockMinutes: 60 }); // rerun: dedup
+    const sp2 = await runScheduleProtection({ days: 3, blockMinutes: 60, availability: fakeAvailability }); // rerun: dedup
     check("schedule-protection dedups — no repeat proposals for already-pending days", sp2.opportunities === 0);
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: "schedule_protection" } });
 
@@ -1229,6 +1251,40 @@ async function main() {
         "research is not aimed at growing Cole's employer",
         !topicList.some((t) => /enrollment at a gym they already work in/i.test(t))
       );
+
+      // ── the aim guard (2026-08-06 council, highest-severity finding) ──
+      // `proposeOffer` kept its OWN hardcoded audience and spent a day telling
+      // the model to grow "the high-school athletes at his gym" — i.e. to sell
+      // to Cole's employer's clients — because the earlier correction patched a
+      // different literal in the same file. These assert the SEAM, not the
+      // strings: the boundary must survive an empty fact table, and no prompt
+      // may carry its own copy of who the business serves.
+      {
+        const { businessContextBlock, businessResearchContext } = await import("../business/positioning.ts");
+        const ctx = await businessContextBlock();
+        check("the employment boundary is in the injected business context",
+          /HARD BOUNDARY/.test(ctx) && /never the audience/i.test(ctx));
+        const research = await businessResearchContext();
+        check("research context is derived and names the remote business, not the gym job",
+          /remote/i.test(research) && /not his to sell to/i.test(research));
+
+        // Scan the PROMPT TEXT, not the comments about it — the comments here
+        // deliberately quote the old string to record what went wrong, and a
+        // naive scan flags its own documentation.
+        const rawSrc = await import("node:fs").then((fs) =>
+          fs.readFileSync(new URL("../business/positioning.ts", import.meta.url), "utf8")
+        );
+        const src = rawSrc
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .split("\n")
+          .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+          .join("\n");
+        check("no prompt in positioning.ts still aims at the gym's athletes",
+          !/growing the high-school athletes at his gym/i.test(src) &&
+          !/offers for high-school athletes at a local gym/i.test(src));
+        check("the retired 'online fantasy' framing is gone (remote IS the business)",
+          !/online fantasy/i.test(src));
+      }
       // resolveTopicsFor is what the weekend pulse actually calls — prove the
       // derived topics beat the generic fallbacks through the real path.
       const { resolveTopicsFor } = await import("../autonomy/pulse.ts");
@@ -1302,6 +1358,22 @@ async function main() {
       Array.isArray(summary.byTaskType) && Array.isArray(summary.byModel) && summary.estimated === true);
     check("every spend figure carries its as-of date (these are estimates)", !!summary.pricesAsOf);
 
+    // EVERY ROUTABLE MODEL MUST BE PRICED. The 2026-08-06 council found the
+    // whole gpt-5.4 family missing from the table — the `structured` tier AND
+    // the primary failover target — so the budget alarm was blind to a large
+    // share of spend. Adding rows fixed that instance; this assertion is what
+    // stops the next model-ID change from silently doing it again.
+    {
+      const { routableModels } = await import("../llm/router.ts");
+      const models = routableModels();
+      const unpriced = models.filter((m) => priceFor(m) === null);
+      check(
+        `every routable model is priced (${models.length} models, 0 unpriced)`,
+        models.length >= 8 && unpriced.length === 0
+      );
+      if (unpriced.length) console.log(`     UNPRICED: ${unpriced.join(", ")}`);
+    }
+
     // Dormant without a budget (hard rule 4) — tracked, but no alarm.
     const priorBudget = process.env.LLM_MONTHLY_BUDGET_USD;
     delete process.env.LLM_MONTHLY_BUDGET_USD;
@@ -1320,6 +1392,58 @@ async function main() {
 
     if (priorBudget === undefined) delete process.env.LLM_MONTHLY_BUDGET_USD;
     else process.env.LLM_MONTHLY_BUDGET_USD = priorBudget;
+  }
+
+  console.log("── funded-key safety: the guards that only matter once it runs ──");
+  {
+    // These three were all latent while no key was funded. They stop being
+    // latent the moment one is, which is why the council put them first.
+
+    // 1. A model error must never become the body of a real Gmail draft.
+    {
+      const { needsReply } = await import("../autonomy/workflows/inboxTriage.ts");
+      const src = await import("node:fs").then((fs) =>
+        fs.readFileSync(new URL("../autonomy/workflows/inboxTriage.ts", import.meta.url), "utf8")
+      );
+      check("inbox triage refuses to file model-error text as a reply (hard rule 3)",
+        /engineUnavailableText\(replyBody\)/.test(src));
+      check("triage still recognises a real reply-worthy message", typeof needsReply === "function");
+    }
+
+    // 2. Availability must never be computed from a dead or stale calendar —
+    //    guarded at the seam, because guarding at call sites is what failed:
+    //    planning/tools.ts checked, scheduleProtection.ts didn't.
+    {
+      const { assertCalendarUsable } = await import("../calendar/engine.ts");
+      let refused = false;
+      let reason = "";
+      try { await assertCalendarUsable(); } catch (err: any) { refused = true; reason = err?.message ?? ""; }
+      check("availability refuses to compute when the calendar isn't connected", refused);
+      check("and the refusal names the fix, not just the symptom", /\/api\/calendar\/auth/.test(reason));
+      const calSrc = await import("node:fs").then((fs) =>
+        fs.readFileSync(new URL("../calendar/engine.ts", import.meta.url), "utf8")
+      );
+      check("findAvailability enforces it itself, so no caller can forget",
+        /export async function findAvailability[\s\S]{0,400}?assertCalendarUsable\(\)/.test(calSrc));
+      check("a silent disconnect now surfaces instead of logging status ok",
+        /calendar_disconnected/.test(calSrc));
+    }
+
+    // 3. A failed daily job must be retryable. It wasn't: finishDailyRun wrote
+    //    "failed" and the takeover query only reclaimed "running", so one 529
+    //    consumed the whole day.
+    {
+      const { claimDailyRun, finishDailyRun } = await import("../core/schedule.ts");
+      const job = `${TAG}_retry`;
+      const day = "2099-01-01";
+      check("first claim of the day wins", (await claimDailyRun(job, day)) === true);
+      check("a second claim while running is refused", (await claimDailyRun(job, day)) === false);
+      await finishDailyRun(job, false, day);
+      check("a FAILED run can be reclaimed and retried", (await claimDailyRun(job, day)) === true);
+      await finishDailyRun(job, true, day);
+      check("a DONE run is never re-fired", (await claimDailyRun(job, day)) === false);
+      await prisma.jobRun.deleteMany({ where: { jobName: job } });
+    }
   }
 
   console.log("── media host: the seam that makes publishing reachable ──");
