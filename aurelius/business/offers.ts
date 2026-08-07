@@ -32,7 +32,7 @@ import { engineUnavailableText } from "../llm/nonAnswer.ts";
 // IMPORTED, not re-derived. This translation was written twice, character-
 // identically, and was wrong in both places — the council found it in both
 // files as one defect. One function means the next edit can't fix half of it.
-import { groundingFromResearch, type Grounding } from "./marketing.ts";
+import { groundingFromResearch, marketSourceCount, type Grounding } from "./marketing.ts";
 
 /** Same vocabulary as Engagement.shape, so a sale needs no translation. */
 export const OFFER_SHAPES = ["monthly", "block", "program"] as const;
@@ -132,9 +132,10 @@ export async function draftOffer(opts: { shape?: OfferShape } = {}): Promise<{
         .slice(0, 6)
         .map((r: any) => ({ title: r.title, url: r.url, source: r.source }));
       // An offer has no "own results" to fall back on — there are no prior
-      // offers to have performed. So it is external-with-sources, or it is a
-      // guess and says so. This is the price Cole would quote a parent.
-      grounding = groundingFromResearch(res?.grounding, sources.length, false);
+      // offers to have performed. So it is market-sourced, or it is a guess and
+      // says so. This is the price Cole would quote a parent, and the keyless
+      // academic tier would otherwise have labelled it "research-backed".
+      grounding = groundingFromResearch(res?.grounding, marketSourceCount(res?.rawResults), false);
     }
   } catch {
     /* research down — draft anyway, labelled as a guess */

@@ -55,6 +55,15 @@ export const AWAITING_DECISION = ["pending", "surfaced"] as const;
  *   RECEIPT  — it reports that work happened. Status "noted": visible in the
  *              feed and the digest, never counted as an outstanding decision.
  */
+/**
+ * How long a still-open signal absorbs repeats of itself.
+ *
+ * A day, because the events this protects against are standing conditions —
+ * an expired token, a dropped mount, an empty pipeline — and Cole should hear
+ * about each one once per day, not once per poll.
+ */
+const DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export function needsDecision(input: {
   kind: string;
   severity?: string;
@@ -77,6 +86,52 @@ export async function surfaceSignal(input: SurfaceSignalInput): Promise<{ id: st
   // forgets the field cannot silently inflate the badge (which is exactly how
   // 460 receipts came to look like 460 decisions).
   const status = data.status ?? (needsDecision({ kind: data.kind, severity, actions: data.actions }) ? "pending" : "noted");
+
+  // ── DEDUP, AT THE ONE PLACE SIGNALS ARE CREATED ──
+  //
+  // The comment above this function promised signals were "surfaced once
+  // (deduped by day)". Nothing did it. `syncCalendar` calls this on every
+  // disconnected tick of a 15-minute poller, and a calendar disconnect scores
+  // 1.0×0.35 + 0.7×0.65 = 0.805 — above the 0.72 push floor. So one expired
+  // Google token produced ~96 badge rows and ~60 Telegram messages a day,
+  // recurring on the ~weekly Testing-mode expiry.
+  //
+  // That is not merely noise: it MUTES THE CHANNEL every other fix depends on.
+  // Outward publish and send confirms were just routed to Telegram so they
+  // would finally ring — into a bot Cole would have muted by day eight.
+  //
+  // The correct guard already existed in core/backup.ts and was not copied.
+  // Copying it to a second call site would have left the third and fourth, so
+  // it lives HERE, where every writer gets it: same (sourceType, sourceId)
+  // still open within the window collapses onto the existing row.
+  //
+  // Deliberately keyed on sourceId being present — a caller that doesn't
+  // identify what a signal is ABOUT gets no dedup, because two anonymous
+  // signals of the same type are not evidence of the same event.
+  if (data.sourceId) {
+    const since = new Date(Date.now() - DEDUP_WINDOW_MS);
+    const existing = await prisma.bridgeSignal.findFirst({
+      where: {
+        sourceType: data.sourceType,
+        sourceId: data.sourceId,
+        createdAt: { gte: since },
+        // Only collapse onto a signal still awaiting Cole. One he already
+        // handled should be allowed to recur — that's a new event, not an echo.
+        status: { in: ["pending", "surfaced", "noted"] },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      // Refresh the body so the row reflects the latest state (a disconnect
+      // that has now lasted six hours should say six hours), and bump nothing
+      // else: no new row, no second push, no badge increment.
+      await prisma.bridgeSignal
+        .update({ where: { id: existing.id }, data: { body: data.body, severity } })
+        .catch(() => {});
+      return { id: existing.id, pushed: false };
+    }
+  }
+
   const signal = await prisma.bridgeSignal.create({
     data: {
       kind: data.kind,

@@ -67,14 +67,44 @@ export function groundingFromResearch(
   hasOwnResults: boolean
 ): Grounding {
   if (researchVerdict === "external" && sourceCount > 0) return "external";
+  // NOTE: `sourceCount` must be the count of MARKET sources — see
+  // marketSourceCount below. Passing the raw source count re-opens the hole
+  // this function was written to close, one tier down.
   // Cole's own performance data is genuinely internal evidence — but only when
   // it exists. With zero sends it must not stand in for research.
   if (hasOwnResults) return "internal";
   return "none";
 }
 
+/**
+ * Sources that are actually evidence about a MARKET.
+ *
+ * The first fix mapped "model-only" to "none" and stopped there, which moved
+ * the lie one tier down instead of closing it. `ACADEMIC_DOMAINS` in
+ * researchEngine.ts includes "business", and the arXiv/PubMed/Semantic
+ * Scholar/OpenAlex tier is KEYLESS — it runs on an Anthropic-only key with no
+ * web search configured. So a run would come back `grounding: "external"`
+ * carrying real URLs, and the honest-looking label "research-backed" would be
+ * printed in gold over Cole's PRICE, sourced from paper abstracts about
+ * adolescent athletes.
+ *
+ * A peer-reviewed paper is excellent evidence about physiology and no evidence
+ * at all about what a parent replies to. For a marketing claim, only the live
+ * web tier counts. When it is absent — which is the default today — the honest
+ * answer is that this is a guess, and the system says so.
+ */
+export function marketSourceCount(rawResults: any[] | undefined): number {
+  return (rawResults ?? []).filter(
+    (r: any) => r?.url && (r.source === "web" || r.source === "serp")
+  ).length;
+}
+
 function groundingNote(g: Grounding, sourceCount: number): string {
-  if (g === "external") return `Grounded in ${sourceCount} retrieved source${sourceCount === 1 ? "" : "s"} (listed below).`;
+  // "(listed below)" was a promise nothing kept — the Business page never
+  // rendered the source list, so the most authoritative-sounding label in the
+  // system pointed at evidence Cole could not open. The links are rendered now;
+  // this sentence stays true only as long as they are.
+  if (g === "external") return `Grounded in ${sourceCount} retrieved source${sourceCount === 1 ? "" : "s"} — links below.`;
   if (g === "internal") return "Grounded in your own corpus and prior results — not external research.";
   return "NOT RESEARCH-BACKED. This is the model's prior, i.e. a plausible guess. Treat it as a hypothesis to test, not a finding.";
 }
@@ -133,7 +163,12 @@ export async function proposeAngles(opts: { count?: number; audience?: string } 
         .filter((r: any) => r.source !== "llm" && r.url)
         .slice(0, 6)
         .map((r: any) => ({ title: r.title, url: r.url, source: r.source }));
-      grounding = groundingFromResearch(res?.grounding, sources.length, !!priorEvidence);
+      // Market sources only — a PubMed abstract is not evidence about buyers.
+      grounding = groundingFromResearch(
+        res?.grounding,
+        marketSourceCount(res?.rawResults),
+        !!priorEvidence
+      );
     }
   } catch {
     /* research down — proceed, and SAY it's a guess */
@@ -329,6 +364,9 @@ export async function anglePerformance() {
       replies: a.replies,
       conversions: a.conversions,
       leads: a._count.leads,
+      // Carried to the UI so "research-backed" is a claim Cole can open and
+      // check, rather than a colour. An unopenable citation is a vibe.
+      sources: Array.isArray(a.sources) ? (a.sources as any[]).slice(0, 6) : [],
       replyRate: enough ? Math.round((a.replies / a.timesUsed) * 100) : null,
       verdict: a._count.leads > 0
         // One real lead outranks any rate. It is the only number here that

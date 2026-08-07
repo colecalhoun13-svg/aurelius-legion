@@ -1414,7 +1414,40 @@ async function main() {
     // why it shipped: with no key at all, research throws and the honest "none"
     // label was the only one anyone ever saw.
     {
-      const { groundingFromResearch } = await import("../business/marketing.ts");
+      const { groundingFromResearch, marketSourceCount } = await import("../business/marketing.ts");
+
+      // ROUND 3 FOUND THE FIRST FIX MOVED THE LIE ONE TIER DOWN. researchEngine's
+      // ACADEMIC_DOMAINS includes "business", and that arXiv/PubMed/S2/OpenAlex
+      // tier is KEYLESS — it runs on an Anthropic-only key. So a run returns
+      // grounding "external" with real URLs, and Cole's PRICE renders in gold as
+      // "research-backed", sourced from paper abstracts about adolescent athletes.
+      const academicOnly = [
+        { url: "https://pubmed.ncbi.nlm.nih.gov/123", source: "openSources", title: "Adolescent athlete adaptation" },
+        { url: "https://arxiv.org/abs/456", source: "openSources", title: "A paper" },
+      ];
+      check("papers are not evidence about a market", marketSourceCount(academicOnly) === 0);
+      check("so a keyless academic run is a guess, not research-backed",
+        groundingFromResearch("external", marketSourceCount(academicOnly), false) === "none");
+      check("live web results DO count as market evidence",
+        marketSourceCount([...academicOnly, { url: "https://x.com/a", source: "web", title: "t" }]) === 1);
+      check("and then it is honestly external",
+        groundingFromResearch("external", 1, false) === "external");
+      // The label promised "(listed below)" over a page that listed nothing.
+      // Comments stripped first — the fix documents the old wording verbatim,
+      // and a naive scan matches the explanation instead of the code. This is
+      // the third assertion in this suite to need it; strip before you scan.
+      const stripComments = (s: string) =>
+        s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/^\s*\*.*$/gm, "");
+      const mkSrcNote = stripComments(
+        (await import("node:fs")).readFileSync(new URL("../business/marketing.ts", import.meta.url), "utf8")
+      );
+      check("the external note no longer promises a list it doesn't render",
+        !/\(listed below\)/.test(mkSrcNote));
+      const pageSrc = (await import("node:fs")).readFileSync(
+        new URL("../../frontend/app/(chrome)/business/page.tsx", import.meta.url), "utf8"
+      );
+      check("and the page actually renders the source links",
+        /a\.sources/.test(pageSrc) && /target="_blank"/.test(pageSrc));
       check("a model prior is NEVER labelled as Cole's own data",
         groundingFromResearch("model-only", 0, false) === "none");
       check("and stays a guess even when research returned prose",
@@ -1504,6 +1537,76 @@ async function main() {
 
     await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
     await prisma.marketingAngle.deleteMany({ where: { title: { startsWith: TAG } } });
+  }
+
+  console.log("── the siren, the forged reply, and the lead nobody contacted ──");
+  {
+    const { surfaceSignal } = await import("../core/bridge.ts");
+
+    // THE CALENDAR SIREN. surfaceSignal's own comment claimed signals were
+    // "surfaced once (deduped by day)". Nothing did it. A 15-min poller x a
+    // disconnected calendar = ~96 badge rows and ~60 Telegram pushes a day,
+    // which mutes the channel every other fix depends on.
+    const a = await surfaceSignal({
+      kind: "risk", domain: "personal", sourceType: `${TAG}_siren`, sourceId: `${TAG}:cal`,
+      severity: "attention", title: "Calendar disconnected", body: "for 15 minutes",
+    });
+    const b = await surfaceSignal({
+      kind: "risk", domain: "personal", sourceType: `${TAG}_siren`, sourceId: `${TAG}:cal`,
+      severity: "attention", title: "Calendar disconnected", body: "for 30 minutes",
+    });
+    check("a repeat of the same open signal collapses onto the first", a.id === b.id);
+    check("and does NOT push a second time", b.pushed === false);
+    check("only one row exists, not two",
+      (await prisma.bridgeSignal.count({ where: { sourceType: `${TAG}_siren` } })) === 1);
+    const refreshed = await prisma.bridgeSignal.findUnique({ where: { id: a.id } });
+    check("but the row reflects the LATEST state, not the stalest",
+      /30 minutes/.test(refreshed?.body ?? ""));
+    // A caller that doesn't say what the signal is about gets no dedup — two
+    // anonymous signals of a type are not evidence of the same event.
+    const c1 = await surfaceSignal({ kind: "risk", sourceType: `${TAG}_anon`, severity: "info", title: "t", body: "b" });
+    const c2 = await surfaceSignal({ kind: "risk", sourceType: `${TAG}_anon`, severity: "info", title: "t", body: "b" });
+    check("signals with no sourceId are never collapsed together", c1.id !== c2.id);
+
+    // THE FORGED REPLY. gmail/engine.ts prefixed "Re:" unconditionally, so
+    // every first-contact warm-list email shipped as "Re: Quick one, Sarah"
+    // to someone who had never emailed Cole. The warm list doesn't regenerate.
+    const gmailSrc = (await import("node:fs")).readFileSync(
+      new URL("../gmail/engine.ts", import.meta.url), "utf8"
+    );
+    check("the Re: prefix is conditional on the message actually being a reply",
+      /const threaded =/.test(gmailSrc) && !/input\.subject\.startsWith\("Re:"\) \? input\.subject : `Re: /.test(gmailSrc));
+    check("and outreach declares itself first contact",
+      /isReply: false/.test((await import("node:fs")).readFileSync(new URL("../crm/leadEngine.ts", import.meta.url), "utf8")));
+
+    // CONTACTED BY NOBODY. The draft was guarded on `if (to)`; the "contacted"
+    // write was not — so a lead with only a phone number was marked contacted,
+    // stamped, and rotated forward out of Cole's attention permanently.
+    const { finalizeOutreachDraft } = await import("../crm/leadEngine.ts");
+    const noEmail = await prisma.lead.create({
+      data: { name: `${TAG} NoEmail`, source: "manual", nextAction: "reach out", nextActionAt: new Date() },
+    });
+    let threw = false;
+    try {
+      await finalizeOutreachDraft({ leadId: noEmail.id, to: undefined, body: "hi", name: `${TAG} NoEmail` } as any);
+    } catch { threw = true; }
+    check("a lead with no email fails loudly instead of being marked contacted", threw === true);
+    const still = await prisma.lead.findUnique({ where: { id: noEmail.id } });
+    check("and the lead is NOT marked contacted",
+      still?.status !== "contacted" && still?.lastContactAt === null);
+
+    // The sweep must not spend its three daily slots on people it can't reach.
+    const { runOutreachSweep } = await import("../crm/leadEngine.ts");
+    const sweep = await runOutreachSweep({});
+    check("the sweep only selects leads it can actually draft for",
+      !sweep.skipped.some((s: string) => s.includes(`${TAG} NoEmail`)));
+    check("but it says out loud that there are people it can't reach",
+      (await prisma.bridgeSignal.count({ where: { sourceType: "outreach_unreachable" } })) === 1);
+
+    await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.bridgeSignal.deleteMany({
+      where: { OR: [{ sourceType: { startsWith: TAG } }, { sourceType: "outreach_unreachable" }] },
+    });
   }
 
   console.log("── the content queue: writing that survives the tab closing ──");

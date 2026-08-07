@@ -195,16 +195,32 @@ export async function finalizeOutreachDraft(payload: any): Promise<{ draftId?: s
   const { leadId, to, body, name } = payload ?? {};
   if (!leadId) throw new Error("outreach draft payload missing leadId");
 
-  let draftId: string | undefined;
-  if (to) {
-    const { draftReply } = await import("../gmail/engine.ts");
-    const res: any = await draftReply({
-      to,
-      subject: `Quick one, ${String(name ?? "").split(" ")[0] || "hey"}`,
-      body,
-    });
-    draftId = res?.id ?? res?.draftId;
+  // NO EMAIL, NO CONTACT. The draft was guarded on `if (to)` and the "contacted"
+  // write below was not, so a warm-list entry Cole had only a phone number for
+  // was marked contacted, stamped with lastContactAt, and rotated four days
+  // forward — having been contacted by nobody. It then aged out of his
+  // attention permanently, which is the worst possible outcome for the one
+  // channel that works at zero audience.
+  //
+  // Throwing is the honest response: no draft was written, so no work happened,
+  // and the executor must record a failure rather than a phantom success.
+  if (!to) {
+    throw new Error(
+      `${name ?? "That lead"} has no email on file — I can't draft anything. ` +
+        `Add an email, or reach them yourself and log it.`
+    );
   }
+
+  const { draftReply } = await import("../gmail/engine.ts");
+  const res: any = await draftReply({
+    to,
+    subject: `Quick one, ${String(name ?? "").split(" ")[0] || "hey"}`,
+    // First contact. Without this the subject ships as "Re: Quick one, Sarah"
+    // to someone who has never emailed him.
+    isReply: false,
+    body,
+  });
+  const draftId = res?.id ?? res?.draftId;
 
   const FOLLOW_UP_DAYS = 4; // a warm lead goes cold in about a week
   await prisma.lead.update({
@@ -240,14 +256,40 @@ export async function runOutreachSweep(opts: { max?: number } = {}): Promise<{
   skipped: string[];
 }> {
   const max = Math.min(opts.max ?? MAX_PER_RUN, 10);
+  const openAndDue = {
+    status: { notIn: ["won", "lost", "dormant"] },
+    nextActionAt: { not: null, lte: new Date() },
+  };
+
+  // Only leads this sweep can actually draft for. Without the email filter the
+  // sweep spends its three slots a day on people it will throw on, and the
+  // leads it COULD reach never come up — the three-slot cap makes an
+  // undraftable lead not merely wasteful but blocking.
   const due = await prisma.lead.findMany({
-    where: {
-      status: { notIn: ["won", "lost", "dormant"] },
-      nextActionAt: { not: null, lte: new Date() },
-    },
+    where: { ...openAndDue, email: { not: null } },
     orderBy: { nextActionAt: "asc" },
     take: max,
   });
+
+  // But say so, once. Silently skipping them is how the warm list quietly
+  // shrinks to whoever happened to have an email address. Deduped by
+  // surfaceSignal on (sourceType, sourceId) within the day.
+  const unreachable = await prisma.lead.count({ where: { ...openAndDue, email: null } });
+  if (unreachable > 0) {
+    const { surfaceSignal } = await import("../core/bridge.ts");
+    await surfaceSignal({
+      kind: "gap_alert",
+      domain: "business",
+      sourceType: "outreach_unreachable",
+      sourceId: "warm_list:no_email",
+      severity: "notice",
+      title: `${unreachable} warm lead${unreachable === 1 ? "" : "s"} I can't reach`,
+      body:
+        `${unreachable} ${unreachable === 1 ? "person is" : "people are"} due for a follow-up with no email on file, ` +
+        `so I can't draft anything for ${unreachable === 1 ? "them" : "them"}. Add an email and I'll pick ${unreachable === 1 ? "them" : "them"} up ` +
+        `tomorrow — or message ${unreachable === 1 ? "them" : "them"} yourself and mark it done. I'm not counting ${unreachable === 1 ? "them" : "them"} as contacted.`,
+    }).catch(() => {});
+  }
 
   const result = { due: due.length, drafted: 0, gated: 0, failed: 0, skipped: [] as string[] };
   for (const lead of due) {

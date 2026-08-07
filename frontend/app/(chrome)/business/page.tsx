@@ -48,7 +48,11 @@ type Client = {
 type Marketing = {
   totalUses: number;
   headline: string;
-  angles: { id: string; title: string; audience: string; grounding: string; timesUsed: number; replies: number; verdict: string; status: string }[];
+  angles: {
+    id: string; title: string; audience: string; grounding: string; timesUsed: number;
+    replies: number; leads: number; verdict: string; status: string;
+    sources: { title?: string; url?: string; source?: string }[];
+  }[];
 };
 
 type Offer = {
@@ -893,6 +897,21 @@ function MarketingPanel({ marketing, hasOffer, onChange }: { marketing?: Marketi
                 <div className="min-w-0">
                   <div className="text-sm text-aurelius-text/90">{a.title}</div>
                   <div className="text-[11px] text-aurelius-text/40">{a.audience}</div>
+                  {/* The citation, openable. "research-backed" printed in gold
+                      over a claim you can't check is worse than no label. */}
+                  {a.sources?.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-1">
+                      {a.sources.slice(0, 4).map((s, i) => (
+                        <a
+                          key={i} href={s.url} target="_blank" rel="noreferrer"
+                          className="text-[10px] text-aurelius-gold/50 hover:text-aurelius-gold underline decoration-dotted truncate max-w-[14rem]"
+                          title={s.title}
+                        >
+                          {s.title?.slice(0, 40) ?? s.url}
+                        </a>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex gap-3 mt-1">
                     <button
                       disabled={busy}
