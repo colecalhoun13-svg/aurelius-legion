@@ -1499,7 +1499,11 @@ function GrowthPanel() {
       {/* Paid boost */}
       <div className="space-y-2">
         <div className="text-[11px] uppercase tracking-wider text-aurelius-gold/50">Paid boost (only behind proof)</div>
-        <button disabled={busy} onClick={() => act({ kind: "propose_boost" }, "Boost proposal")} className={btn}>Propose a boost</button>
+        <div className="flex flex-wrap gap-2">
+          <button disabled={busy} onClick={() => act({ kind: "propose_boost" }, "Boost proposal")} className={btn}>Propose a boost</button>
+          {/* Stage the spend → files a pending confirm on the Bridge. Spend is always your tap. */}
+          <button disabled={busy} onClick={() => act({ kind: "stage_boost" }, "Boost staged — confirm on the Bridge")} className={btn}>Stage the spend →</button>
+        </div>
         {g?.boost?.active && (
           <p className={`text-xs ${g.boost.cplCents != null && g.boost.verdict.includes("kill") ? "text-red-300" : "text-neutral-300"}`}>
             Spent ${(g.boost.spentCents / 100).toFixed(2)} · {g.boost.leads} lead{g.boost.leads === 1 ? "" : "s"} · {g.boost.verdict}

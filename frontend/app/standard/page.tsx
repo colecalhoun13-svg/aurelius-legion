@@ -23,6 +23,7 @@ type StandardResult = {
   headline: string;
   metrics: Array<{ label: string; value: string; band: Band; line: string }>;
   cta: string;
+  provisional?: boolean;
 };
 
 const BAND_COLOR: Record<Band, string> = {
@@ -124,6 +125,7 @@ function StandardForm() {
           )}
           <p className="text-[11px] text-aurelius-text/40">
             These are standard bands, not a guarantee — and a starting read, not a diagnosis. The point is the gap and the work.
+            {result.provisional && " The thresholds are general athletic reference points Cole is still dialing in per sport, not final cut-offs."}
           </p>
 
           {/* The gated ask — value first, email second */}

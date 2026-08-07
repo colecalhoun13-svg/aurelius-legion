@@ -57,8 +57,24 @@ export function localDayKey(): string {
 }
 
 /** True = you own today's run. Availability beats dedup: if the claim STORE
- *  is unreachable (cold Neon at boot), run unclaimed rather than skip. */
-export async function claimDailyRun(jobName: string, day = localDayKey()): Promise<boolean> {
+ *  is unreachable (cold Neon at boot), run unclaimed rather than skip.
+ *
+ *  `reclaimStaleRunning` (default true) governs whether a claim stuck "running"
+ *  past the 30-min lease can be taken over. It MUST be false for the hourly
+ *  interval catch-up sweep (council M2): in a live, healthy process a row still
+ *  "running" is a job genuinely in flight — a curriculum ingest or weekend
+ *  synthesis can legitimately run past 30 minutes — and taking it over runs it a
+ *  SECOND time, concurrently. Only a BOOT sweep (or the live scheduler, which
+ *  fires a given daily job at most once/day) should reclaim a stale-running row,
+ *  because there it can only be an orphan left by a crashed process. A "failed"
+ *  row is always reclaimable — that's the transient-error retry, and it's bounded
+ *  by the day key. "done" is deliberately never reclaimable. */
+export async function claimDailyRun(
+  jobName: string,
+  day = localDayKey(),
+  opts: { reclaimStaleRunning?: boolean } = {}
+): Promise<boolean> {
+  const reclaimStaleRunning = opts.reclaimStaleRunning ?? true;
   const { prisma, withDb } = await import("./db/prisma.ts");
   try {
     await withDb(() => prisma.jobRun.create({ data: { jobName, day } }));
@@ -68,29 +84,20 @@ export async function claimDailyRun(jobName: string, day = localDayKey()): Promi
       console.warn(`[schedule] claim store unreachable for ${jobName} — running unclaimed:`, err?.message ?? err);
       return true;
     }
-    // Someone owns it. Two claims can be taken over, for different reasons:
-    //
-    //   "running" older than 30 min — a dead process. The original rule.
-    //   "failed"                    — the run threw. This was NOT reclaimable,
-    //     which meant a single transient error (a 529, a cold database, an
-    //     expired token) permanently consumed the day: catch-up would find the
-    //     row present, decline the claim, and the job simply never ran again
-    //     until tomorrow. For the 07:00 briefing that is the whole point of the
-    //     job lost to one bad minute. A failed run is exactly the case that
-    //     SHOULD be retried, and retry is bounded by the day key — at most one
-    //     more attempt per catch-up pass, never a hot loop.
-    //
-    // "done" is deliberately absent: a completed job must never re-fire.
+    // Someone owns it. What's reclaimable depends on the caller:
+    //   "failed"                    — always retryable (transient-error recovery,
+    //                                 bounded by the day key; never a hot loop).
+    //   "running" past the 30-min lease — a dead process's orphan, reclaimable
+    //                                 ONLY when reclaimStaleRunning (boot/live);
+    //                                 the hourly interval sweep must leave it be.
+    //   "done"                      — never (a completed job must not re-fire).
+    const reclaimable: any[] = [{ status: "failed" }];
+    if (reclaimStaleRunning) {
+      reclaimable.push({ status: "running", updatedAt: { lt: new Date(Date.now() - 30 * 60_000) } });
+    }
     try {
       const takeover = await prisma.jobRun.updateMany({
-        where: {
-          jobName,
-          day,
-          OR: [
-            { status: "running", updatedAt: { lt: new Date(Date.now() - 30 * 60_000) } },
-            { status: "failed" },
-          ],
-        },
+        where: { jobName, day, OR: reclaimable },
         data: { status: "running" }, // bumps updatedAt — the takeover marker
       });
       return takeover.count === 1;

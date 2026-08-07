@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { assessStandard, summarizeStandard, type StandardInput } from "../../../../aurelius/assessment/benchmarks";
 import { captureInboundLead } from "../../../../aurelius/crm/leadEngine";
+import { clientIp } from "../../../lib/clientIp";
 
 export const dynamic = "force-dynamic";
 
@@ -26,10 +27,7 @@ function toNum(v: unknown): number | undefined {
 }
 
 export async function POST(request: Request) {
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown";
+  const ip = clientIp(request); // spoof-resistant: not the client-controlled leftmost XFF
   const now = Date.now();
   const win = hits.get(ip);
   if (!win || now > win.resetAt) hits.set(ip, { n: 1, resetAt: now + WINDOW_MS });

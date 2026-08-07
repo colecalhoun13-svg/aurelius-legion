@@ -100,6 +100,19 @@ process.on("uncaughtException", (err: any) => {
 });
 
 const app = express();
+// TRUST PROXY — required for req.ip to be correct behind a reverse proxy (the
+// Mini's nginx, a hosting edge). Without it, Express reports the PROXY's socket
+// address for every request, so the /intake per-IP limiter buckets the whole
+// internet together (one shared 5/hour window) — useless as a flood guard. Set
+// TRUST_PROXY to a hop COUNT (how many proxies sit in front, e.g. "1") so
+// Express derives the real client from the RIGHT of X-Forwarded-For and a client
+// can't forge a leftmost entry to rotate buckets. Default 0 (direct) when unset,
+// which correctly uses the socket address for a directly-exposed process.
+{
+  const raw = process.env.TRUST_PROXY;
+  const hops = raw ? (/^\d+$/.test(raw.trim()) ? Number(raw.trim()) : raw.trim() === "true" ? 1 : 0) : 0;
+  if (hops > 0) app.set("trust proxy", hops);
+}
 // Capture the raw body alongside the parsed one — webhook signature checks
 // (Stripe) must verify the EXACT bytes, which a re-serialised JSON object can't
 // reproduce. Cheap: it stores a reference to the buffer express already read.

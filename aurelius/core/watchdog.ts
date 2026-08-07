@@ -27,9 +27,19 @@ export function startWatchdog(checkEveryMs = 60 * 60 * 1000): void {
     // would already have claimed at least one daily job — otherwise a fresh boot
     // could exit itself before the first job's cron even fired.
     if (process.uptime() < STALE_HOURS * 3600) return;
-    const latest = await prisma.jobRun
-      .findFirst({ orderBy: { createdAt: "desc" }, select: { createdAt: true } })
-      .catch(() => null);
+    // Distinguish a FAILED query from a genuinely EMPTY table (council m6). The
+    // old `.catch(() => null)` collapsed both to null → Infinity age → exit, so a
+    // transient DB blip during the check killed a perfectly healthy process and
+    // could loop it. A query that THROWS is no evidence the spine is wedged — the
+    // check just couldn't run — so skip this cycle. Only a query that SUCCEEDS and
+    // returns no row is a truly silent spine after 26h up, which is the wedge.
+    let latest: { createdAt: Date } | null;
+    try {
+      latest = await prisma.jobRun.findFirst({ orderBy: { createdAt: "desc" }, select: { createdAt: true } });
+    } catch (err) {
+      console.warn("[watchdog] JobRun check query failed — skipping this cycle (not treating as wedged):", (err as any)?.message ?? err);
+      return;
+    }
     const ageH = latest ? (Date.now() - latest.createdAt.getTime()) / 3_600_000 : Infinity;
     if (ageH > STALE_HOURS) {
       console.error(

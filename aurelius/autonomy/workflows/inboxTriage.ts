@@ -89,8 +89,9 @@ export async function matchInboundReplyToLead(item: InboxItem): Promise<boolean>
     sourceId: `reply:${lead.id}`,
     severity: "attention",
     title: `${lead.name} replied`,
-    body: `${lead.name} replied to your outreach — they're warm right now. Keep it moving today.`,
-    actions: [{ label: "Draft a reply", action: "draft_outreach", payload: { leadId: lead.id } }],
+    body:
+      `${lead.name} replied to your outreach — they're warm right now. Keep it moving today. ` +
+      `Say "draft a reply to ${lead.name}" and I'll write it into your Gmail drafts (you send).`,
   }).catch(() => {});
   return true;
 }
@@ -145,18 +146,19 @@ export async function runInboxTriage(opts: { max?: number } = {}): Promise<Inbox
   result.scanned = inbox.length;
 
   for (const item of inbox) {
-    // A Venmo/Zelle/PayPal payment notification self-records the money instead
-    // of getting a drafted reply — the honest half of "money logs itself".
+    // A Venmo/Zelle/PayPal payment notification SURFACES FOR CONFIRM instead of
+    // getting a drafted reply. It does NOT auto-record (council M3): an email From
+    // is spoofable, so a parsed notification is a claim Cole taps to accept, not a
+    // verified receipt. Stripe/Twilio (cryptographically verified) still self-record.
     try {
-      const { parsePaymentEmail, recordSelfPayment } = await import("../../crm/selfRecord.ts");
+      const { parsePaymentEmail, surfacePaymentEmailForConfirm } = await import("../../crm/selfRecord.ts");
       const parsed = parsePaymentEmail({ from: item.from, subject: item.subject, body: item.snippet });
       if (parsed) {
-        await recordSelfPayment({
+        await surfacePaymentEmailForConfirm({
           amountCents: parsed.amountCents,
           payerName: parsed.payerName,
           method: parsed.method,
           externalRef: `email:${item.id}`,
-          recordedBy: "email_parse",
         });
         continue; // handled — not a reply to draft
       }

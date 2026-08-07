@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { stripeConfigured } from "../../../../../aurelius/crm/selfRecord";
 import { twilioConfigured } from "../../../../../aurelius/crm/sms";
-import { paidAdsConfigured, boostStanding, proposeBoost } from "../../../../../aurelius/business/paidBoost";
+import { paidAdsConfigured, boostStanding, proposeBoost, stageBoost } from "../../../../../aurelius/business/paidBoost";
 import { researchPartners, draftPartnerIntro } from "../../../../../aurelius/business/partnership";
 import { retentionAnalytics } from "../../../../../aurelius/crm/retention";
 
@@ -43,6 +43,13 @@ export async function POST(request: Request) {
       }
       case "propose_boost": {
         const out = await proposeBoost({ budgetCents: body.budgetCents, killCplCents: body.killCplCents });
+        return NextResponse.json(out);
+      }
+      case "stage_boost": {
+        // Stage the spend → GATE for Cole's confirm (ads.spend is outward). The
+        // spend never happens here; it files a pending Bridge confirm.
+        const out = await stageBoost({ budgetCents: body.budgetCents, killCplCents: body.killCplCents });
+        if (!out.ok) throw new Error(out.reason);
         return NextResponse.json(out);
       }
       default:

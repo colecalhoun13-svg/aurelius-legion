@@ -218,6 +218,58 @@ export function auditReachability(): Finding[] {
     }
   }
 
+  // ── 11. Outward finalizers with no stager (no executeAction call site) ──
+  // An OUTWARD class is finalized only on Cole's confirm — but SOMETHING must
+  // first stage it via executeAction to create that pending confirm. sms.send
+  // and ads.spend shipped with finalizers and NO stager, so the confirm could
+  // never be created and the finalizer was unreachable — passed tsc, passed
+  // smoke, dead in prod. Every outward class WITH a finalizer needs ≥1
+  // executeAction({actionClass:"X"}) call site in non-test code.
+  const outwardKeys = new Set<string>();
+  for (const chunk of arrBody.split(/(?=\bkey:\s*")/)) {
+    const key = chunk.match(/key:\s*"([a-z][a-z._]*)"/)?.[1];
+    if (key && /tier:\s*"outward"/.test(chunk)) outwardKeys.add(key);
+  }
+  const stagedClasses = new Set<string>();
+  for (const [path, src] of beSrc) {
+    if (path.endsWith("smokeSuite.ts")) continue; // a test call site is not a prod invoker
+    for (const m of src.matchAll(/actionClass:\s*"([a-z][a-z._]*)"/g)) stagedClasses.add(m[1]!);
+  }
+  for (const key of outwardKeys) {
+    if (registeredFinalizers.has(key) && !stagedClasses.has(key)) {
+      add(
+        "high",
+        "action-class",
+        `outward class "${key}" has a finalizer but no stager — nothing calls executeAction({actionClass:"${key}"}), so its Bridge confirm can never be created and the finalizer is unreachable`
+      );
+    }
+  }
+
+  // ── 12. Bridge-signal action buttons with no dispatcher ────────────
+  // A LABELED action on a BridgeSignal renders as a tap on the Decisions/Home
+  // deck — but the deck only ever dispatches three verbs (confirm_action →
+  // confirm, undo_action → undo, dismiss → ack). The retention engine shipped
+  // four buttons (draft_referral/proof/checkin/resign) nothing dispatched: dead
+  // taps that looked like features. Any labeled action verb outside the wired
+  // set is a dead button. (The label-less `{action:"executed"}` receipt marker
+  // is not a button and is intentionally not matched.)
+  const DISPATCHED_ACTIONS = new Set(["confirm_action", "undo_action", "dismiss", "acknowledge"]);
+  for (const [path, src] of beSrc) {
+    if (path.endsWith("reachabilityAudit.ts")) continue; // this file names the verbs
+    const verbs = new Set<string>();
+    for (const m of src.matchAll(/label:\s*"[^"]*",\s*action:\s*"([a-z_]+)"/g)) verbs.add(m[1]!);
+    for (const m of src.matchAll(/action:\s*"([a-z_]+)",\s*label:\s*"/g)) verbs.add(m[1]!);
+    for (const verb of verbs) {
+      if (!DISPATCHED_ACTIONS.has(verb)) {
+        add(
+          "high",
+          "bridge-action",
+          `a signal button in ${relative(ROOT, path)} uses action "${verb}", which no deck dispatches — a dead tap (only ${[...DISPATCHED_ACTIONS].join(", ")} are wired)`
+        );
+      }
+    }
+  }
+
   return findings;
 }
 

@@ -162,6 +162,16 @@ export const ACTION_CLASSES: ActionClass[] = [
       "retiring a confirmed rule is a trust change — proposed for Cole, never executed on a grant",
   },
   {
+    key: "payment.record",
+    operator: "business",
+    tier: "inward",
+    description:
+      "Record a payment parsed from a Venmo/Zelle/PayPal notification email against a matched client.",
+    gate: "always Cole's Bridge confirm",
+    neverGrant:
+      "an email From header is spoofable — a parsed payment notification is a claim, not a verified receipt, so recording it always rides Cole's explicit tap (Stripe and Twilio, which are cryptographically verified, self-record and never use this class)",
+  },
+  {
     key: "autonomy.apply_grant",
     operator: "autonomy",
     tier: "inward",

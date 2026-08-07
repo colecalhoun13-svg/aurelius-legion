@@ -54,7 +54,14 @@ export async function handleStripeEvent(event: any): Promise<{ recorded: boolean
   const obj = event?.data?.object ?? {};
   const amountCents = obj.amount_received ?? obj.amount_total ?? obj.amount ?? 0;
   const email = obj.customer_details?.email ?? obj.receipt_email ?? obj.billing_details?.email ?? null;
-  const externalRef = obj.id ?? event?.id ?? null;
+  // IDEMPOTENCY KEY = the payment_intent, NOT obj.id. One checkout emits all
+  // three PAID_EVENTS, each with a DIFFERENT obj.id (the session id, the
+  // payment-intent id, the charge id) — keying on obj.id records the same $50
+  // three times. Every one of the three carries the same payment_intent
+  // (payment_intent.succeeded IS it; the session and charge both reference it),
+  // so keying there collapses the trio to one Payment. obj.id is the last-ditch
+  // fallback only when a payment_intent is genuinely absent (rare/legacy).
+  const externalRef = obj.payment_intent ?? obj.id ?? event?.id ?? null;
   if (!amountCents || amountCents <= 0) return { recorded: false, reason: "event carried no amount" };
   return recordSelfPayment({ amountCents, email, method: "stripe", externalRef, recordedBy: "stripe_webhook" });
 }
@@ -87,6 +94,65 @@ export function parsePaymentEmail(input: { from: string; subject: string; body?:
     /from\s+([A-Z][a-zA-Z.'-]+(?:\s+[A-Z][a-zA-Z.'-]+){0,2})/.exec(text)?.[1] ??
     null;
   return { amountCents, payerName: payer, method };
+}
+
+/** Surface a payment PARSED FROM AN EMAIL as a pending confirm — never auto-record
+ *  it (council M3). An email From header is spoofable, so a Venmo/Zelle/PayPal
+ *  notification is a *claim*, not a verified receipt: anyone who knows Cole's
+ *  address could forge "Venmo: Jane paid you $500" and, under the old auto-record,
+ *  poison the ledger and the earned-vs-motion truth the analyst reports. Stripe
+ *  (HMAC) and Twilio (signature) are cryptographically verified and still
+ *  self-record directly; only the email path stops here for Cole's tap.
+ *
+ *  Idempotent two ways: if the payment already recorded (Cole confirmed a prior
+ *  poll's signal), skip — otherwise every 10-min inbox poll would re-ask about
+ *  money already on the books. And the dedup seam in surfaceSignal collapses a
+ *  still-pending confirm onto its open row, so one email = one ask. */
+export async function surfacePaymentEmailForConfirm(input: {
+  amountCents: number;
+  email?: string | null;
+  payerName?: string | null;
+  method: string;
+  externalRef: string; // `email:<gmail message id>` — the idempotency key
+}): Promise<{ surfaced: boolean; reason: string }> {
+  // Already on the books (a prior poll's confirm went through)? Don't re-ask.
+  const already = await prisma.payment.findFirst({ where: { externalRef: input.externalRef }, select: { id: true } });
+  if (already) return { surfaced: false, reason: "already recorded" };
+
+  const { surfaceSignal } = await import("../core/bridge.ts");
+  const { fromCents } = await import("./service.ts");
+  await surfaceSignal({
+    kind: "background_result",
+    domain: "business",
+    sourceType: "payment_email_confirm",
+    sourceId: input.externalRef, // dedup: one email → one open ask
+    severity: "attention",
+    status: "pending",
+    title: `Confirm: ${fromCents(input.amountCents)} via ${input.method}${input.payerName ? ` from ${input.payerName}` : ""}?`,
+    body:
+      `A ${input.method} email says a payment arrived` +
+      `${input.payerName ? ` from ${input.payerName}` : ""}${input.email ? ` (${input.email})` : ""}. ` +
+      `I don't auto-record these — an email sender is spoofable — so confirm and I'll log it (matched to the client, or filed as unmatched if I can't place them).`,
+    actions: [
+      {
+        label: "Confirm & record",
+        action: "confirm_action",
+        payload: {
+          actionClass: "payment.record",
+          actionPayload: {
+            amountCents: input.amountCents,
+            email: input.email ?? null,
+            payerName: input.payerName ?? null,
+            method: input.method,
+            externalRef: input.externalRef,
+            recordedBy: "email_confirmed",
+          },
+        },
+      },
+      { label: "Dismiss", action: "dismiss", payload: {} },
+    ],
+  }).catch(() => {});
+  return { surfaced: true, reason: "filed a payment confirm" };
 }
 
 /** Record a self-seen payment against a matched client, idempotently. */

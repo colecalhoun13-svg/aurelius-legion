@@ -493,8 +493,8 @@ export async function captureInboundLead(input: {
       body:
         `${lead.name}${lead.email ? ` (${lead.email})` : ""} reached out${lead.sport ? ` about ${lead.sport}` : ""}.\n\n` +
         (lead.notes ? `> ${lead.notes.slice(0, 500)}\n\n` : "") +
-        `They came to you. Reply today — response time is the whole conversion lever at this stage.`,
-      actions: [{ label: "Draft a reply", action: "draft_outreach", payload: { leadId: lead.id } }],
+        `They came to you. Reply today — response time is the whole conversion lever at this stage. ` +
+        `Say "draft a reply to ${lead.name}" and I'll write it into your Gmail drafts (you send).`,
     });
   } catch {
     /* the lead is captured either way */

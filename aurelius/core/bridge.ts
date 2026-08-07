@@ -112,6 +112,11 @@ export async function surfaceSignal(input: SurfaceSignalInput): Promise<{ id: st
     const since = new Date(Date.now() - DEDUP_WINDOW_MS);
     const existing = await prisma.bridgeSignal.findFirst({
       where: {
+        // Match on KIND too (council M4): (sourceType, sourceId) can be shared by
+        // a receipt and an ask, or a risk and an opportunity — collapsing across
+        // kinds would let a quiet receipt absorb a real decision (or vice versa).
+        // Same event = same kind.
+        kind: data.kind,
         sourceType: data.sourceType,
         sourceId: data.sourceId,
         createdAt: { gte: since },
@@ -119,16 +124,42 @@ export async function surfaceSignal(input: SurfaceSignalInput): Promise<{ id: st
         // handled should be allowed to recur — that's a new event, not an echo.
         status: { in: ["pending", "surfaced", "noted"] },
       },
-      select: { id: true },
+      select: { id: true, actions: true, pushedAt: true, status: true },
     });
     if (existing) {
-      // Refresh the body so the row reflects the latest state (a disconnect
-      // that has now lasted six hours should say six hours), and bump nothing
-      // else: no new row, no second push, no badge increment.
+      // Refresh title/body/severity AND the ACTIONS payload (council M4). The old
+      // code bumped only body+severity, so a collapsed ask kept the FIRST
+      // surface's confirm payload: if the action was re-staged with a new payload
+      // (a different amount, a fresh draft), confirming would finalize the STALE
+      // one — a wrong-confirm hazard on the highest-consequence path there is.
+      // Only overwrite actions when the new surface actually carries them, so an
+      // actionless refresh (e.g. a plain freshness re-notice) can't wipe a live
+      // confirm button off the open row.
+      const nextActions = data.actions !== undefined ? data.actions : (existing.actions ?? undefined);
       await prisma.bridgeSignal
-        .update({ where: { id: existing.id }, data: { body: data.body, severity } })
+        .update({ where: { id: existing.id }, data: { title: data.title, body: data.body, severity, actions: nextActions } })
         .catch(() => {});
-      return { id: existing.id, pushed: false };
+
+      // Re-push ONCE if this collapse is genuinely salient and the open row was
+      // never delivered (pushedAt null). A quietly-filed row that has since
+      // become an outward-critical confirm must still reach the phone — otherwise
+      // dedup silences exactly the ask that matters. Guarded on pushedAt so a
+      // standing condition (an expired token re-noticed every poll) still can't
+      // buzz more than once.
+      let pushed = false;
+      if (!existing.pushedAt && shouldPushNow({ kind: data.kind, severity, domain: data.domain, dueAt })) {
+        try {
+          const hasAsk = Array.isArray(nextActions) && (nextActions as any[]).some((a) => a?.action === "confirm_action");
+          const bot = await import("../telegram/bot.ts");
+          pushed = hasAsk
+            ? await bot.pushBridgeAsk({ id: existing.id, title: data.title, body: data.body, status: existing.status, actions: nextActions })
+            : await bot.sendToCole(`${data.title}\n\n${data.body}`.slice(0, 3500));
+          if (pushed) await prisma.bridgeSignal.update({ where: { id: existing.id }, data: { pushedAt: new Date() } }).catch(() => {});
+        } catch (err) {
+          console.warn("[bridge] collapse re-push failed (row refreshed):", (err as any)?.message ?? err);
+        }
+      }
+      return { id: existing.id, pushed };
     }
   }
 

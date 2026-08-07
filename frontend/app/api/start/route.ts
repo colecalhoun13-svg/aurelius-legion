@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { captureInboundLead } from "../../../../aurelius/crm/leadEngine";
+import { clientIp } from "../../../lib/clientIp";
 
 export const dynamic = "force-dynamic";
 
@@ -20,10 +21,7 @@ const WINDOW_MS = 60 * 60 * 1000;
 const MAX_PER_WINDOW = 5;
 
 export async function POST(request: Request) {
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown";
+  const ip = clientIp(request); // spoof-resistant: not the client-controlled leftmost XFF
 
   const now = Date.now();
   const win = hits.get(ip);

@@ -61,6 +61,23 @@ export function registerAllActions(): void {
     const { finalizeBoost } = await import("../business/paidBoost.ts");
     return finalizeBoost(payload);
   });
+  // Never-grant inward: record a payment PARSED FROM AN EMAIL. The class carries
+  // neverGrant (a From header is spoofable), so executeAction/decideAction would
+  // always gate it anyway — but the email path surfaces the confirm directly, so
+  // this finalizer only ever runs on Cole's Bridge tap. recordSelfPayment is
+  // idempotent on externalRef, so a double-confirm can't double-count.
+  registerActionFinalizer("payment.record", async (payload: any) => {
+    const { recordSelfPayment } = await import("../crm/selfRecord.ts");
+    return recordSelfPayment({
+      amountCents: payload?.amountCents,
+      email: payload?.email ?? null,
+      phone: payload?.phone ?? null,
+      payerName: payload?.payerName ?? null,
+      method: payload?.method,
+      externalRef: payload?.externalRef ?? null,
+      recordedBy: payload?.recordedBy ?? "email_confirmed",
+    });
+  });
   // Inward: run a proposed research mission end-to-end + ingest its report.
   // Granted → the initiative pulse runs its own proposals; else Cole confirms.
   registerActionFinalizer("research.ingest", finalizeResearchIngest);

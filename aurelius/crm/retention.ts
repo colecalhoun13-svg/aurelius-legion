@@ -86,11 +86,8 @@ async function onPeak(clientId: string, pr: { label: string; value: number; unit
     body:
       `This is the moment they're most convinced. Two things worth doing while it's hot:\n` +
       `• Ask ${client.isMinor ? "their parent" : "them"} who else wants this — a referral now converts better than any ad.\n` +
-      `• With consent, this PR becomes proof content. I can draft it (anonymised for a minor).`,
-    actions: [
-      { label: "Draft a referral ask", action: "draft_referral", payload: { clientId } },
-      { label: "Draft proof content", action: "draft_proof", payload: { clientId } },
-    ],
+      `• With consent, this PR becomes proof content (anonymised for a minor).\n` +
+      `Open the Business page → ${client.name}'s card to draft either — the referral ask or the proof post.`,
   }).catch(() => {});
 }
 
@@ -143,8 +140,7 @@ async function surfaceCheckIn(clientId: string, name: string, daysOverdue: numbe
     sourceId: `checkin:${clientId}`,
     severity: daysOverdue > 3 ? "attention" : "notice",
     title: `${name} is due a check-in${daysOverdue > 0 ? ` (${daysOverdue}d over)` : ""}`,
-    body: `A paying athlete going quiet is how a renewal quietly turns into a churn. Reach out — I can draft it.`,
-    actions: [{ label: "Draft a check-in", action: "draft_checkin", payload: { clientId } }],
+    body: `A paying athlete going quiet is how a renewal quietly turns into a churn. Reach out — open the Business page → ${name}'s card and I'll draft the check-in for you to send.`,
   }).catch(() => {});
 }
 
@@ -163,8 +159,7 @@ async function surfaceRenewal(e: { id: string; clientId: string; title: string; 
     body:
       `The re-sign conversation happens before it lapses, not after. Frame it on what they've earned: ` +
       `${fromCents(lifetime._sum.amountCents ?? 0)} invested${prs > 0 ? `, ${prs} personal best${prs === 1 ? "" : "s"} logged` : ""}. ` +
-      `Momentum is the argument. I can draft the re-sign message.`,
-    actions: [{ label: "Draft the re-sign", action: "draft_resign", payload: { clientId: e.clientId, engagementId: e.id } }],
+      `Momentum is the argument. Open the Business page → ${client?.name ?? "their"} card and I'll draft the re-sign for you to send.`,
   }).catch(() => {});
 }
 

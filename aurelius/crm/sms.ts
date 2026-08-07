@@ -105,8 +105,65 @@ export async function handleInboundSms(input: { from: string; body: string }): P
   return { matched: false, reason: "no match — filed a notice" };
 }
 
+/**
+ * STAGE an outbound SMS → GATE it for Cole's confirm. This is the missing
+ * invoker the council flagged: sms.send had a finalizer (sendSms) but nothing
+ * that ever created the pending confirm, so the finalizer was unreachable. This
+ * is the stager — it resolves the recipient, then routes through executeAction,
+ * which ALWAYS gates an outward class (sms.send is non-grantable). The finalizer
+ * runs only when Cole taps Confirm. Refuses honestly when Twilio isn't
+ * configured, rather than staging a confirm that could never send.
+ */
+export async function stageSms(input: {
+  to?: string;
+  leadId?: string;
+  clientId?: string;
+  body: string;
+}): Promise<{ ok: boolean; gated?: boolean; bridgeSignalId?: string; to?: string; error?: string }> {
+  const body = (input.body ?? "").trim();
+  if (!body) return { ok: false, error: "Nothing to send — the message is empty." };
+  if (!twilioConfigured()) {
+    return {
+      ok: false,
+      error:
+        "Twilio isn't configured — set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER (and register the number on 10DLC) before staging a text.",
+    };
+  }
+
+  let to = (input.to ?? "").trim();
+  let who = to;
+  if (!to && input.leadId) {
+    const l = await prisma.lead.findUnique({ where: { id: input.leadId }, select: { name: true, phone: true } });
+    if (!l?.phone) return { ok: false, error: "That lead has no phone number on file." };
+    to = l.phone;
+    who = l.name;
+  }
+  if (!to && input.clientId) {
+    const c = await prisma.client.findUnique({ where: { id: input.clientId }, select: { name: true, phone: true } });
+    if (!c?.phone) return { ok: false, error: "That client has no phone number on file." };
+    to = c.phone;
+    who = c.name;
+  }
+  if (!to) return { ok: false, error: "Who to? Give a lead, a client, or a number." };
+
+  const { executeAction } = await import("../autonomy/executor.ts");
+  const exec = await executeAction({
+    actionClass: "sms.send",
+    sourceType: "sms_outbound",
+    sourceId: `sms_out:${to}:${body.slice(0, 48)}`, // dedup identical restages within the window
+    prepare: async () => ({
+      title: `Text ${who || to}?`,
+      body: `To ${who || to} (${to}):\n\n"${body}"`,
+      domain: "business",
+      payload: { to, body },
+    }),
+  });
+  return { ok: true, gated: !exec.finalized, bridgeSignalId: exec.bridgeSignalId, to };
+}
+
 /** Send an SMS via Twilio. The finalizer for the OUTWARD sms.send action — runs
- *  ONLY on Cole's confirm. Dormant-honest without config (fails loudly, once). */
+ *  ONLY on Cole's confirm (staged by stageSms). Dormant-honest without config
+ *  (fails loudly, once). */
 export async function sendSms(payload: { to: string; body: string }): Promise<{ ok: boolean; sid?: string; error?: string }> {
   const sid = process.env.TWILIO_ACCOUNT_SID;
   const token = process.env.TWILIO_AUTH_TOKEN;

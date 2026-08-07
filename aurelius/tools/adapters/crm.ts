@@ -33,6 +33,7 @@ import {
   fromCents,
 } from "../../crm/service.ts";
 import { importWarmList, draftOutreach, runOutreachSweep } from "../../crm/leadEngine.ts";
+import { stageSms } from "../../crm/sms.ts";
 
 /**
  * Accept a client id OR a name, because Cole will always say "Jake".
@@ -189,6 +190,13 @@ export const crmAdapter: ToolAdapter = {
       name: "outstanding",
       description: "Who owes money, oldest first, with overdue flagged. Use for 'who owes me', 'what's unpaid'.",
       dataSchema: "{} (no fields)",
+    },
+    {
+      name: "text_lead",
+      description:
+        "STAGE a text message to a lead or client for your confirm — it does NOT send. Sending an SMS is an outward action, so this prepares it and stops on the Bridge for your Confirm tap. Needs Twilio configured. Use for 'text Jake: ...'.",
+      dataSchema: '{ leadId?: string, clientId?: string, to?: string (raw number), body: string }',
+      example: '[TOOL: crm.text_lead {"leadId": "abc123", "body": "Hey Jake — still want to lock in that speed block?"}]',
     },
   ],
 
@@ -350,6 +358,18 @@ export const crmAdapter: ToolAdapter = {
           const rows = await outstandingInvoices();
           const total = rows.reduce((s, r) => s + r.outstandingCents, 0);
           return { ok: true, output: { count: rows.length, total: fromCents(total), invoices: rows } };
+        }
+
+        case "text_lead": {
+          const res = await stageSms({ leadId: data.leadId, clientId: data.clientId, to: data.to, body: String(data.body ?? "") });
+          if (!res.ok) return { ok: false, output: null, error: res.error ?? "could not stage the text" };
+          return {
+            ok: true,
+            output: {
+              bridgeSignalId: res.bridgeSignalId,
+              message: "Staged and waiting on your confirm — I don't send texts on my own. Confirm on the Bridge to send it.",
+            },
+          };
         }
 
         default:

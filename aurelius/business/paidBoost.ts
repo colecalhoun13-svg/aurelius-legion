@@ -66,6 +66,46 @@ export async function proposeBoost(opts: { budgetCents?: number; killCplCents?: 
 }
 
 /**
+ * STAGE a measured boost → GATE the spend for Cole's confirm. The council's
+ * missing invoker: ads.spend had a finalizer (finalizeBoost) but no stager, so
+ * no pending confirm could ever be created and the finalizer was unreachable.
+ * This runs proposeBoost first (only a post beating your organic median is worth
+ * amplifying), then routes through executeAction — which ALWAYS gates an outward
+ * class. finalizeBoost runs only on Cole's tap. Honest when nothing's proven yet.
+ */
+export async function stageBoost(opts: { budgetCents?: number; killCplCents?: number } = {}): Promise<{
+  ok: boolean;
+  gated?: boolean;
+  bridgeSignalId?: string;
+  reason: string;
+  artifactId?: string;
+}> {
+  const proposal = await proposeBoost(opts);
+  if (!proposal.ok || !proposal.artifactId) return { ok: false, reason: proposal.reason };
+
+  const budgetCents = proposal.budgetCents ?? DEFAULT_BUDGET_CENTS;
+  const killCplCents = proposal.killCplCents ?? DEFAULT_KILL_CPL_CENTS;
+  const dollars = (c: number) => `$${(c / 100).toFixed(2)}`;
+
+  const { executeAction } = await import("../autonomy/executor.ts");
+  const exec = await executeAction({
+    actionClass: "ads.spend",
+    sourceType: "ads_boost",
+    sourceId: `boost:${proposal.artifactId}`, // one open confirm per proven post
+    prepare: async () => ({
+      title: `Boost a proven post — ${dollars(budgetCents)} test spend?`,
+      body:
+        `This post beat your organic median (${proposal.reach} reach) — the one condition worth paying to amplify. ` +
+        `Test budget ${dollars(budgetCents)}, kill line ${dollars(killCplCents)}/lead. ` +
+        `Confirm to spend; the boost stands down the moment cost-per-lead crosses the kill line.`,
+      domain: "business",
+      payload: { artifactId: proposal.artifactId, budgetCents, killCplCents },
+    }),
+  });
+  return { ok: true, gated: !exec.finalized, bridgeSignalId: exec.bridgeSignalId, reason: proposal.reason, artifactId: proposal.artifactId };
+}
+
+/**
  * The finalizer for the OUTWARD ads.spend action — runs ONLY on Cole's confirm.
  * Dormant-honest without a token: fails loudly, once, with the fix. Records the
  * spend so cost-per-lead can be tracked against the boost.
@@ -102,9 +142,22 @@ export async function boostStanding(): Promise<{
   const spends = await prisma.logEntry.findMany({ where: { type: "ad_spend" }, select: { context: true } });
   const spentCents = spends.reduce((s, r) => s + (Number((r.context as any)?.budgetCents) || 0), 0);
   if (spentCents === 0) return { active: false, spentCents: 0, leads: 0, cplCents: null, verdict: "No paid spend yet." };
-  // Leads attributed to a paid/instagram touch since spending started (approximation
-  // until per-boost attribution lands with the ad account).
-  const leads = await prisma.attributionEvent.count({ where: { kind: "intake", channel: { in: ["instagram", "paid", "ads"] } } });
+  // Leads attributed to a paid/instagram touch SINCE spending started. The old
+  // count was all-time, so organic Instagram leads earned long before any boost
+  // flattered the CPL — the denominator has to start when the money did, or the
+  // kill line reads a number the spend didn't earn (council minor). Bound it to
+  // the first ad_spend timestamp; per-boost attribution sharpens this once the ad
+  // account lands, but until then "since first spend" is the honest window.
+  const firstSpendAt = await prisma.logEntry
+    .findFirst({ where: { type: "ad_spend" }, orderBy: { createdAt: "asc" }, select: { createdAt: true } })
+    .catch(() => null);
+  const leads = await prisma.attributionEvent.count({
+    where: {
+      kind: "intake",
+      channel: { in: ["instagram", "paid", "ads"] },
+      ...(firstSpendAt ? { createdAt: { gte: firstSpendAt.createdAt } } : {}),
+    },
+  });
   const cplCents = leads > 0 ? Math.round(spentCents / leads) : null;
   const killCpl = Number((spends[0]?.context as any)?.killCplCents) || DEFAULT_KILL_CPL_CENTS;
   const verdict =
