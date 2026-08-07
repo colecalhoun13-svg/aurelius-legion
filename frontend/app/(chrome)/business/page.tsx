@@ -114,6 +114,9 @@ export default function BusinessPage() {
   const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Transient success line — so an action that writes a Gmail draft / converts a
+  // lead confirms it happened instead of succeeding silently (council UX).
+  const [notice, setNotice] = useState<string | null>(null);
 
   const [openClient, setOpenClient] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -165,13 +168,19 @@ export default function BusinessPage() {
 
   async function moveLead(id: string, status: string) {
     setBusy(true);
+    setError(null);
     try {
-      await fetch("/api/crm/leads", {
+      // Was fire-and-forget: a failed PATCH left the card in place with no word,
+      // so "advance"/"lost" read as dead taps (council a11y). Surface the error.
+      const res = await fetch("/api/crm/leads", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, status, lastContactAt: new Date().toISOString() }),
       });
+      if (!res.ok) throw new Error((await res.json())?.error ?? "Couldn't move that lead");
       await load();
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
     } finally { setBusy(false); }
   }
 
@@ -187,6 +196,7 @@ export default function BusinessPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? "Failed to convert");
       await load();
+      setNotice("Signed — they're in the Roster below. Add what they bought (engagement) to start the money.");
     } catch (err: any) {
       setError(err?.message ?? String(err));
     } finally { setBusy(false); }
@@ -212,34 +222,64 @@ export default function BusinessPage() {
     attention.blocksEnding.length + attention.renewalsDue.length + attention.followUpsOverdue.length + attention.unpaid.length;
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
-      <header>
+    <div className="p-6 max-w-6xl mx-auto pb-24">
+      <header className="mb-4">
         <h1 className="aurelius-heading text-2xl text-aurelius-gold">Business</h1>
-        <p className="text-xs text-aurelius-text/50 mt-1">
+        <p className="text-xs text-aurelius-text/60 mt-1">
           The remote coaching business you own. Athletes at the gym aren&apos;t here — those are your employer&apos;s.
+        </p>
+        <p className="text-[11px] text-aurelius-gold/55 mt-1 leading-relaxed">
+          Aurelius works this on its own — drafts outreach overnight, sweeps follow-ups &amp; renewals daily, records
+          money as it lands. You&apos;re here to review and approve, not to do data entry. What needs you is up top.
         </p>
         {/* The front door, from the inside. /start is public and outside the
             app lock — this is how Cole finds it, checks what a stranger sees,
             and grabs the link to put anywhere. */}
         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
-          <a href="/start" target="_blank" rel="noreferrer" className="text-[11px] text-aurelius-gold/60 hover:text-aurelius-gold inline-block">
+          <a href="/start" target="_blank" rel="noreferrer" className="text-[11px] text-aurelius-gold/70 hover:text-aurelius-gold inline-block">
             your front door (/start) — where prospects land →
           </a>
-          <a href="/standard" target="_blank" rel="noreferrer" className="text-[11px] text-aurelius-gold/60 hover:text-aurelius-gold inline-block">
+          <a href="/standard" target="_blank" rel="noreferrer" className="text-[11px] text-aurelius-gold/70 hover:text-aurelius-gold inline-block">
             the assessment (/standard) — the lead magnet →
           </a>
         </div>
       </header>
 
+      {/* Sticky jump-nav — a thin blurred layer so the long page is navigable
+          on a phone in one tap instead of a multi-thousand-pixel scroll. */}
+      <nav className="aurelius-jumpnav sticky top-0 z-20 -mx-6 px-6 py-2 mb-4 border-y border-aurelius-gold/15 overflow-x-auto">
+        <div className="flex gap-2 text-[11px] whitespace-nowrap">
+          {[
+            ["read", "The read"], ["needs", "Needs you"], ["sell", "Sell"], ["say", "Say"],
+            ["content", "Content"], ["warm", "Warm list"], ["pipeline", "Pipeline"], ["roster", "Roster"], ["growth", "Growth"],
+          ].map(([id, label]) => (
+            <a key={id} href={`#${id}`} className="px-2.5 py-1 rounded-full border border-aurelius-gold/25 text-aurelius-gold/75 hover:text-aurelius-gold hover:border-aurelius-gold/55 transition-colors">
+              {label}
+            </a>
+          ))}
+        </div>
+      </nav>
+
       {error && (
-        <div className="rounded border border-red-500/40 bg-red-950/20 p-3 text-sm text-red-200">{error}</div>
+        <div className="rounded border border-red-500/40 bg-red-950/20 p-3 text-sm text-red-200 mb-4">{error}</div>
+      )}
+      {notice && (
+        <div className="rounded border border-emerald-500/40 bg-emerald-950/20 p-3 text-sm text-emerald-200 mb-4 flex items-center justify-between gap-3">
+          <span>{notice}</span>
+          {notice.toLowerCase().includes("gmail") && (
+            <a href="https://mail.google.com/mail/u/0/#drafts" target="_blank" rel="noreferrer" className="shrink-0 underline hover:text-emerald-100">
+              open Gmail drafts →
+            </a>
+          )}
+        </div>
       )}
 
+      <div className="aurelius-reveal space-y-6">
       {/* THE ANALYST — one confronting truth about the funnel. Names the leak
           before the win; refuses to crown a winner on too little data. */}
       {analyst && (
-        <section className="rounded border border-aurelius-gold/30 bg-black/40 p-4">
-          <div className="aurelius-heading text-[11px] uppercase tracking-[0.2em] text-aurelius-gold/70 mb-2">The read</div>
+        <section id="read" className="aurelius-panel-frame p-4 scroll-mt-24">
+          <div className="aurelius-heading text-[11px] uppercase tracking-[0.2em] text-aurelius-gold/80 mb-2">The read</div>
           <p className="text-sm text-aurelius-text/90 leading-relaxed">{analyst.truth}</p>
           {analyst.ranked.length > 0 && (
             <ul className="mt-3 text-xs space-y-1">
@@ -256,116 +296,18 @@ export default function BusinessPage() {
             </ul>
           )}
           {analyst.tooEarly.length > 0 && (
-            <p className="mt-2 text-[11px] text-neutral-600">
+            <p className="mt-2 text-[11px] text-neutral-500">
               Too early to rank: {analyst.tooEarly.map((c) => c.channel).join(", ")} — not enough data yet.
             </p>
           )}
         </section>
       )}
 
-      {/* ── The honest headline ──────────────────────────────────── */}
-      {snap.empty ? (
-        <section className="rounded border border-amber-500/40 bg-amber-950/10 p-5">
-          <div className="aurelius-heading text-amber-300 text-sm uppercase tracking-[0.2em] mb-2">
-            The pipeline is empty
-          </div>
-          <p className="text-aurelius-text/90 leading-relaxed">
-            No clients, no open leads. The constraint isn&apos;t tracking — it&apos;s that nothing arrives on its own.
-            This roster can&apos;t help you until there&apos;s someone in it, and building more machinery won&apos;t
-            change that.
-          </p>
-          <p className="text-aurelius-text/70 mt-3 text-sm leading-relaxed">
-            The shortest path from here is the warm list: the ten people you could message this week who might say
-            yes, or who know someone who would. Old athletes, their parents, coaches you know. Add the first one below.
-          </p>
-        </section>
-      ) : (
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Stat label="Active clients" value={String(snap.activeClients)} />
-          <Stat label="Open leads" value={String(snap.openLeads)} />
-          <Stat label="Committed / mo" value={snap.mrr} hint={`${snap.engagementsByShape.monthly} monthly`} />
-          <Stat
-            label="Received this month"
-            value={snap.receivedThisMonth}
-            hint={snap.outstandingCents > 0 ? `${snap.outstanding} outstanding` : undefined}
-            alert={snap.overdueCount > 0}
-          />
-        </section>
-      )}
-
-      {/* ── The money ledger: earned money, traced to what earned it ─ */}
-      {ledger && ledger.earnedCents > 0 && (
-        <section className="rounded border border-emerald-500/30 bg-black/40 p-4">
-          <div className="flex items-baseline justify-between mb-3">
-            <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-emerald-300/80">Earned</h2>
-            <span className="text-xs text-neutral-500">
-              {ledger.paymentCount} payment{ledger.paymentCount === 1 ? "" : "s"}
-              {ledger.selfRecordedCents > 0 ? ` · ${money(ledger.selfRecordedCents)} self-recorded` : ""}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <Stat label="Earned all-time" value={ledger.earned} />
-            <Stat label="Earned this month" value={ledger.earnedThisMonth} />
-            {ledger.byChannel[0] && ledger.byChannel[0].channel !== "unattributed" && (
-              <Stat label="Top channel" value={ledger.byChannel[0].channel} hint={ledger.byChannel[0].label} />
-            )}
-          </div>
-          {ledger.byChannel.length > 0 && (
-            <div className="mt-3 text-xs text-neutral-400 space-y-1">
-              <div className="uppercase tracking-wider text-neutral-600">Earned by channel</div>
-              {ledger.byChannel.map((c) => (
-                <div key={c.channel} className="flex justify-between gap-4">
-                  <span>{c.channel}</span>
-                  <span className="text-emerald-300/80">{c.label}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {ledger.byAngle.length > 0 && (
-            <div className="mt-3 text-xs text-neutral-400 space-y-1">
-              <div className="uppercase tracking-wider text-neutral-600">Earned by angle</div>
-              {ledger.byAngle.map((a) => (
-                <div key={a.angle} className="flex justify-between gap-4">
-                  <span className="truncate">{a.angle}</span>
-                  <span className="text-emerald-300/80 shrink-0">{a.label}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          <p className="mt-3 text-[11px] text-neutral-600">
-            Earned is money that actually arrived — the sum of payments, never a projection. Committed/mo above is what recurs; this is what landed.
-          </p>
-        </section>
-      )}
-
-      {/* ── Tracked links: the emit side of attribution, click-counted ─ */}
-      {trackLinks && trackLinks.length > 0 && (
-        <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4">
-          <div className="flex items-baseline justify-between mb-2">
-            <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80">Your links</h2>
-            <span className="text-[11px] text-neutral-500">clicks → leads, per link</span>
-          </div>
-          <ul className="space-y-1.5 text-xs">
-            {trackLinks.map((l) => (
-              <li key={l.id} className="flex items-center justify-between gap-3">
-                <span className="flex-1 min-w-0 truncate text-neutral-300">
-                  <span className="text-neutral-600">{l.channel}</span>
-                  {l.label ? <span> · {l.label}</span> : null}
-                  <span className="text-neutral-600"> · /l/{l.code}</span>
-                </span>
-                <span className="text-neutral-500 shrink-0">
-                  {l.clickCount} click{l.clickCount === 1 ? "" : "s"} · {l._count.leads} lead{l._count.leads === 1 ? "" : "s"}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* ── What costs money if ignored ──────────────────────────── */}
+      {/* ── What costs money if ignored — PROMOTED above the ledger/links: the
+          analyst reads the situation, this is the to-do it produces. ─ */}
       {attentionCount > 0 && (
-        <section className="rounded border border-aurelius-gold/30 bg-black/40 p-4">
-          <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80 mb-3">
+        <section id="needs" className="aurelius-panel-frame p-4 scroll-mt-24">
+          <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/85 mb-3">
             Needs you
           </h2>
           <ul className="space-y-2 text-sm">
@@ -396,34 +338,142 @@ export default function BusinessPage() {
         </section>
       )}
 
+      {/* ── The honest headline ──────────────────────────────────── */}
+      {snap.empty ? (
+        <section className="aurelius-panel-frame aurelius-priority p-5 scroll-mt-24">
+          <div className="aurelius-heading text-amber-300 text-sm uppercase tracking-[0.2em] mb-2">
+            The pipeline is empty
+          </div>
+          <p className="text-aurelius-text/90 leading-relaxed">
+            No clients, no open leads. The constraint isn&apos;t tracking — it&apos;s that nothing arrives on its own.
+            This roster can&apos;t help you until there&apos;s someone in it, and building more machinery won&apos;t
+            change that.
+          </p>
+          <p className="text-aurelius-text/80 mt-3 text-sm leading-relaxed">
+            The shortest path from here is the warm list: the ten people you could message this week who might say
+            yes, or who know someone who would. Old athletes, their parents, coaches you know. Start right below.
+          </p>
+        </section>
+      ) : (
+        <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Stat label="Active clients" value={String(snap.activeClients)} />
+          <Stat label="Open leads" value={String(snap.openLeads)} />
+          <Stat label="Committed / mo" value={snap.mrr} hint={`${snap.engagementsByShape.monthly} monthly`} />
+          <Stat
+            label="Received this month"
+            value={snap.receivedThisMonth}
+            hint={snap.outstandingCents > 0 ? `${snap.outstanding} outstanding` : undefined}
+            alert={snap.overdueCount > 0}
+          />
+        </section>
+      )}
+
+      {/* When there's nothing yet, the warm list IS the page — render it right
+          under the empty banner (its own stated "shortest path"), not 4th. */}
+      {snap.empty && (
+        <div id="warm" className="scroll-mt-24"><WarmList onChange={load} empty={snap.empty} /></div>
+      )}
+
+      {/* ── The money ledger: earned money, traced to what earned it ─ */}
+      {ledger && ledger.earnedCents > 0 && (
+        <section className="aurelius-panel-frame p-4 scroll-mt-24" style={{ borderColor: "rgba(16,185,129,0.3)" }}>
+          <div className="flex items-baseline justify-between mb-3">
+            <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-emerald-300/80">Earned</h2>
+            <span className="text-xs text-neutral-400">
+              {ledger.paymentCount} payment{ledger.paymentCount === 1 ? "" : "s"}
+              {ledger.selfRecordedCents > 0 ? ` · ${money(ledger.selfRecordedCents)} self-recorded` : ""}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <Stat label="Earned all-time" value={ledger.earned} />
+            <Stat label="Earned this month" value={ledger.earnedThisMonth} />
+            {ledger.byChannel[0] && ledger.byChannel[0].channel !== "unattributed" && (
+              <Stat label="Top channel" value={ledger.byChannel[0].channel} hint={ledger.byChannel[0].label} />
+            )}
+          </div>
+          {ledger.byChannel.length > 0 && (
+            <div className="mt-3 text-xs text-neutral-400 space-y-1">
+              <div className="uppercase tracking-wider text-neutral-500">Earned by channel</div>
+              {ledger.byChannel.map((c) => (
+                <div key={c.channel} className="flex justify-between gap-4">
+                  <span>{c.channel}</span>
+                  <span className="text-emerald-300/80">{c.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {ledger.byAngle.length > 0 && (
+            <div className="mt-3 text-xs text-neutral-400 space-y-1">
+              <div className="uppercase tracking-wider text-neutral-500">Earned by angle</div>
+              {ledger.byAngle.map((a) => (
+                <div key={a.angle} className="flex justify-between gap-4">
+                  <span className="truncate">{a.angle}</span>
+                  <span className="text-emerald-300/80 shrink-0">{a.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="mt-3 text-[11px] text-neutral-500">
+            Earned is money that actually arrived — the sum of payments, never a projection. Committed/mo above is what recurs; this is what landed.
+          </p>
+        </section>
+      )}
+
       {/* The funnel, in order: what you sell → what you say → who you say it
           to → who's in → who's paying. Each section stays on screen when it's
           empty, because an empty one is the instruction. */}
 
       {/* ── 1. What you sell ─────────────────────────────────────── */}
-      <OfferPanel offers={offers ?? []} state={offerState} probe={probe} onChange={load} />
+      <div id="sell" className="scroll-mt-24"><OfferPanel offers={offers ?? []} state={offerState} probe={probe} onChange={load} /></div>
 
       {/* ── 2. What you say ──────────────────────────────────────── */}
-      <MarketingPanel marketing={marketing} hasOffer={offerState?.hasActive ?? false} onChange={load} />
+      <div id="say" className="scroll-mt-24"><MarketingPanel marketing={marketing} hasOffer={offerState?.hasActive ?? false} onChange={load} /></div>
 
       {/* ── 3. What you've written, and whether any of it went out ─ */}
-      <ContentQueue drafts={drafts ?? []} state={contentState} onChange={load} />
+      <div id="content" className="scroll-mt-24"><ContentQueue drafts={drafts ?? []} state={contentState} onChange={load} /></div>
 
-      {/* ── 4. The warm list ─────────────────────────────────────── */}
-      <WarmList onChange={load} empty={snap.empty} />
+      {/* ── 4. The warm list (when there's already a pipeline) ────── */}
+      {!snap.empty && (
+        <div id="warm" className="scroll-mt-24"><WarmList onChange={load} empty={snap.empty} /></div>
+      )}
+
+      {/* ── Tracked links: DIAGNOSTICS — demoted below the day's work. ─ */}
+      {trackLinks && trackLinks.length > 0 && (
+        <section className="aurelius-panel-frame p-4 scroll-mt-24">
+          <div className="flex items-baseline justify-between mb-2">
+            <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80">Your links</h2>
+            <span className="text-[11px] text-neutral-400">clicks → leads, per link</span>
+          </div>
+          <ul className="space-y-1.5 text-xs">
+            {trackLinks.map((l) => (
+              <li key={l.id} className="flex items-center justify-between gap-3">
+                <span className="flex-1 min-w-0 truncate text-neutral-300">
+                  <span className="text-neutral-500">{l.channel}</span>
+                  {l.label ? <span> · {l.label}</span> : null}
+                  <span className="text-neutral-500"> · /l/{l.code}</span>
+                </span>
+                <span className="text-neutral-400 shrink-0">
+                  {l.clickCount} click{l.clickCount === 1 ? "" : "s"} · {l._count.leads} lead{l._count.leads === 1 ? "" : "s"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* ── Growth: integrations, partnerships, paid ─────────────── */}
-      <GrowthPanel />
+      <div id="growth" className="scroll-mt-24"><GrowthPanel /></div>
 
       {/* ── Add a lead ───────────────────────────────────────────── */}
-      <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4">
-        <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80 mb-3">
+      <section className="aurelius-panel-frame p-4">
+        <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/85 mb-3">
           Add someone
         </h2>
         <form onSubmit={addLead} className="grid grid-cols-1 md:grid-cols-5 gap-2">
           <input
             value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required
-            className="md:col-span-1 bg-black/50 border border-aurelius-gold/30 rounded px-3 py-2 text-sm text-aurelius-text placeholder:text-aurelius-text/30"
+            aria-label="Name" autoCapitalize="words" autoComplete="name"
+            className="md:col-span-1 bg-black/50 border border-aurelius-gold/30 rounded px-3 py-2 text-sm text-aurelius-text placeholder:text-aurelius-text/60"
           />
           <input
             value={sport} onChange={(e) => setSport(e.target.value)} placeholder="Sport"
@@ -445,7 +495,7 @@ export default function BusinessPage() {
           />
           <button
             type="submit" disabled={busy || !name.trim()}
-            className="md:col-span-5 mt-1 py-2 rounded border border-aurelius-gold/50 text-aurelius-gold text-sm hover:bg-aurelius-gold/10 disabled:opacity-40"
+            className="aurelius-btn-primary md:col-span-5 mt-1 py-2 text-sm disabled:opacity-40"
           >
             {busy ? "Saving…" : "Add to pipeline"}
           </button>
@@ -454,8 +504,8 @@ export default function BusinessPage() {
 
       {/* ── Pipeline ─────────────────────────────────────────────── */}
       {openLeads.length > 0 && (
-        <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4">
-          <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80 mb-3">
+        <section id="pipeline" className="aurelius-panel-frame p-4 scroll-mt-24">
+          <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/85 mb-3">
             Pipeline · {openLeads.length}
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -471,32 +521,32 @@ export default function BusinessPage() {
                       <div key={l.id} className="rounded border border-aurelius-gold/20 bg-black/50 p-2 text-sm">
                         <div className="text-aurelius-text/90">{l.name}</div>
                         {(l.sport || l.referredBy) && (
-                          <div className="text-[11px] text-aurelius-text/40">
+                          <div className="text-[11px] text-aurelius-text/60">
                             {[l.sport, l.referredBy ? `via ${l.referredBy}` : null].filter(Boolean).join(" · ")}
                           </div>
                         )}
                         {l.nextAction && (
                           <div className="text-[11px] text-amber-200/70 mt-1">→ {l.nextAction}</div>
                         )}
-                        <div className="flex gap-2 mt-2">
+                        <div className="flex flex-wrap gap-2 mt-2">
                           {STAGES.indexOf(stage) < STAGES.length - 1 && (
                             <button
                               onClick={() => moveLead(l.id, STAGES[STAGES.indexOf(stage) + 1]!)}
                               disabled={busy}
-                              className="text-[11px] text-aurelius-gold/70 hover:text-aurelius-gold disabled:opacity-40"
+                              className="text-[11px] px-2 py-1 rounded border border-aurelius-gold/40 text-aurelius-gold/80 hover:text-aurelius-gold hover:border-aurelius-gold/70 disabled:opacity-40"
                             >
-                              advance
+                              advance →
                             </button>
                           )}
                           <button
                             onClick={() => convert(l.id)} disabled={busy}
-                            className="text-[11px] text-emerald-400/80 hover:text-emerald-300 disabled:opacity-40"
+                            className="text-[11px] px-2 py-1 rounded text-emerald-400/90 hover:text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40"
                           >
                             signed
                           </button>
                           <button
                             onClick={async () => {
-                              setBusy(true); setError(null);
+                              setBusy(true); setError(null); setNotice(null);
                               try {
                                 const res = await fetch("/api/crm/leads/draft", {
                                   method: "POST",
@@ -506,18 +556,19 @@ export default function BusinessPage() {
                                 const j = await res.json();
                                 if (!res.ok) throw new Error(j?.error ?? "Draft failed");
                                 await load();
+                                setNotice(`Drafted a message to ${l.name} in your Gmail drafts — review and send.`);
                               } catch (e: any) { setError(e?.message ?? String(e)); }
                               finally { setBusy(false); }
                             }}
                             disabled={busy}
-                            className="text-[11px] text-aurelius-gold/70 hover:text-aurelius-gold disabled:opacity-40"
+                            className="text-[11px] px-2 py-1 rounded text-aurelius-gold/80 hover:text-aurelius-gold hover:bg-aurelius-gold/10 disabled:opacity-40"
                             title="Researches them and drafts a message into your Gmail drafts. Never sends."
                           >
-                            draft
+                            draft msg
                           </button>
                           <button
                             onClick={() => moveLead(l.id, "lost")} disabled={busy}
-                            className="text-[11px] text-aurelius-text/40 hover:text-aurelius-text/70 disabled:opacity-40"
+                            className="text-[11px] px-2 py-1 rounded text-aurelius-text/50 hover:text-aurelius-text/80 disabled:opacity-40"
                           >
                             lost
                           </button>
@@ -534,8 +585,8 @@ export default function BusinessPage() {
 
       {/* ── Roster ───────────────────────────────────────────────── */}
       {clients.length > 0 && (
-        <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4">
-          <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80 mb-3">
+        <section id="roster" className="aurelius-panel-frame p-4 scroll-mt-24">
+          <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/85 mb-3">
             Roster · {clients.length}
           </h2>
           <ul className="divide-y divide-aurelius-gold/10">
@@ -547,7 +598,7 @@ export default function BusinessPage() {
                 >
                   <div>
                     <div className="text-aurelius-text/90 text-sm">{c.name}</div>
-                    <div className="text-[11px] text-aurelius-text/40">
+                    <div className="text-[11px] text-aurelius-text/60">
                       {[c.sport, c.status !== "active" ? c.status : null].filter(Boolean).join(" · ") || "—"}
                     </div>
                   </div>
@@ -569,6 +620,7 @@ export default function BusinessPage() {
           </ul>
         </section>
       )}
+      </div>
     </div>
   );
 }
@@ -666,7 +718,7 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
           <div>
             <div className="uppercase tracking-[0.2em] text-aurelius-gold/50 mb-1">Engagements</div>
             {detail.engagements.length === 0 ? (
-              <div className="text-aurelius-text/40">none</div>
+              <div className="text-aurelius-text/60">none</div>
             ) : (
               detail.engagements.map((e) => (
                 <div key={e.id} className="text-aurelius-text/80">
@@ -680,7 +732,7 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
                       <button
                         disabled={busy}
                         onClick={() => post({ kind: "engagement_patch", engagementId: e.id, status: "completed" })}
-                        className="text-[10px] text-aurelius-text/40 hover:text-aurelius-text/70 disabled:opacity-40"
+                        className="text-[10px] text-aurelius-text/60 hover:text-aurelius-text/70 disabled:opacity-40"
                       >
                         completed
                       </button>
@@ -688,13 +740,13 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
                       <button
                         disabled={busy}
                         onClick={() => post({ kind: "engagement_patch", engagementId: e.id, status: "cancelled" })}
-                        className="text-[10px] text-aurelius-text/40 hover:text-red-300 disabled:opacity-40"
+                        className="text-[10px] text-aurelius-text/60 hover:text-red-300 disabled:opacity-40"
                       >
                         cancelled
                       </button>
                     </span>
                   )}
-                  {e.status !== "active" && <span className="text-aurelius-text/40"> · {e.status}</span>}
+                  {e.status !== "active" && <span className="text-aurelius-text/60"> · {e.status}</span>}
                 </div>
               ))
             )}
@@ -702,7 +754,7 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
           <div>
             <div className="uppercase tracking-[0.2em] text-aurelius-gold/50 mb-1">Owed</div>
             {detail.invoices.filter((i) => i.status !== "paid" && i.status !== "void").length === 0 ? (
-              <div className="text-aurelius-text/40">nothing outstanding</div>
+              <div className="text-aurelius-text/60">nothing outstanding</div>
             ) : (
               detail.invoices
                 .filter((i) => i.status !== "paid" && i.status !== "void")
@@ -717,7 +769,7 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
           <div>
             <div className="uppercase tracking-[0.2em] text-aurelius-gold/50 mb-1">Received · {detail.lifetime} lifetime</div>
             {detail.payments.length === 0 ? (
-              <div className="text-aurelius-text/40">nothing yet</div>
+              <div className="text-aurelius-text/60">nothing yet</div>
             ) : (
               detail.payments.slice(0, 4).map((p) => (
                 <div key={p.id} className="text-aurelius-text/80">
@@ -789,7 +841,7 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
           Mark owed
         </button>
       </div>
-      <p className="text-[10px] text-aurelius-text/40">
+      <p className="text-[10px] text-aurelius-text/60">
         &quot;Mark owed&quot; puts the amount on the books. It does not send anything — sending is outward and stops for your confirm.
       </p>
 
@@ -821,14 +873,14 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
 
         <button
           disabled={busy}
-          className="text-[11px] text-aurelius-text/40 hover:text-aurelius-text/70 disabled:opacity-40"
+          className="text-[11px] text-aurelius-text/60 hover:text-aurelius-text/70 disabled:opacity-40"
           onClick={() => post({ kind: "client_patch", status: "paused" })}
         >
           pause client
         </button>
         <button
           disabled={busy}
-          className="text-[11px] text-aurelius-text/40 hover:text-aurelius-text/70 disabled:opacity-40"
+          className="text-[11px] text-aurelius-text/60 hover:text-aurelius-text/70 disabled:opacity-40"
           onClick={() => post({ kind: "client_patch", status: "ended" })}
         >
           mark ended
@@ -953,11 +1005,11 @@ function OfferPanel({ offers, state, probe, onChange }: { offers: Offer[]; state
                 <div>
                   <div className="text-sm text-aurelius-text/90">
                     {o.name}
-                    <span className="ml-2 text-[10px] uppercase tracking-wider text-aurelius-text/40">
+                    <span className="ml-2 text-[10px] uppercase tracking-wider text-aurelius-text/60">
                       {o.shape}{o.durationWeeks ? ` · ${o.durationWeeks}wk` : ""}
                     </span>
                   </div>
-                  <div className="text-[11px] text-aurelius-text/40">{o.audience}</div>
+                  <div className="text-[11px] text-aurelius-text/60">{o.audience}</div>
                 </div>
                 <div className="text-right text-[11px] shrink-0">
                   <div className={o.status === "active" ? "text-emerald-400/80" : "text-amber-300/70"}>
@@ -982,7 +1034,7 @@ function OfferPanel({ offers, state, probe, onChange }: { offers: Offer[]; state
                   <div className="flex flex-wrap gap-2 items-center pt-1">
                     {o.status === "active" ? (
                       <button disabled={busy} onClick={() => post({ kind: "retire", offerId: o.id })}
-                        className="text-[11px] text-aurelius-text/40 hover:text-aurelius-text/70 disabled:opacity-40">
+                        className="text-[11px] text-aurelius-text/60 hover:text-aurelius-text/70 disabled:opacity-40">
                         stop selling this
                       </button>
                     ) : (
@@ -1082,7 +1134,7 @@ function MarketingPanel({ marketing, hasOffer, onChange }: { marketing?: Marketi
               <li key={a.id} className="py-2 flex justify-between items-start gap-4">
                 <div className="min-w-0">
                   <div className="text-sm text-aurelius-text/90">{a.title}</div>
-                  <div className="text-[11px] text-aurelius-text/40">{a.audience}</div>
+                  <div className="text-[11px] text-aurelius-text/60">{a.audience}</div>
                   {/* The citation, openable. "research-backed" printed in gold
                       over a claim you can't check is worse than no label. */}
                   {a.sources?.length > 0 && (
@@ -1142,7 +1194,7 @@ function MarketingPanel({ marketing, hasOffer, onChange }: { marketing?: Marketi
         <div className="mt-4 rounded border border-aurelius-gold/25 bg-black/50 p-3">
           <div className="flex justify-between items-baseline gap-4 mb-2">
             <div className="text-[10px] uppercase tracking-[0.2em] text-aurelius-gold/50">{draft.angle}</div>
-            <button onClick={() => setDraft(null)} className="text-[11px] text-aurelius-text/40 hover:text-aurelius-text/70">close</button>
+            <button onClick={() => setDraft(null)} className="text-[11px] text-aurelius-text/60 hover:text-aurelius-text/70">close</button>
           </div>
           <pre className="whitespace-pre-wrap text-sm text-aurelius-text/85 font-sans leading-relaxed">{draft.body}</pre>
           <p className="text-[10px] text-amber-200/70 mt-3">{draft.trust}</p>
@@ -1172,7 +1224,7 @@ function MarketingPanel({ marketing, hasOffer, onChange }: { marketing?: Marketi
             >
               {kept ? "Kept ✓" : "Keep it"}
             </button>
-            <span className="text-[10px] text-aurelius-text/40">
+            <span className="text-[10px] text-aurelius-text/60">
               A draft, nowhere else. Posting and sending are outward and stop for your confirm.
             </span>
           </div>
@@ -1236,7 +1288,7 @@ function ContentQueue({ drafts, state, onChange }: { drafts: ContentDraft[]; sta
               <button onClick={() => setOpen(open === d.id ? null : d.id)} className="w-full text-left flex justify-between items-start gap-4">
                 <div className="min-w-0">
                   <div className="text-sm text-aurelius-text/90 truncate">{d.title ?? d.body.slice(0, 60)}</div>
-                  <div className="text-[11px] text-aurelius-text/40">
+                  <div className="text-[11px] text-aurelius-text/60">
                     {[d.channel, d.format?.replace(/_/g, " "), d.angle ? `from "${d.angle.title}"` : null].filter(Boolean).join(" · ")}
                   </div>
                 </div>
@@ -1301,7 +1353,7 @@ function ContentQueue({ drafts, state, onChange }: { drafts: ContentDraft[]; sta
                             disabled={busy}
                             onClick={() => post({ kind: "publish", draftId: d.id })}
                             className={btn}
-                            title="Stages it on the Bridge for your confirm. Nothing goes out until you tap."
+                            title="Stages it on Decisions for your confirm. Nothing goes out until you tap."
                           >
                             Publish…
                           </button>
@@ -1309,7 +1361,7 @@ function ContentQueue({ drafts, state, onChange }: { drafts: ContentDraft[]; sta
                         <button
                           disabled={busy}
                           onClick={() => post({ kind: "discard", draftId: d.id })}
-                          className="text-[11px] text-aurelius-text/40 hover:text-red-300 disabled:opacity-40"
+                          className="text-[11px] text-aurelius-text/60 hover:text-red-300 disabled:opacity-40"
                         >
                           discard
                         </button>
@@ -1330,7 +1382,7 @@ function ContentQueue({ drafts, state, onChange }: { drafts: ContentDraft[]; sta
                       </div>
                       {d.status === "staged" && (
                         <p className="text-[10px] text-amber-200/70">
-                          Waiting on the Bridge for your confirm. Nothing has gone out.
+                          Waiting on Decisions for your confirm. Nothing has gone out.
                         </p>
                       )}
                     </>
@@ -1501,8 +1553,8 @@ function GrowthPanel() {
         <div className="text-[11px] uppercase tracking-wider text-aurelius-gold/50">Paid boost (only behind proof)</div>
         <div className="flex flex-wrap gap-2">
           <button disabled={busy} onClick={() => act({ kind: "propose_boost" }, "Boost proposal")} className={btn}>Propose a boost</button>
-          {/* Stage the spend → files a pending confirm on the Bridge. Spend is always your tap. */}
-          <button disabled={busy} onClick={() => act({ kind: "stage_boost" }, "Boost staged — confirm on the Bridge")} className={btn}>Stage the spend →</button>
+          {/* Stage the spend → files a pending confirm on Decisions. Spend is always your tap. */}
+          <button disabled={busy} onClick={() => act({ kind: "stage_boost" }, "Boost staged — confirm on Decisions")} className={btn}>Stage the spend →</button>
         </div>
         {g?.boost?.active && (
           <p className={`text-xs ${g.boost.cplCents != null && g.boost.verdict.includes("kill") ? "text-red-300" : "text-neutral-300"}`}>
@@ -1527,7 +1579,7 @@ function Stat({ label, value, hint, alert }: { label: string; value: string; hin
     <div className={`rounded border p-3 ${alert ? "border-red-500/40 bg-red-950/10" : "border-aurelius-gold/25 bg-black/40"}`}>
       <div className="text-[10px] uppercase tracking-[0.2em] text-aurelius-gold/50">{label}</div>
       <div className="text-xl text-aurelius-text/90 mt-1">{value}</div>
-      {hint && <div className={`text-[11px] mt-0.5 ${alert ? "text-red-300/80" : "text-aurelius-text/40"}`}>{hint}</div>}
+      {hint && <div className={`text-[11px] mt-0.5 ${alert ? "text-red-300/80" : "text-aurelius-text/60"}`}>{hint}</div>}
     </div>
   );
 }
@@ -1592,7 +1644,7 @@ function WarmList({ onChange, empty }: { onChange: () => void; empty: boolean })
           <p className="text-xs text-aurelius-text/60 leading-relaxed">
             The ten people you could message this week who might say yes — or who know someone who would.
             Old athletes, their parents, coaches you know. One per line. Add an email and how you know them
-            if you have it: <span className="text-aurelius-text/40">Jake Miller, dana@example.com, trained him two years</span>
+            if you have it: <span className="text-aurelius-text/60">Jake Miller, dana@example.com, trained him two years</span>
           </p>
           <textarea
             value={raw}
@@ -1633,7 +1685,7 @@ function WarmList({ onChange, empty }: { onChange: () => void; empty: boolean })
               Draft what&apos;s due
             </button>
           </div>
-          <p className="text-[10px] text-aurelius-text/40">
+          <p className="text-[10px] text-aurelius-text/60">
             Drafts land in your Gmail drafts for you to read and send. Aurelius never messages anyone on its own.
           </p>
         </div>

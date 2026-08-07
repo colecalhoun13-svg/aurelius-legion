@@ -623,6 +623,99 @@ button:active {
 }
 
 /* ===============================================
+   AURELIUS — DEPTH & MOTION LAYER (business glow-up)
+   Elevation via layered near-black + gold glow (not flat panels),
+   purposeful sub-500ms motion, reduced-motion safe. Extends the
+   imperial panel language above; used across the business surface.
+   =============================================== */
+
+/* A raised inner surface — one elevation step above panel-frame, for the
+   cards/rows nested inside a panel. Lighter = closer, per dark-elevation. */
+.aurelius-raise {
+  border: 1px solid rgba(212, 175, 55, 0.16);
+  border-radius: 0.75rem;
+  background: linear-gradient(158deg, rgba(30, 26, 15, 0.48), rgba(12, 11, 8, 0.62));
+  box-shadow: inset 0 1px 0 rgba(212, 175, 55, 0.1), 0 4px 18px -12px rgba(0, 0, 0, 0.65);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.aurelius-raise:hover {
+  border-color: rgba(212, 175, 55, 0.32);
+  box-shadow: inset 0 1px 0 rgba(212, 175, 55, 0.16), 0 12px 30px -14px rgba(0, 0, 0, 0.72);
+}
+
+/* THE "DO THIS NEXT" PANEL — exactly one on the page glows and breathes a
+   slow gold sheen, so the eye lands on the highest-leverage undone action. */
+.aurelius-priority {
+  border-color: rgba(212, 175, 55, 0.55) !important;
+  box-shadow:
+    0 0 0 1px rgba(212, 175, 55, 0.15),
+    0 12px 44px -12px rgba(212, 175, 55, 0.2),
+    inset 0 1px 0 rgba(212, 175, 55, 0.3);
+  position: relative;
+  overflow: hidden;
+}
+.aurelius-priority::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 34%, rgba(212, 175, 55, 0.09) 50%, transparent 66%);
+  background-size: 250% 100%;
+  animation: auSheen 7s ease-in-out infinite;
+}
+@keyframes auSheen {
+  0%, 100% { background-position: 160% 0; }
+  50% { background-position: -60% 0; }
+}
+
+/* Staggered rise-in for a group of panels/cards on mount — the "smooth" reveal. */
+@keyframes auRiseIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+.aurelius-reveal > * {
+  opacity: 0;
+  animation: auRiseIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.aurelius-reveal > *:nth-child(1) { animation-delay: 0.02s; }
+.aurelius-reveal > *:nth-child(2) { animation-delay: 0.06s; }
+.aurelius-reveal > *:nth-child(3) { animation-delay: 0.1s; }
+.aurelius-reveal > *:nth-child(4) { animation-delay: 0.14s; }
+.aurelius-reveal > *:nth-child(5) { animation-delay: 0.18s; }
+.aurelius-reveal > *:nth-child(6) { animation-delay: 0.22s; }
+.aurelius-reveal > *:nth-child(7) { animation-delay: 0.26s; }
+.aurelius-reveal > *:nth-child(8) { animation-delay: 0.3s; }
+.aurelius-reveal > *:nth-child(9) { animation-delay: 0.34s; }
+.aurelius-reveal > *:nth-child(n + 10) { animation-delay: 0.38s; }
+
+/* Filled gold PRIMARY action — the one contextual next step per panel. Every
+   other button stays the faint outline pill; this is what the eye finds first. */
+.aurelius-btn-primary {
+  background: linear-gradient(180deg, #e8c964, #d4af37);
+  color: #1a1508;
+  font-weight: 700;
+  border: 1px solid rgba(212, 175, 55, 0.6);
+  border-radius: 0.5rem;
+  box-shadow: 0 2px 10px -2px rgba(212, 175, 55, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transition: filter 0.18s ease, transform 0.12s ease, box-shadow 0.2s ease;
+}
+.aurelius-btn-primary:hover { filter: brightness(1.08); box-shadow: 0 4px 16px -2px rgba(212, 175, 55, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.4); }
+.aurelius-btn-primary:disabled { filter: grayscale(0.4) brightness(0.8); box-shadow: none; }
+
+/* Sticky in-page jump nav — a thin blurred layer that floats over the deck. */
+.aurelius-jumpnav {
+  background: rgba(10, 10, 10, 0.72);
+  backdrop-filter: blur(12px) saturate(1.1);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+}
+
+/* iOS Safari force-zooms on focus of any field under 16px. Keep the field
+   visually the same, only push rendered text to the no-zoom threshold. */
+@media (max-width: 767px) {
+  input, select, textarea { font-size: 16px; }
+}
+
+/* ===============================================
    GLOBAL BODY STYLING
    =============================================== */
 body {
@@ -674,7 +767,13 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-  .aurelius-stagger > * {
+  .aurelius-stagger > *,
+  .aurelius-reveal > * {
     opacity: 1;
+  }
+  /* Kill the priority sheen for reduced-motion — the border/glow still marks it. */
+  .aurelius-priority::after {
+    animation: none;
+    display: none;
   }
 }
