@@ -1811,6 +1811,13 @@ async function main() {
     check("every imported lead gets a follow-up date immediately (a list is not a pipeline)",
       imported.length === 2 && imported.every((l) => l.nextActionAt !== null && !!l.nextAction));
 
+    // 1.5: `relationship` is how COLE knows them, NOT who referred them. A
+    // warm-list lead has no referrer, so referredBy stays null and the
+    // relationship is preserved in the notes the personalisation prompt reads.
+    const warmOne = imported.find((l) => l.email === `${TAG}one@example.com`)!;
+    check("a warm-list lead's relationship is not misfiled as a referrer",
+      warmOne.referredBy === null && /former athlete/i.test(warmOne.notes ?? ""));
+
     // Inbound: the values that previously had no producer.
     const inbound = await captureInboundLead({
       name: `${TAG} Inbound`, email: `${TAG}in@example.com`, sport: "soccer",
@@ -1889,6 +1896,88 @@ async function main() {
 
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["inbound_lead", "outreach_draft"] } } });
     await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+  }
+
+  console.log("── the attribution spine: which marketing actually earned ──");
+  {
+    // The emit side attribution never had: a real trackable link, a touch
+    // ledger, and earned money credited to the channel/angle that produced it.
+    const { mintTrackLink, resolveTrackLink, countClick } = await import("../crm/trackLinks.ts");
+    const { captureInboundLead } = await import("../crm/leadEngine.ts");
+    const { moneyLedger } = await import("../crm/ledger.ts");
+    const { convertLead, addClient, recordPayment } = await import("../crm/service.ts");
+
+    const angle = await prisma.marketingAngle.create({
+      data: { title: `${TAG} spineangle`, hypothesis: "h", audience: "parent", grounding: "external" },
+    });
+
+    // 1.2 — minting: a real, unique, click-counted link (not an id prefix).
+    const link = await mintTrackLink({ channel: "instagram", angleId: angle.id, label: `${TAG} link` });
+    check("a tracked link mints a unique code", !!link.code && link.code.length >= 7);
+    check("the link resolves to its channel and angle",
+      (await resolveTrackLink(link.code))?.angleId === angle.id);
+    await countClick(link.code);
+    check("a click is counted on the link", (await resolveTrackLink(link.code))?.clickCount === 1);
+
+    // 1.1 — a lead arriving through the link carries full attribution, and the
+    // link names its own channel (instagram), overriding the form default.
+    const lead = await captureInboundLead({ name: `${TAG} Tracked`, email: `${TAG}trk@example.com`, ref: link.code });
+    const leadRow = await prisma.lead.findUnique({ where: { id: lead.leadId! } });
+    check("a tracked-link lead records its refCode, link, angle and channel",
+      leadRow?.refCode === link.code && leadRow?.trackLinkId === link.id &&
+      leadRow?.angleId === angle.id && leadRow?.source === "instagram");
+    check("the intake touch is logged in the attribution ledger",
+      (await prisma.attributionEvent.count({ where: { kind: "intake", leadId: lead.leadId! } })) === 1);
+
+    // 1.1 — earned money is the sum of Payment, credited to the channel/angle.
+    await convertLead(lead.leadId!, {});
+    const client = await prisma.client.findFirst({ where: { name: `${TAG} Tracked` } });
+    await recordPayment({ clientId: client!.id, amount: 250, method: "stripe", recordedBy: "stripe_webhook" });
+    const ledgerNow = await moneyLedger();
+    check("earned is the sum of payments that actually arrived", ledgerNow.earnedCents >= 25000);
+    check("earned is credited to the channel that produced the client",
+      (ledgerNow.byChannel.find((c) => c.channel === "instagram")?.cents ?? 0) >= 25000);
+    check("self-recorded money is provenance-tracked, not laundered into Cole's hand",
+      ledgerNow.recordedBy.some((r) => r.by === "stripe_webhook" && r.cents >= 25000));
+    check("a 'paid' touch is credited in the attribution ledger",
+      (await prisma.attributionEvent.count({ where: { kind: "paid", clientId: client!.id } })) === 1);
+
+    // 1.3 — an inbound reply on the outreach thread flips the lead + credits the angle.
+    const contacted = await prisma.lead.create({
+      data: { name: `${TAG} Contacted`, email: `${TAG}reply@example.com`, status: "contacted",
+        angleId: angle.id, source: "warm_list", outreachThreadId: `${TAG}-thread-1` },
+    });
+    const { matchInboundReplyToLead } = await import("../autonomy/workflows/inboxTriage.ts");
+    const matched = await matchInboundReplyToLead({
+      id: "m1", threadId: `${TAG}-thread-1`, from: `${TAG}reply@example.com`, subject: "re", snippet: "yes",
+    } as any);
+    const flipped = await prisma.lead.findUnique({ where: { id: contacted.id } });
+    check("an inbound reply on the outreach thread flips the lead to conversing", matched && flipped?.status === "conversing");
+    check("the reply is credited as a touch", (await prisma.attributionEvent.count({ where: { kind: "reply", leadId: contacted.id } })) === 1);
+    check("a lead that never replied is not flipped (no empty-OR match)",
+      (await matchInboundReplyToLead({ id: "m2", threadId: "", from: "", subject: "", snippet: "" } as any)) === false);
+
+    // 1.6 — the offer probe floats variants with distinct links; standings rank them.
+    const { probeOffer, offerProbeStanding } = await import("../business/offers.ts");
+    const oA = await prisma.offer.create({ data: { name: `${TAG} Var A`, audience: "hs athletes", promise: "faster", shape: "monthly", status: "draft" } });
+    const oB = await prisma.offer.create({ data: { name: `${TAG} Var B`, audience: "hs athletes", promise: "stronger", shape: "block", status: "draft" } });
+    const probe = await probeOffer({ variants: 2 });
+    check("the probe floats each variant behind its own tracked link",
+      probe.ok && (probe.variants?.length ?? 0) >= 2 && probe.variants!.every((v) => v.code.length >= 7));
+    check("re-probing reuses each variant's link, not a duplicate", (await probeOffer({ variants: 2 })).ok &&
+      (await prisma.trackLink.count({ where: { offerId: { in: [oA.id, oB.id] }, channel: "offer_probe" } })) === 2);
+    const standing = await offerProbeStanding();
+    check("the probe standing lists the variants and their leads", standing.variants.length >= 2);
+
+    // Cleanup — only what this block made.
+    await prisma.attributionEvent.deleteMany({ where: { OR: [{ angleId: angle.id }, { clientId: client!.id }, { leadId: contacted.id } ] } });
+    await prisma.payment.deleteMany({ where: { clientId: client!.id } });
+    await prisma.trackLink.deleteMany({ where: { OR: [{ angleId: angle.id }, { offerId: { in: [oA.id, oB.id] } }] } });
+    await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.client.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.offer.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.marketingAngle.deleteMany({ where: { id: angle.id } });
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["inbound_lead", "lead_reply"] } } });
   }
 
   console.log("── the badge: receipts are not decisions ──");

@@ -80,8 +80,15 @@ export async function importWarmList(
       phone: raw.phone,
       sport: raw.sport,
       source,
-      referredBy: raw.relationship,
-      notes: raw.context,
+      // NOT referredBy. `relationship` is how COLE knows them ("former athlete",
+      // "parent"), not who SENT them — and a warm-list lead has no referrer, Cole
+      // knows them directly. Stuffing it into referredBy corrupted referral
+      // attribution (and draftOutreach then read it back as the relationship,
+      // making the bug self-consistent and invisible). Keep it in the notes,
+      // where the personalisation prompt already looks.
+      notes: [raw.relationship ? `Relationship: ${raw.relationship}` : null, raw.context]
+        .filter(Boolean)
+        .join("\n") || undefined,
       // Every imported lead gets a due date immediately. A warm list with no
       // next action is a list, not a pipeline — and the whole failure mode
       // here is good intentions that never get a second contact.
@@ -144,7 +151,7 @@ export async function draftOutreach(leadId: string): Promise<{
           `This is a real person, not a marketing segment.\n\n` +
           `WHO: ${lead.name}\n` +
           (lead.sport ? `SPORT: ${lead.sport}\n` : "") +
-          (lead.referredBy ? `RELATIONSHIP: ${lead.referredBy}\n` : "") +
+          (lead.referredBy ? `REFERRED BY: ${lead.referredBy} (mention the connection naturally)\n` : "") +
           (lead.notes ? `WHAT COLE SAID ABOUT THEM: ${lead.notes}\n` : "") +
           `\nRULES — these are not style preferences:\n` +
           `- Never claim a result, statistic, or outcome that isn't in the confirmed facts above. If you want to ` +
@@ -221,6 +228,7 @@ export async function finalizeOutreachDraft(payload: any): Promise<{ draftId?: s
     body,
   });
   const draftId = res?.id ?? res?.draftId;
+  const threadId = res?.threadId as string | undefined;
 
   const FOLLOW_UP_DAYS = 4; // a warm lead goes cold in about a week
   await prisma.lead.update({
@@ -230,6 +238,9 @@ export async function finalizeOutreachDraft(payload: any): Promise<{ draftId?: s
       lastContactAt: new Date(),
       nextAction: "Follow up if no reply",
       nextActionAt: new Date(Date.now() + FOLLOW_UP_DAYS * 86400_000),
+      // Persist the thread so an inbound reply can be matched back to this lead
+      // and flip it to "conversing" — without it, a reply is invisible.
+      ...(threadId ? { outreachThreadId: threadId } : {}),
     },
   });
   return { draftId, leadId };
@@ -345,6 +356,26 @@ export async function resolveRef(ref: string | undefined): Promise<string | null
   return null;
 }
 
+/**
+ * The full attribution context a ref carries. A minted TrackLink (the real
+ * emitter) is an EXACT code match and carries its channel + angle; the older
+ * draft-id/angle-id prefix links still in the wild fall through to resolveRef,
+ * so nothing that was ever posted stops attributing.
+ */
+export async function resolveAttribution(ref: string | undefined): Promise<{
+  angleId: string | null;
+  trackLinkId: string | null;
+  refCode: string | null;
+  channel: string | null;
+}> {
+  const clean = (ref ?? "").trim().replace(/[^a-zA-Z0-9]/g, "").slice(0, 30);
+  if (clean.length < 5) return { angleId: null, trackLinkId: null, refCode: null, channel: null };
+  const link = await prisma.trackLink.findUnique({ where: { code: clean } }).catch(() => null);
+  if (link) return { angleId: link.angleId, trackLinkId: link.id, refCode: link.code, channel: link.channel };
+  const angleId = await resolveRef(ref);
+  return { angleId, trackLinkId: null, refCode: angleId ? clean : null, channel: null };
+}
+
 export async function captureInboundLead(input: {
   name: string;
   email?: string;
@@ -363,9 +394,19 @@ export async function captureInboundLead(input: {
   if (!name) return { ok: false, error: "A lead needs a name." };
 
   const email = clean(input.email, 200);
-  // Which idea earned them. Resolved before the dedup branch so a second
-  // submission through a different post still records the newer attribution.
-  const angleId = await resolveRef(input.ref).catch(() => null);
+  // Which idea AND which link earned them. Resolved before the dedup branch so a
+  // second submission through a different post records the newer attribution.
+  const attr = await resolveAttribution(input.ref).catch(() => ({
+    angleId: null as string | null,
+    trackLinkId: null as string | null,
+    refCode: null as string | null,
+    channel: null as string | null,
+  }));
+  const { recordAttribution } = await import("./trackLinks.ts");
+  // A tracked link names its own channel; otherwise honour what the form said,
+  // then fall back to "website".
+  const channel = attr.channel
+    ?? ((LEAD_SOURCES as readonly string[]).includes(input.source ?? "") ? input.source! : "website");
 
   // Don't create a duplicate when someone submits the form twice.
   const existing = email ? await prisma.lead.findFirst({ where: { email }, select: { id: true } }) : null;
@@ -375,8 +416,19 @@ export async function captureInboundLead(input: {
       data: {
         nextAction: "They wrote in again — reply",
         nextActionAt: new Date(),
-        ...(angleId ? { angleId } : {}),
+        ...(attr.angleId ? { angleId: attr.angleId } : {}),
+        ...(attr.refCode ? { refCode: attr.refCode } : {}),
+        ...(attr.trackLinkId ? { trackLinkId: attr.trackLinkId } : {}),
       },
+    });
+    await recordAttribution({
+      kind: "intake",
+      channel,
+      refCode: attr.refCode,
+      trackLinkId: attr.trackLinkId,
+      angleId: attr.angleId,
+      leadId: existing.id,
+      metadata: { repeat: true },
     });
     return { ok: true, leadId: existing.id };
   }
@@ -386,16 +438,34 @@ export async function captureInboundLead(input: {
     email,
     phone: clean(input.phone, 40),
     sport: clean(input.sport, 60),
-    source: (LEAD_SOURCES as readonly string[]).includes(input.source ?? "") ? input.source : "website",
+    source: channel,
     notes: clean(input.message, 2000),
     nextAction: "Reply — they reached out first",
     nextActionAt: new Date(),
   });
-  // The chain angle → lead → client → payment only closes if this hop happens.
-  // Best-effort: a tracking write must never cost the lead itself.
-  if (angleId) {
-    await prisma.lead.update({ where: { id: lead.id }, data: { angleId } }).catch(() => {});
+  // The chain link/angle → lead → client → payment only closes if this hop
+  // happens. Best-effort: a tracking write must never cost the lead itself.
+  if (attr.angleId || attr.refCode || attr.trackLinkId) {
+    await prisma.lead
+      .update({
+        where: { id: lead.id },
+        data: {
+          ...(attr.angleId ? { angleId: attr.angleId } : {}),
+          ...(attr.refCode ? { refCode: attr.refCode } : {}),
+          ...(attr.trackLinkId ? { trackLinkId: attr.trackLinkId } : {}),
+        },
+      })
+      .catch(() => {});
   }
+  // The intake touch — the first attributable event that has a lead attached.
+  await recordAttribution({
+    kind: "intake",
+    channel,
+    refCode: attr.refCode,
+    trackLinkId: attr.trackLinkId,
+    angleId: attr.angleId,
+    leadId: lead.id,
+  });
 
   // An inbound lead is the rarest event in this business. It is a decision,
   // it is time-critical, and it should reach the phone immediately.

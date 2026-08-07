@@ -766,11 +766,27 @@ model Lead {
   angleId String?
   angle   MarketingAngle? @relation(fields: [angleId], references: [id])
 
+  // WHICH TRACKED LINK brought them, when they arrived through one. refCode is
+  // the raw code carried on the URL (kept even if the TrackLink row is later
+  // deleted); trackLink is the resolved row. This is the emit side the old
+  // 8-char draft-id prefix never had — a real identity, click-counted.
+  refCode     String?
+  trackLinkId String?
+  trackLink   TrackLink? @relation(fields: [trackLinkId], references: [id])
+
+  // The Gmail thread of the outreach draft sent to this lead, persisted so an
+  // inbound reply on the same thread can flip the lead to "conversing" and
+  // credit the angle. Without it, a reply is invisible to the pipeline.
+  outreachThreadId String?
+
+  attributionEvents AttributionEvent[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([status, nextActionAt])
   @@index([source])
+  @@index([outreachThreadId])
 }
 
 // A converted athlete. Distinct from Lead so a lost lead can't quietly linger
@@ -940,6 +956,7 @@ model Offer {
   sources   Json?
 
   engagements Engagement[]
+  trackLinks  TrackLink[]
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -1021,6 +1038,12 @@ model Payment {
   externalRef String?
   note        String?
 
+  // WHO recorded it — the provenance that makes "money arrived on its own" a
+  // true claim. "cole" is his hand; "stripe_webhook" / "email_parse" / "twilio"
+  // are self-recordings (Wave 5). This is the honest half of automated money:
+  // Aurelius can log a payment it saw, and say exactly how it saw it.
+  recordedBy String @default("cole")
+
   createdAt DateTime @default(now())
 
   @@index([clientId, receivedAt])
@@ -1066,8 +1089,114 @@ model MarketingAngle {
   leads  Lead[]
   drafts ContentDraft[]
 
+  trackLinks        TrackLink[]
+  attributionEvents AttributionEvent[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([status])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// THE ATTRIBUTION SPINE — which marketing actually earned.
+//
+// Before this, attribution was a single scalar (Lead.angleId) set best-effort
+// from an 8-char draft-id prefix. You could see a lead's final angle, never
+// HOW it arrived or WHICH link carried it. These three models are the emit +
+// record side: a real trackable link, an event log of every touch, and a
+// stamp on each thing published so insights join back to what produced them.
+//
+// Deliberately NOT a "MoneyEvent" table: the schema already separates Invoice
+// (owed) from Payment (received), and "earned" is the sum of Payment — money
+// that actually arrived. A parallel money-state row would duplicate that and
+// re-introduce the stored-state dishonesty the Invoice/Payment split avoids.
+// So earned lives as a code invariant over Payment (crm/ledger.ts), and the
+// "paid" AttributionEvent credits that money to the touch that produced it.
+// ═══════════════════════════════════════════════════════════════════
+
+// A minted, click-counted link. `/l/:code` redirects to the public intake
+// (/start?ref=code) and counts the click. Every published post, every warm-list
+// message, every offer-probe variant can carry its own — so the first ten leads
+// tell Cole which channel and which angle actually work.
+model TrackLink {
+  id          String  @id @default(cuid())
+  code        String  @unique // short, URL-safe; the whole identity of the link
+  destination String  @default("/start") // where /l/:code sends them, ref appended
+  channel     String  @default("other") // "instagram" | "email" | "warm_list" | "offer_probe" | "website" | "other"
+  label       String? // human note: "IG bio link — squat reel"
+
+  angleId    String?
+  angle      MarketingAngle? @relation(fields: [angleId], references: [id])
+  offerId    String?
+  offer      Offer?          @relation(fields: [offerId], references: [id])
+  // Soft ref (no FK) to the OutwardArtifact that minted it, if any — kept soft
+  // so deleting an artifact never cascades a live link out of existence.
+  artifactId String?
+
+  clickCount Int @default(0)
+
+  leads  Lead[]
+  events AttributionEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([channel])
+}
+
+// One row per attributable touch in a lead's journey. `kind` is the step:
+//   "click"     — the tracked link was opened (often before any lead exists)
+//   "intake"    — a public form submission created/matched a lead
+//   "inbound"   — an unsolicited inbound (email/DM) landed
+//   "reply"     — a lead replied to outreach (credits the angle)
+//   "converted" — a lead became a client
+//   "paid"      — money arrived, credited to this touch (amountCents set)
+// leadId is null for an anonymous click; clientId/paymentId are soft refs so
+// the money side never cascades this history away.
+model AttributionEvent {
+  kind    String
+  id      String  @id @default(cuid())
+  channel String  @default("other")
+  refCode String?
+
+  trackLinkId String?
+  trackLink   TrackLink?      @relation(fields: [trackLinkId], references: [id])
+  angleId     String?
+  angle       MarketingAngle? @relation(fields: [angleId], references: [id])
+  leadId      String?
+  lead        Lead?           @relation(fields: [leadId], references: [id])
+
+  clientId    String? // soft ref
+  paymentId   String? // soft ref — set on "paid" events
+  amountCents Int? // only on "paid" — the money this touch is credited
+
+  metadata   Json?
+  occurredAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([kind, occurredAt])
+  @@index([channel])
+  @@index([leadId])
+  @@index([refCode])
+}
+
+// The authorship stamp on something actually published outward. Persists the
+// platform object id (IG media id) that finalizeContentPublish used to drop on
+// the floor, so 72h-later insights can join reach/likes back to the exact post
+// — and through its angleIds, to the ideas that earned them.
+model OutwardArtifact {
+  id          String   @id @default(cuid())
+  draftId     String? // the ContentDraft it came from (soft ref)
+  channel     String   @default("instagram")
+  externalId  String? // IG media / post id — the durable platform object id
+  permalink   String? // public URL of the published post
+  angleIds    String[] // which angles it embodies
+  trackLinkId String? // the ref link minted for it (soft ref)
+
+  publishedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([channel, publishedAt])
+  @@index([externalId])
 }

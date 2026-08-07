@@ -269,6 +269,120 @@ export async function retireOffer(id: string): Promise<{ ok: boolean; error?: st
   return { ok: true };
 }
 
+// ── THE OFFER PROBE — let the market pick the promise, not a guess ────
+//
+// Cole has zero clients and no proven offer. Which promise/shape lands is not a
+// thing to reason about in a vacuum — it's a thing to TEST. probeOffer floats
+// 2–3 draft variants, each behind its own tracked link, so real intake leads
+// (not opinions) say which one resonates. The winner is the one Cole ACTIVATES,
+// with a price — his hand only, exactly like every other activation. Nothing
+// here goes live, spends, or points marketing anywhere on its own.
+
+/** Set up (or refresh) an A/B/C probe: ensure ≥2 draft variants exist, each with
+ *  its own offer_probe tracked link. Idempotent — re-running reuses each offer's
+ *  existing probe link instead of minting duplicates. */
+export async function probeOffer(opts: { variants?: number } = {}): Promise<{
+  ok: boolean;
+  error?: string;
+  variants?: Array<{ offerId: string; name: string; shape: string; code: string; url: string; absolute: boolean }>;
+  note?: string;
+}> {
+  const target = Math.min(Math.max(opts.variants ?? 3, 2), 3);
+
+  let drafts = await prisma.offer.findMany({
+    where: { status: "draft" },
+    orderBy: { createdAt: "desc" },
+    take: target,
+  });
+
+  // Draft up to `target`, varying the shape so the variants are genuinely
+  // different bets rather than three phrasings of one.
+  const shapes: OfferShape[] = ["monthly", "block", "program"];
+  let guard = 0;
+  while (drafts.length < target && guard++ < target + 2) {
+    const res = await draftOffer({ shape: shapes[drafts.length % shapes.length] });
+    if (!res.ok) break; // no engine, say — keep whatever drafts we have
+    drafts = await prisma.offer.findMany({ where: { status: "draft" }, orderBy: { createdAt: "desc" }, take: target });
+  }
+  if (drafts.length < 2) {
+    return {
+      ok: false,
+      error:
+        "A probe needs at least two draft variants and I couldn't produce them " +
+        "(no engine, likely). Draft a couple of offers, then probe.",
+    };
+  }
+
+  const { mintTrackLink, trackLinkUrl } = await import("../crm/trackLinks.ts");
+  const variants: Array<{ offerId: string; name: string; shape: string; code: string; url: string; absolute: boolean }> = [];
+  for (const o of drafts.slice(0, target)) {
+    let link = await prisma.trackLink.findFirst({ where: { offerId: o.id, channel: "offer_probe" } });
+    if (!link) {
+      const minted = await mintTrackLink({ channel: "offer_probe", offerId: o.id, label: `Offer probe — ${o.name}` });
+      link = await prisma.trackLink.findUnique({ where: { id: minted.id } });
+    }
+    if (!link) continue;
+    const u = trackLinkUrl(link.code);
+    variants.push({ offerId: o.id, name: o.name, shape: o.shape, code: link.code, url: u.url, absolute: u.absolute });
+  }
+
+  return {
+    ok: true,
+    variants,
+    note:
+      "Put each link in front of the same kind of audience (a post, a story, a DM) and let intake decide. " +
+      "The one that pulls leads is the one to price and activate — your call, always.",
+  };
+}
+
+/** Where the probe stands: leads + clicks per variant, and the current leader.
+ *  Read-only — activation stays Cole's hand (activateOffer, which needs a price). */
+export async function offerProbeStanding(): Promise<{
+  running: boolean;
+  variants: Array<{ offerId: string; name: string; shape: string; status: string; code: string; clicks: number; leads: number }>;
+  leader: { offerId: string; name: string; leads: number } | null;
+  note: string;
+}> {
+  const links = await prisma.trackLink.findMany({
+    where: { channel: "offer_probe", offerId: { not: null } },
+    include: {
+      offer: { select: { name: true, shape: true, status: true } },
+      _count: { select: { leads: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const variants = links
+    .filter((l) => l.offer)
+    .map((l) => ({
+      offerId: l.offerId!,
+      name: l.offer!.name,
+      shape: l.offer!.shape,
+      status: l.offer!.status,
+      code: l.code,
+      clicks: l.clickCount,
+      leads: l._count.leads,
+    }));
+
+  const running = variants.length >= 2 && variants.some((v) => v.status === "draft");
+  const withLeads = [...variants].sort((a, b) => b.leads - a.leads || b.clicks - a.clicks);
+  const leader =
+    withLeads.length > 0 && withLeads[0]!.leads > 0
+      ? { offerId: withLeads[0]!.offerId, name: withLeads[0]!.name, leads: withLeads[0]!.leads }
+      : null;
+
+  return {
+    running,
+    variants,
+    leader,
+    note: leader
+      ? `"${leader.name}" is ahead with ${leader.leads} lead${leader.leads === 1 ? "" : "s"}. If that holds, it's the one to price and activate.`
+      : variants.length === 0
+        ? "No probe running. Float 2–3 variants and let intake pick the winner."
+        : "Probe live, no leads on any variant yet — it's early. The links need to be in front of people.",
+  };
+}
+
 // ── 3. WHAT EVERYTHING ELSE READS ────────────────────────────────────
 
 /**

@@ -71,6 +71,25 @@ type ContentDraft = {
 
 type ContentState = { draft: number; ready: number; staged: number; published: number; headline: string };
 
+type MoneyLedger = {
+  earnedCents: number; earned: string; earnedThisMonth: string; paymentCount: number;
+  byChannel: { channel: string; cents: number; label: string }[];
+  byAngle: { angle: string; cents: number; label: string }[];
+  recordedBy: { by: string; cents: number; count: number }[];
+  selfRecordedCents: number; headline: string;
+};
+
+type ProbeVariant = { offerId: string; name: string; shape: string; status: string; code: string; clicks: number; leads: number };
+type Probe = {
+  running: boolean; variants: ProbeVariant[];
+  leader: { offerId: string; name: string; leads: number } | null; note: string;
+};
+
+type TrackLink = {
+  id: string; code: string; channel: string; label: string | null; clickCount: number;
+  _count: { leads: number; events: number };
+};
+
 const STAGES = ["new", "contacted", "conversing", "proposed"] as const;
 const SOURCES = ["manual", "referral", "instagram", "email", "word_of_mouth", "website", "other"] as const;
 
@@ -82,6 +101,7 @@ export default function BusinessPage() {
     pipeline: Snapshot; attention: Attention; clients: Client[]; leads: Lead[];
     marketing?: Marketing; offers?: Offer[]; offerState?: OfferState;
     drafts?: ContentDraft[]; contentState?: ContentState;
+    ledger?: MoneyLedger; probe?: Probe; trackLinks?: TrackLink[];
   } | null>(null);
   // A failed load must never render as "you have no business" — that reads
   // identically to the real empty state and would be a lie about his data.
@@ -180,7 +200,7 @@ export default function BusinessPage() {
 
   if (!data) return <div className="p-6 text-aurelius-text/50">Loading…</div>;
 
-  const { pipeline: snap, attention, clients, leads, marketing, offers, offerState, drafts, contentState } = data;
+  const { pipeline: snap, attention, clients, leads, marketing, offers, offerState, drafts, contentState, ledger, probe, trackLinks } = data;
   const openLeads = leads.filter((l) => !["won", "lost"].includes(l.status));
   const attentionCount =
     attention.blocksEnding.length + attention.renewalsDue.length + attention.followUpsOverdue.length + attention.unpaid.length;
@@ -234,6 +254,75 @@ export default function BusinessPage() {
         </section>
       )}
 
+      {/* ── The money ledger: earned money, traced to what earned it ─ */}
+      {ledger && ledger.earnedCents > 0 && (
+        <section className="rounded border border-emerald-500/30 bg-black/40 p-4">
+          <div className="flex items-baseline justify-between mb-3">
+            <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-emerald-300/80">Earned</h2>
+            <span className="text-xs text-neutral-500">
+              {ledger.paymentCount} payment{ledger.paymentCount === 1 ? "" : "s"}
+              {ledger.selfRecordedCents > 0 ? ` · ${money(ledger.selfRecordedCents)} self-recorded` : ""}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <Stat label="Earned all-time" value={ledger.earned} />
+            <Stat label="Earned this month" value={ledger.earnedThisMonth} />
+            {ledger.byChannel[0] && ledger.byChannel[0].channel !== "unattributed" && (
+              <Stat label="Top channel" value={ledger.byChannel[0].channel} hint={ledger.byChannel[0].label} />
+            )}
+          </div>
+          {ledger.byChannel.length > 0 && (
+            <div className="mt-3 text-xs text-neutral-400 space-y-1">
+              <div className="uppercase tracking-wider text-neutral-600">Earned by channel</div>
+              {ledger.byChannel.map((c) => (
+                <div key={c.channel} className="flex justify-between gap-4">
+                  <span>{c.channel}</span>
+                  <span className="text-emerald-300/80">{c.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {ledger.byAngle.length > 0 && (
+            <div className="mt-3 text-xs text-neutral-400 space-y-1">
+              <div className="uppercase tracking-wider text-neutral-600">Earned by angle</div>
+              {ledger.byAngle.map((a) => (
+                <div key={a.angle} className="flex justify-between gap-4">
+                  <span className="truncate">{a.angle}</span>
+                  <span className="text-emerald-300/80 shrink-0">{a.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="mt-3 text-[11px] text-neutral-600">
+            Earned is money that actually arrived — the sum of payments, never a projection. Committed/mo above is what recurs; this is what landed.
+          </p>
+        </section>
+      )}
+
+      {/* ── Tracked links: the emit side of attribution, click-counted ─ */}
+      {trackLinks && trackLinks.length > 0 && (
+        <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4">
+          <div className="flex items-baseline justify-between mb-2">
+            <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80">Your links</h2>
+            <span className="text-[11px] text-neutral-500">clicks → leads, per link</span>
+          </div>
+          <ul className="space-y-1.5 text-xs">
+            {trackLinks.map((l) => (
+              <li key={l.id} className="flex items-center justify-between gap-3">
+                <span className="flex-1 min-w-0 truncate text-neutral-300">
+                  <span className="text-neutral-600">{l.channel}</span>
+                  {l.label ? <span> · {l.label}</span> : null}
+                  <span className="text-neutral-600"> · /l/{l.code}</span>
+                </span>
+                <span className="text-neutral-500 shrink-0">
+                  {l.clickCount} click{l.clickCount === 1 ? "" : "s"} · {l._count.leads} lead{l._count.leads === 1 ? "" : "s"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {/* ── What costs money if ignored ──────────────────────────── */}
       {attentionCount > 0 && (
         <section className="rounded border border-aurelius-gold/30 bg-black/40 p-4">
@@ -273,7 +362,7 @@ export default function BusinessPage() {
           empty, because an empty one is the instruction. */}
 
       {/* ── 1. What you sell ─────────────────────────────────────── */}
-      <OfferPanel offers={offers ?? []} state={offerState} onChange={load} />
+      <OfferPanel offers={offers ?? []} state={offerState} probe={probe} onChange={load} />
 
       {/* ── 2. What you say ──────────────────────────────────────── */}
       <MarketingPanel marketing={marketing} hasOffer={offerState?.hasActive ?? false} onChange={load} />
@@ -716,14 +805,27 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
  * confidently-wrong number is the one hallucination here that gets quoted to a
  * real buyer.
  */
-function OfferPanel({ offers, state, onChange }: { offers: Offer[]; state?: OfferState; onChange: () => void }) {
+function OfferPanel({ offers, state, probe, onChange }: { offers: Offer[]; state?: OfferState; probe?: Probe; onChange: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [prices, setPrices] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
 
   const live = offers.filter((o) => o.status === "active");
   const drafts = offers.filter((o) => o.status === "draft");
+
+  // Build the tracked-link URL from the code against the current origin — always
+  // correct for this deployment, no server env needed to display it.
+  const linkFor = (code: string) =>
+    typeof window !== "undefined" ? `${window.location.origin}/l/${code}` : `/l/${code}`;
+  async function copyLink(code: string) {
+    try {
+      await navigator.clipboard.writeText(linkFor(code));
+      setCopied(code);
+      setTimeout(() => setCopied((c) => (c === code ? null : c)), 1500);
+    } catch { /* clipboard blocked — the link is visible to copy by hand */ }
+  }
 
   async function post(body: Record<string, unknown>) {
     setBusy(true); setErr(null);
@@ -745,10 +847,50 @@ function OfferPanel({ offers, state, onChange }: { offers: Offer[]; state?: Offe
     <section className={`rounded border p-4 ${state?.hasActive ? "border-aurelius-gold/20 bg-black/30" : "border-amber-500/40 bg-amber-950/10"}`}>
       <div className="flex justify-between items-baseline gap-4 mb-2">
         <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80">What you sell</h2>
-        <button disabled={busy} onClick={() => post({ kind: "draft" })} className={btn}>
-          {busy ? "Working…" : "Draft one"}
-        </button>
+        <div className="flex gap-2">
+          {!state?.hasActive && (
+            <button
+              disabled={busy}
+              onClick={() => post({ kind: "probe" })}
+              className={btn}
+              title="Float 2–3 variants, each behind its own tracked link, and let real intake decide which promise lands."
+            >
+              {busy ? "Working…" : "Probe A/B"}
+            </button>
+          )}
+          <button disabled={busy} onClick={() => post({ kind: "draft" })} className={btn}>
+            {busy ? "Working…" : "Draft one"}
+          </button>
+        </div>
       </div>
+
+      {/* THE PROBE — let the market pick the promise. Each variant carries its
+          own tracked link; the one that pulls leads is the one to price. */}
+      {probe && probe.variants.length > 0 && (
+        <div className="rounded border border-sky-500/30 bg-sky-950/10 p-3 mb-3">
+          <div className="flex items-baseline justify-between mb-2">
+            <span className="aurelius-heading text-[11px] uppercase tracking-[0.2em] text-sky-300/80">Offer probe</span>
+            <span className="text-[11px] text-neutral-500">{probe.note}</span>
+          </div>
+          <ul className="space-y-1.5">
+            {probe.variants.map((v) => {
+              const leading = probe.leader?.offerId === v.offerId;
+              return (
+                <li key={v.offerId} className={`flex items-center justify-between gap-3 text-xs ${leading ? "text-sky-200" : "text-neutral-300"}`}>
+                  <span className="flex-1 min-w-0 truncate">
+                    {leading && <span className="text-sky-400 mr-1">★</span>}
+                    {v.name} <span className="text-neutral-600">· {v.shape}{v.status === "active" ? " · live" : ""}</span>
+                  </span>
+                  <span className="text-neutral-500 shrink-0">{v.leads} lead{v.leads === 1 ? "" : "s"} · {v.clicks} click{v.clicks === 1 ? "" : "s"}</span>
+                  <button onClick={() => copyLink(v.code)} className="text-sky-300/80 hover:text-sky-200 shrink-0" title={linkFor(v.code)}>
+                    {copied === v.code ? "copied" : "copy link"}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
       <p className={`text-xs mb-3 leading-relaxed ${state?.hasActive ? "text-aurelius-text/60" : "text-amber-200/90"}`}>
         {state?.headline ?? "Loading…"}
       </p>

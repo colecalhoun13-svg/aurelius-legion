@@ -395,13 +395,20 @@ export async function recordPayment(input: {
   receivedAt?: string | Date;
   externalRef?: string;
   note?: string;
+  /** How this was recorded — "cole" (his hand) or a self-recorder like
+   *  "stripe_webhook" / "email_parse" / "twilio". Provenance the money ledger
+   *  reports, so "money arrived on its own" is a claim it can prove. */
+  recordedBy?: string;
 }) {
-  const client = await prisma.client.findUnique({ where: { id: input.clientId } });
+  const client = await prisma.client.findUnique({
+    where: { id: input.clientId },
+    include: { lead: { select: { source: true, angleId: true, refCode: true, trackLinkId: true } } },
+  });
   if (!client) throw new Error(`No client with id ${input.clientId}.`);
   const amountCents = toCents(input.amount);
   if (amountCents === 0) throw new Error("A payment of zero isn't a payment.");
 
-  return prisma.$transaction(async (tx) => {
+  const payment = await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.create({
       data: {
         clientId: input.clientId,
@@ -412,6 +419,7 @@ export async function recordPayment(input: {
         receivedAt: parseDate(input.receivedAt, "receivedAt") ?? new Date(),
         externalRef: input.externalRef?.trim() || null,
         note: input.note?.trim() || null,
+        recordedBy: (input.recordedBy ?? "cole").slice(0, 40),
       },
     });
 
@@ -434,6 +442,24 @@ export async function recordPayment(input: {
     }
     return payment;
   });
+
+  // The "paid" touch — money credited to the channel/angle that produced this
+  // client. Best-effort, outside the transaction: attribution is a record, not
+  // a gate, and must never roll back a real payment.
+  const { recordAttribution } = await import("./trackLinks.ts");
+  await recordAttribution({
+    kind: "paid",
+    channel: client.lead?.source ?? "unattributed",
+    angleId: client.lead?.angleId ?? null,
+    refCode: client.lead?.refCode ?? null,
+    trackLinkId: client.lead?.trackLinkId ?? null,
+    leadId: null,
+    clientId: input.clientId,
+    paymentId: payment.id,
+    amountCents,
+  });
+
+  return payment;
 }
 
 /** Unpaid invoices, oldest first. `overdue` is derived, never stored. */

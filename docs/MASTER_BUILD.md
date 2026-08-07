@@ -33,12 +33,12 @@ fails closed on every acquisition door.
 
 ## WAVE 1 — The shared spine (root of Jarvis + Demand)
 
-- [ ] 1.1 **The Money Ledger** — `Lead` stage enum extend, `MoneyEvent` (state enum, earnedCents, recordedBy), `AttributionEvent`/`TouchPoint`; `earnedCents` sums only `paid` (code invariant). Migration (excise DropIndex blocks). FE: pipeline/ledger card on Business page.
-- [ ] 1.2 **The ref-link emitter** — `TrackLink` + `/l/:code` public GET → `/intake?ref=`, click count; publish confirm mints link + hands bio-link URL. `[CFG MEDIA_PUBLIC_BASE_URL]`. FE: the link shown in the publish/queue confirm.
-- [ ] 1.3 Self-recording attribution — inbound on a drafted `threadId` flips Lead→replied (extend the 10-min Gmail poll). `[CFG Gmail]`
-- [ ] 1.4 Authorship stamp — `OutwardArtifact` (draftId, angleIds, externalId); persist IG `postId` at publish (`contentPublish`); join insights only to stamped posts.
-- [ ] 1.5 The `referredBy` fix (`leadEngine.ts:83`) — stop stuffing relationship into referrer.
-- [ ] 1.6 The Offer Probe — `probeOffer()` floats 2–3 variants w/ distinct refs; winner → `Offer.active` (Cole's hand). Unlocks `marketingPass.ts:47`. FE: offer panel probe controls. `[Cole: offer promise + candidate prices]`
+- [x] 1.1 **The Money Ledger** — `Lead` stage enum extend, `MoneyEvent` (state enum, earnedCents, recordedBy), `AttributionEvent`/`TouchPoint`; `earnedCents` sums only `paid` (code invariant). Migration (excise DropIndex blocks). FE: pipeline/ledger card on Business page.
+- [x] 1.2 **The ref-link emitter** — `TrackLink` + `/l/:code` public GET → `/intake?ref=`, click count; publish confirm mints link + hands bio-link URL. `[CFG MEDIA_PUBLIC_BASE_URL]`. FE: the link shown in the publish/queue confirm.
+- [x] 1.3 Self-recording attribution — inbound on a drafted `threadId` flips Lead→replied (extend the 10-min Gmail poll). `[CFG Gmail]`
+- [x] 1.4 Authorship stamp — `OutwardArtifact` (draftId, angleIds, externalId); persist IG `postId` at publish (`contentPublish`); join insights only to stamped posts.
+- [x] 1.5 The `referredBy` fix (`leadEngine.ts:83`) — stop stuffing relationship into referrer.
+- [x] 1.6 The Offer Probe — `probeOffer()` floats 2–3 variants w/ distinct refs; winner → `Offer.active` (Cole's hand). Unlocks `marketingPass.ts:47`. FE: offer panel probe controls. `[Cole: offer promise + candidate prices]`
 
 ## WAVE 2 — Lead flow (the cheapest path to the first ten leads)
 

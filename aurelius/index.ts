@@ -154,6 +154,10 @@ if (!API_KEY) {
 app.use((req, res, next) => {
   if (!API_KEY) return next();
   if (AUTH_EXEMPT.has(req.path)) return next();
+  // Public tracked-link redirects: a stranger clicking a link in a bio or a
+  // story has no API key. The route only counts a click and 302s to the form —
+  // it writes no lead and takes no outward action.
+  if (req.path.startsWith("/l/")) return next();
   if (req.get("x-aurelius-key") === API_KEY) return next();
   return res.status(401).json({ error: "unauthorized — send x-aurelius-key (set AURELIUS_API_KEY on the caller)" });
 });
@@ -215,6 +219,38 @@ app.post("/intake", async (req: Request, res: Response) => {
     console.error("[intake] failed:", err?.message ?? err);
     return res.status(500).json({ error: "Couldn't record that. Please email instead." });
   }
+});
+
+// PUBLIC TRACKED-LINK REDIRECT. The emit side of attribution: `/l/:code` counts
+// the click and forwards to the public form carrying the ref, so the intake can
+// credit the exact link (and its channel/angle) that produced the lead. A code
+// that doesn't resolve still sends the person to the form — losing a real human
+// over a stale link would be the worst possible trade. Never 404s a click.
+app.get("/l/:code", async (req: Request, res: Response) => {
+  const code = String(req.params.code ?? "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 30);
+  // Absolute when a public origin is configured; relative otherwise (works when
+  // the frontend is served from the same origin as this backend).
+  const base = (process.env.APP_PUBLIC_URL || process.env.MEDIA_PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+  const dest = `${base}/start?ref=${encodeURIComponent(code)}`;
+  try {
+    if (code.length >= 5) {
+      const { resolveTrackLink, countClick, recordAttribution } = await import("./crm/trackLinks.ts");
+      const link = await resolveTrackLink(code).catch(() => null);
+      if (link) {
+        await countClick(code);
+        await recordAttribution({
+          kind: "click",
+          channel: link.channel,
+          refCode: link.code,
+          trackLinkId: link.id,
+          angleId: link.angleId,
+        });
+      }
+    }
+  } catch (err: any) {
+    console.warn("[l] click tracking failed (non-fatal):", err?.message ?? err);
+  }
+  return res.redirect(302, dest);
 });
 
 app.get("/", (req: Request, res: Response) => {

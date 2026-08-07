@@ -6,8 +6,10 @@ import {
   listLeads,
 } from "../../../../aurelius/crm/service";
 import { anglePerformance } from "../../../../aurelius/business/marketing";
-import { listOffers, offerReadiness } from "../../../../aurelius/business/offers";
+import { listOffers, offerReadiness, offerProbeStanding } from "../../../../aurelius/business/offers";
 import { listDrafts, queueState } from "../../../../aurelius/content/queue";
+import { moneyLedger } from "../../../../aurelius/crm/ledger";
+import { listTrackLinks } from "../../../../aurelius/crm/trackLinks";
 
 // DB-backed — never statically evaluate at build time.
 export const dynamic = "force-dynamic";
@@ -15,7 +17,7 @@ export const dynamic = "force-dynamic";
 /** Everything the Business page needs, in one round trip. */
 export async function GET() {
   try {
-    const [pipeline, attention, clients, leads, marketing, offers, offerState, drafts, contentState] =
+    const [pipeline, attention, clients, leads, marketing, offers, offerState, drafts, contentState, ledger, probe, trackLinks] =
       await Promise.all([
         pipelineSnapshot(),
         whatNeedsAttention(14),
@@ -26,9 +28,12 @@ export async function GET() {
         offerReadiness(),
         listDrafts({}),
         queueState(),
+        moneyLedger(),
+        offerProbeStanding(),
+        listTrackLinks({ limit: 20 }),
       ]);
     return NextResponse.json({
-      pipeline, attention, clients, leads, marketing, offers, offerState, drafts, contentState,
+      pipeline, attention, clients, leads, marketing, offers, offerState, drafts, contentState, ledger, probe, trackLinks,
     });
   } catch (error: any) {
     console.error("CRM API error:", error);

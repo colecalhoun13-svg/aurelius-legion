@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
-import { draftOffer, listOffers, activateOffer, retireOffer, offerReadiness } from "../../../../../aurelius/business/offers";
+import { draftOffer, listOffers, activateOffer, retireOffer, offerReadiness, probeOffer, offerProbeStanding } from "../../../../../aurelius/business/offers";
 
 export const dynamic = "force-dynamic";
 
 /** Offers, and whether anything is actually live for marketing to point at. */
 export async function GET() {
   try {
-    const [offers, readiness] = await Promise.all([listOffers(), offerReadiness()]);
-    return NextResponse.json({ offers, readiness });
+    const [offers, readiness, probe] = await Promise.all([listOffers(), offerReadiness(), offerProbeStanding()]);
+    return NextResponse.json({ offers, readiness, probe });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message ?? "Failed to load offers" }, { status: 500 });
   }
@@ -41,8 +41,15 @@ export async function POST(request: Request) {
         if (!out.ok) throw new Error(out.error ?? "Could not retire");
         return NextResponse.json(out);
       }
+      case "probe": {
+        // Inward: floats 2–3 draft variants, each behind its own tracked link.
+        // Nothing goes live — activating the winner stays Cole's hand.
+        const out = await probeOffer({ variants: body.variants });
+        if (!out.ok) throw new Error(out.error ?? "Could not start a probe");
+        return NextResponse.json(out);
+      }
       default:
-        throw new Error(`Unknown kind: ${body?.kind}. Expected draft, activate, or retire.`);
+        throw new Error(`Unknown kind: ${body?.kind}. Expected draft, activate, retire, or probe.`);
     }
   } catch (error: any) {
     return NextResponse.json({ error: error?.message ?? "Offer action failed" }, { status: 400 });

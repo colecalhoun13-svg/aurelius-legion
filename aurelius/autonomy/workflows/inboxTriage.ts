@@ -30,6 +30,71 @@ export function needsReply(item: InboxItem): boolean {
   return true;
 }
 
+/**
+ * LEAD REPLY DETECTION (attribution). An inbound on a thread we drafted outreach
+ * on — or from a known lead's address — means the lead replied. Flip it to
+ * "conversing", credit the angle's reply counter, log the touch, and surface the
+ * warm signal. Guarded on "contacted" status so it fires ONCE per reply, not on
+ * every daily run. Best-effort throughout: matching a reply must never break the
+ * triage pass that also has to draft replies to everyone else.
+ */
+export async function matchInboundReplyToLead(item: InboxItem): Promise<boolean> {
+  const from = (item.from ?? "").toLowerCase();
+  const emailMatch = from.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i)?.[0];
+  // No thread and no parseable address → nothing safe to match on. Never run an
+  // empty OR (it would match an arbitrary contacted lead).
+  if (!item.threadId && !emailMatch) return false;
+
+  const lead = await prisma.lead.findFirst({
+    where: {
+      status: "contacted",
+      OR: [
+        ...(item.threadId ? [{ outreachThreadId: item.threadId }] : []),
+        ...(emailMatch ? [{ email: { equals: emailMatch, mode: "insensitive" as const } }] : []),
+      ],
+    },
+    select: { id: true, name: true, angleId: true, source: true, refCode: true, trackLinkId: true },
+  });
+  if (!lead) return false;
+
+  await prisma.lead.update({
+    where: { id: lead.id },
+    data: {
+      status: "conversing",
+      lastContactAt: new Date(),
+      nextAction: "They replied — keep the conversation going",
+      nextActionAt: new Date(),
+    },
+  });
+  // The results loop reads angle.replies as derived truth.
+  if (lead.angleId) {
+    await prisma.marketingAngle
+      .update({ where: { id: lead.angleId }, data: { replies: { increment: 1 } } })
+      .catch(() => {});
+  }
+  const { recordAttribution } = await import("../../crm/trackLinks.ts");
+  await recordAttribution({
+    kind: "reply",
+    channel: lead.source,
+    angleId: lead.angleId,
+    refCode: lead.refCode,
+    trackLinkId: lead.trackLinkId,
+    leadId: lead.id,
+  });
+  const { surfaceSignal } = await import("../../core/bridge.ts");
+  await surfaceSignal({
+    kind: "opportunity",
+    domain: "business",
+    sourceType: "lead_reply",
+    sourceId: `reply:${lead.id}`,
+    severity: "attention",
+    title: `${lead.name} replied`,
+    body: `${lead.name} replied to your outreach — they're warm right now. Keep it moving today.`,
+    actions: [{ label: "Draft a reply", action: "draft_outreach", payload: { leadId: lead.id } }],
+  }).catch(() => {});
+  return true;
+}
+
 export type InboxTriageResult = {
   connected: boolean;
   scanned: number;
@@ -80,6 +145,12 @@ export async function runInboxTriage(opts: { max?: number } = {}): Promise<Inbox
   result.scanned = inbox.length;
 
   for (const item of inbox) {
+    // Detect a lead's reply first — independent of whether we draft a reply to
+    // it. A warm lead going quiet is exactly what this is meant to catch.
+    await matchInboundReplyToLead(item).catch((err) =>
+      console.warn("[inboxTriage] lead-reply match failed (non-fatal):", (err as any)?.message ?? err)
+    );
+
     if (!needsReply(item)) continue;
 
     const dedupKey = `triage:${item.id}`;

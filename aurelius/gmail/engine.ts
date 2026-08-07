@@ -119,7 +119,7 @@ export async function draftReply(input: {
    * for inbox triage, where every draft genuinely is a reply.
    */
   isReply?: boolean;
-}): Promise<{ draftId: string }> {
+}): Promise<{ draftId: string; threadId?: string }> {
   // Build a minimal RFC 2822 message, base64url-encoded.
   //
   // The `Re:` was unconditional. Outreach passes a fresh subject ("Quick one,
@@ -150,5 +150,7 @@ export async function draftReply(input: {
   });
   const json: any = await res.json().catch(() => ({}));
   if (!res.ok || !json.id) throw new Error(`draft create failed: ${json?.error?.message ?? res.status}`);
-  return { draftId: json.id };
+  // Expose the thread so a caller (outreach) can persist it and later match an
+  // inbound reply on the same thread back to the lead it was drafted for.
+  return { draftId: json.id, threadId: json.message?.threadId as string | undefined };
 }
