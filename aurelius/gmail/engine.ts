@@ -87,6 +87,8 @@ export async function listInbox(opts: { max?: number; query?: string } = {}): Pr
       unread: (m.labelIds ?? []).includes("UNREAD"),
     });
   }
+  // Freshness heartbeat — the inbox was actually read just now.
+  await import("../core/connectorFreshness.ts").then((mod) => mod.recordConnectorRead("gmail")).catch(() => {});
   return items;
 }
 
@@ -114,9 +116,26 @@ export async function draftReply(input: {
   body: string;
   threadId?: string;
   inReplyToMessageId?: string;
-}): Promise<{ draftId: string }> {
+  /**
+   * FALSE FOR FIRST CONTACT. Default true because this function was written
+   * for inbox triage, where every draft genuinely is a reply.
+   */
+  isReply?: boolean;
+}): Promise<{ draftId: string; threadId?: string }> {
   // Build a minimal RFC 2822 message, base64url-encoded.
-  const subject = input.subject.startsWith("Re:") ? input.subject : `Re: ${input.subject}`;
+  //
+  // The `Re:` was unconditional. Outreach passes a fresh subject ("Quick one,
+  // Sarah"), so every first-contact message on the warm list shipped as
+  // "Re: Quick one, Sarah" — a forged reply thread, to someone who has never
+  // emailed Cole, as the first impression of his business. The warm list is
+  // the only channel that works at zero audience and it does not regenerate.
+  //
+  // Threading identity is the honest signal: a message that is genuinely part
+  // of a thread carries a thread or an In-Reply-To. Absent both, and absent an
+  // explicit isReply, it is a first contact whatever the subject says.
+  const threaded = input.isReply ?? !!(input.threadId || input.inReplyToMessageId);
+  const subject =
+    threaded && !input.subject.startsWith("Re:") ? `Re: ${input.subject}` : input.subject;
   const lines = [
     `To: ${input.to}`,
     `Subject: ${subject}`,
@@ -133,5 +152,7 @@ export async function draftReply(input: {
   });
   const json: any = await res.json().catch(() => ({}));
   if (!res.ok || !json.id) throw new Error(`draft create failed: ${json?.error?.message ?? res.status}`);
-  return { draftId: json.id };
+  // Expose the thread so a caller (outreach) can persist it and later match an
+  // inbound reply on the same thread back to the lead it was drafted for.
+  return { draftId: json.id, threadId: json.message?.threadId as string | undefined };
 }

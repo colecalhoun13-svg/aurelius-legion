@@ -6,6 +6,7 @@
 import { routeLLM } from "./router.ts";
 import type { LLMTask, LLMResponse, LLMOptions, OperatorContext } from "./router.ts";
 import { currentTraceId } from "../core/traceContext.ts";
+import { costUsd } from "./pricing.ts";
 
 export type RunLLMInput = LLMTask;
 
@@ -63,6 +64,18 @@ export async function runLLM(params: RunLLMInput): Promise<LLMResponse> {
         context: {
           taskType: params.taskType,
           tokensUsed: response.tokensUsed ?? 0,
+          // Split counts + priced cost, recorded at the moment of the call so
+          // the spend ledger is a read over existing rows rather than a second
+          // write path that can drift from them. costUsd is NULL for a model
+          // that isn't on the price table — never 0, which would read as free.
+          tokensIn: response.tokensIn ?? null,
+          tokensOut: response.tokensOut ?? null,
+          tokensCachedIn: response.tokensCachedIn ?? null,
+          costUsd: costUsd(response.model, {
+            tokensIn: response.tokensIn,
+            tokensOut: response.tokensOut,
+            tokensCachedIn: response.tokensCachedIn,
+          }),
           latencyMs: latency,
           engine: response.engine,
           model: response.model,

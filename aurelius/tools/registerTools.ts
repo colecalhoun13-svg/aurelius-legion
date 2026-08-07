@@ -17,6 +17,7 @@ import { learningAdapter } from "./adapters/learning.ts";
 import { corpusAdapter } from "./adapters/corpus.ts";
 import { selfAdapter } from "./adapters/self.ts";
 import { businessAdapter } from "./adapters/business.ts";
+import { crmAdapter } from "./adapters/crm.ts";
 
 export function registerAllTools(): void {
   registerTool(googleSheetsAdapter);
@@ -32,4 +33,5 @@ export function registerAllTools(): void {
   registerTool(corpusAdapter);       // library inventory: what landed recently
   registerTool(selfAdapter);         // honest mirror: what am I doing / what did I do
   registerTool(businessAdapter);     // the business foundation: facts, gaps, offer drafts
+  registerTool(crmAdapter);          // the remote coaching business: leads → clients → money
 }

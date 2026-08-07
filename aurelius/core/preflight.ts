@@ -20,6 +20,21 @@ function set(name: string): boolean {
   return !!process.env[name]?.trim();
 }
 
+/** The public origin this process answers on, or null if it's local-only. */
+function hostedAt(): string | null {
+  const explicit = process.env.AURELIUS_PUBLIC_URL?.trim();
+  const railway = process.env.RAILWAY_PUBLIC_DOMAIN?.trim();
+  const raw = explicit || (railway ? `https://${railway}` : "");
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    const h = u.hostname.toLowerCase();
+    return h === "localhost" || h === "127.0.0.1" || h.endsWith(".localhost") ? null : u.origin;
+  } catch {
+    return null;
+  }
+}
+
 export function preflight(): void {
   const lines: string[] = [];
 
@@ -93,8 +108,12 @@ export function preflight(): void {
     const redirect = process.env.GOOGLE_REDIRECT_URI?.trim();
     if (!redirect) {
       lines.push("[preflight] google: credentials set, GOOGLE_REDIRECT_URI is NOT — Connect will send you to localhost");
-    } else if (redirect.includes("localhost") && process.env.NODE_ENV === "production") {
-      lines.push(`[preflight] google: GOOGLE_REDIRECT_URI points at localhost (${redirect}) — cannot work on a hosted deploy`);
+    } else if (redirect.includes("localhost") && hostedAt()) {
+      // NOT keyed on NODE_ENV: the Mini runs production too, and there a
+      // loopback redirect is the CORRECT setup (Google exempts loopback from
+      // its https rule). What makes it wrong is the OAuth browser being on a
+      // different machine — i.e. this process having a public origin.
+      lines.push(`[preflight] google: GOOGLE_REDIRECT_URI points at localhost (${redirect}) but this deploy is reachable at ${hostedAt()} — the callback can never arrive`);
     } else {
       lines.push(`[preflight] google: configured → ${redirect}`);
     }

@@ -12,6 +12,53 @@ export const businessAdapter: ToolAdapter = {
     "Cole's business foundation: what's confirmed, what's still unknown, and drafting an offer from the confirmed facts. Pre-offer by design — it elicits Cole's truth, never invents it.",
   actions: [
     {
+      name: "propose_angles",
+      description:
+        "Propose research-backed MARKETING ANGLES for the remote business — testable hypotheses about what will make a specific person reply. Runs a real research pass first and reports its grounding honestly: if it could not retrieve sources it SAYS the angles are model priors, not findings. Use for 'what should I be saying', 'help me market', 'what angle works'.",
+      dataSchema: "{ count?: number (1-6, default 3), audience?: string }",
+    },
+    {
+      name: "draft_asset",
+      description:
+        "Write one marketing asset FROM an angle — email, instagram_post, instagram_carousel, dm, or landing_section. Carries the angle's grounding with it so Cole is never handed copy without being told how much to trust the idea underneath. INWARD: drafts only, never publishes or sends.",
+      dataSchema: '{ angleId: string, format: "email"|"instagram_post"|"instagram_carousel"|"dm"|"landing_section" }',
+    },
+    {
+      name: "record_outcome",
+      description:
+        "Record what actually HAPPENED to an angle — how many times used, how many replied, how many converted, and optionally which lead it produced. This is what makes Cole's own market data outrank generic research over time.",
+      dataSchema: "{ angleId: string, used?: number, replies?: number, conversions?: number, leadId?: string }",
+    },
+    {
+      name: "angle_performance",
+      description:
+        "What Cole's own results say about which angles work — with an honest read on whether the sample is big enough to mean anything yet. Use for 'what's working', 'which angle should I use'.",
+      dataSchema: "{} (no fields)",
+    },
+    {
+      name: "draft_offer",
+      description:
+        "Draft ONE concrete offer as a real, durable draft — name, who it's for, the promise, the shape (monthly/block/program), what happens week to week, and the proof. Research-informed and honestly labelled. NEVER sets a price: Cole has not set remote pricing, and a guessed number would get quoted to a buyer. Use for 'what should I sell', 'build me an offer', 'what's my package'.",
+      dataSchema: '{ shape?: "monthly"|"block"|"program" }',
+    },
+    {
+      name: "list_offers",
+      description:
+        "Cole's offers and their state — drafts, what's live, what's retired — plus whether marketing currently has anything to point at. Use for 'what am I selling', 'what's my offer'.",
+      dataSchema: '{ status?: "draft"|"active"|"retired" }',
+    },
+    {
+      name: "activate_offer",
+      description:
+        "Make a drafted offer LIVE, with its price in cents. Refuses without a price — activating is what makes marketing and outreach quote it. This is Cole's decision; never do it unprompted.",
+      dataSchema: "{ offerId: string, priceCents: number }",
+    },
+    {
+      name: "retire_offer",
+      description: "Stop selling an offer. Kept for attribution, never surfaced as current again.",
+      dataSchema: "{ offerId: string }",
+    },
+    {
       name: "snapshot",
       description:
         "Where the business actually stands: confirmed facts, open questions, and what each gap is blocking. Use when Cole asks about his business, positioning, offers, or 'what do you know about my business'.",
@@ -55,6 +102,84 @@ export const businessAdapter: ToolAdapter = {
     },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
+    // ── marketing: evidence-carrying, never a bare assertion ──
+    if (action === "propose_angles" || action === "draft_asset" || action === "record_outcome" || action === "angle_performance") {
+      try {
+        const mk = await import("../../business/marketing.ts");
+        if (action === "propose_angles") {
+          const out = await mk.proposeAngles({ count: Number(data?.count) || undefined, audience: data?.audience });
+          if (!out.ok) return { ok: false, output: null, error: out.error ?? "could not propose angles" };
+          return {
+            ok: true,
+            output: {
+              grounding: out.grounding,
+              // Surfaced deliberately: Cole cannot audit marketing advice
+              // himself, so how much to trust it must travel WITH it.
+              trustThis: out.groundingNote,
+              sources: out.sources,
+              angles: out.angles,
+              nextStep: "Pick one and draft an asset from it (business.draft_asset), then record what happens (business.record_outcome).",
+            },
+          };
+        }
+        if (action === "draft_asset") {
+          if (!data?.angleId) throw new Error("draft_asset needs angleId (from propose_angles / angle_performance).");
+          const out = await mk.draftAsset(String(data.angleId), data.format);
+          if (!out.ok) return { ok: false, output: null, error: out.error ?? "draft failed" };
+          return { ok: true, output: { angle: out.angle, grounding: out.grounding, trustThis: out.groundingNote, body: out.body } };
+        }
+        if (action === "record_outcome") {
+          if (!data?.angleId) throw new Error("record_outcome needs angleId.");
+          const out = await mk.recordOutcome(data as any);
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: await mk.anglePerformance() };
+        }
+        return { ok: true, output: await mk.anglePerformance() };
+      } catch (err: any) {
+        return { ok: false, output: null, error: err?.message ?? String(err) };
+      }
+    }
+    // ── offers: the artifact marketing and outreach point at ──
+    if (action === "draft_offer" || action === "list_offers" || action === "activate_offer" || action === "retire_offer") {
+      try {
+        const O = await import("../../business/offers.ts");
+        if (action === "draft_offer") {
+          const out = await O.draftOffer({ shape: data?.shape });
+          if (!out.ok) return { ok: false, output: null, error: out.error ?? "could not draft an offer" };
+          return {
+            ok: true,
+            output: {
+              offerId: out.offerId,
+              offer: out.offer,
+              grounding: out.grounding,
+              trustThis: out.groundingNote,
+              price: "not set — Aurelius will not pick a number for you",
+              nextStep:
+                "It's a DRAFT: nothing points at it yet. Read it, set the price you'd actually charge, then activate it (business.activate_offer).",
+            },
+          };
+        }
+        if (action === "list_offers") {
+          const [offers, readiness] = await Promise.all([O.listOffers(data?.status), O.offerReadiness()]);
+          return { ok: true, output: { headline: readiness.headline, blocker: readiness.blocker, offers } };
+        }
+        if (action === "activate_offer") {
+          if (!data?.offerId) throw new Error("activate_offer needs offerId (from list_offers).");
+          const out = await O.activateOffer(String(data.offerId), {
+            priceCents: data?.priceCents != null ? Number(data.priceCents) : undefined,
+          });
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: { offer: out.offer, summary: "Live. Marketing and outreach now quote this exactly." } };
+        }
+        if (!data?.offerId) throw new Error("retire_offer needs offerId.");
+        const out = await O.retireOffer(String(data.offerId));
+        if (!out.ok) return { ok: false, output: null, error: out.error };
+        return { ok: true, output: await O.offerReadiness() };
+      } catch (err: any) {
+        return { ok: false, output: null, error: err?.message ?? String(err) };
+      }
+    }
+
     const P = await import("../../business/positioning.ts");
     try {
       if (action === "snapshot") {

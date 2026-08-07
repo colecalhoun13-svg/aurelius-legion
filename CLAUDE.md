@@ -33,6 +33,15 @@ anyone (human or agent) working in this repo.
 7. **Verify live.** Every block ships with live-fire verification:
    `npx tsx scripts/smokeSuite.ts` (self-cleaning, real Postgres) plus
    `tsc --noEmit` both sides and a prod `next build`.
+8. **Built is not done — done is reachable.** The recurring defect in this
+   repo is code that compiles, passes smoke, and that nothing can invoke:
+   a publish path with no media host, a workflow with no schedule entry, a
+   gap-finder behind a condition that can't fire, token counts with no
+   reader, a money endpoint with no button. For every capability, name the
+   invoker (schedule entry · mounted route · registered tool · a control in
+   the UI) and its prerequisites, and make an unmet prerequisite report
+   `config`, never `live`. `npx tsx scripts/reachabilityAudit.ts` enforces
+   the mechanical half and runs inside the smoke suite.
 
 ## Gotchas (each of these has bitten us)
 
@@ -72,7 +81,9 @@ internal synthesis jobs out of the semantic reuse cache, both sides.
 
 ## Scheduled spine (all traced via core/trace.ts)
 
-02:00 db backup · 06:00 RSS · 06:30 market pulse · 06:45 schedule-protection
+02:00 db backup · 05:30 inbox triage (drafts only — never sends; the 07:00
+briefing names what's waiting) · 07:30 outreach sweep (drafts to leads whose
+follow-up is due, bounded to 3/run — Gmail drafts only, never sends) · 06:00 RSS · 06:30 market pulse · 06:45 schedule-protection
 (acts if granted, else proposes) · 07:00 morning briefing (carries the risk
 line + checks last night's "tomorrow starts with") · 08:00 initiative ·
 13:00 midday check (silent when on pace) · 21:15 queue sweep (keyhole
@@ -86,14 +97,51 @@ Sun 19:30 capability gaps (repeated tool failures → one deduped fix signal) ·
 Sun 20:00 scoreboard · Sun 21:00 decision curriculum (mine Cole's corrections →
 heuristics; judge fired-and-corrected rules → gated retire proposals; trust
 rises only on Cole's explicit ratification, never on silence) ·
-Sun 22:00 curriculum ingest (auto-learn each field's canon) ·
+Sun 22:00 curriculum ingest (2 units × 7 fields, ALTERNATING seed canon and
+gap-discovered units — gap discovery fires from run one, not after the seed
+list empties) ·
 every 15 min calendar sync · every 10 min Paperless.
+
+## Whose business this is (2026-08-05 — read before any business work)
+
+Cole is **employed** by the gym. Those athletes are his employer's — never
+propose an offer, price, campaign, or outreach aimed at them. The business
+Aurelius exists to build is his **own remote/online coaching business**:
+zero clients today, previously run on Google Sheets and text, sold in three
+billing shapes at once (monthly · 8–12wk block · one-off program). Its
+binding constraint is that **nothing arrives on its own** — no inbound, no
+funnel, no referrals flowing. An empty CRM is not progress, and Aurelius
+should say so rather than render encouraging zeroes.
+
+Facts live in `business/profile.ts` and reconcile into Living Knowledge at
+boot. Facts carry a `revision`: bump it when Cole *restates* something so
+the correction actually reaches the database, and add to `RETIRED_FACTS`
+when a fact stops being true at all. An entry Cole edited by hand (any
+`sourceId` that isn't `profile:rev{N}`) is never overwritten.
 
 ## Parked (do not build speculatively)
 
-Business Engine buildout (Offer/LeadGen/Content/SOP/Workflow/Client/
-Analytics/Brand) — needs Cole's real business data, marked in NORTH_STAR.
-One deliberate exception shipped (NORTH_STAR §6 Block 7, "light ONE
-outward engine first"): the gated content lane — `content.draft` (inward)
-→ `content.publish` (outward, always Cole's confirm) + the Instagram
-engine, dormant until configured. The full Content Engine stays parked.
+Business Engine buildout (Offer/LeadGen/SOP/Workflow/Analytics/Brand) —
+still needs Cole's real numbers (pricing, capacity, the standard), marked
+in NORTH_STAR. Two deliberate exceptions have shipped:
+
+- **The gated content lane** (NORTH_STAR §6 Block 7, "light ONE outward
+  engine first") — `content.draft` (inward) → `content.publish` (outward,
+  always Cole's confirm) + the Instagram engine. Publishing also needs
+  `MEDIA_PUBLIC_BASE_URL`: Meta fetches images by URL and cannot accept an
+  upload, so `media/host.ts` serves them (local disk on the Mini by
+  default, provider-swappable). Without it the doctor reports Instagram as
+  `config`, not `live`. The full Content Engine stays parked.
+- **The Client Engine** (`crm/`) — Lead → Client → Engagement → Session →
+  Invoice → Payment, because the remote business is the point and it had
+  nowhere to record a client. Money is integer cents; Invoice (owed) and
+  Payment (received) are separate; "overdue" is derived, never stored.
+- **The Lead Engine** (`crm/leadEngine.ts`) — un-parked after the 2026-08-06
+  council found step 1 of the funnel absent from the code: every caller of
+  `addLead` was Cole typing, and `LEAD_SOURCES` offered values nothing could
+  produce. Three doors: the WARM LIST (the only channel that works at zero
+  audience), the public `/intake` endpoint (the one unauthenticated write —
+  narrow, sanitised, rate-limited), and inbound capture. Drafting is
+  `outreach.draft`, **inward** — it writes a Gmail draft and nothing else.
+  Sending stays `outreach.send`, outward, non-grantable. The sweep is bounded
+  to 3/run because the constraint is Cole's review capacity, not generation.

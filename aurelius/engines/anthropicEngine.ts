@@ -5,7 +5,7 @@
  * Respects the model passed in by the router.
  */
 import type { EngineAdapter } from "./engineAdapter.ts";
-import { REQUEST_TIMEOUT_MS } from "./engineAdapter.ts";
+import { REQUEST_TIMEOUT_MS, fetchWithRetry } from "./engineAdapter.ts";
 import { CACHE_BREAK } from "../llm/promptMarkers.ts";
 
 type RunAnthropicInput = {
@@ -22,7 +22,14 @@ async function runAnthropic({
   userPrompt,
   maxTokens = 8192,
   tools,
-}: RunAnthropicInput): Promise<{ text: string; tokensUsed: number; raw: any }> {
+}: RunAnthropicInput): Promise<{
+  text: string;
+  tokensUsed: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  tokensCachedIn?: number;
+  raw: any;
+}> {
   // TRIM (Cole's Railway deploy: Anthropic silently failing over to OpenAI).
   // Pasting a key into a hosting dashboard picks up a trailing newline or
   // stray space astonishingly often; sending it verbatim yields a 401
@@ -61,7 +68,7 @@ async function runAnthropic({
   if (tools?.length) body.tools = tools;
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -69,11 +76,10 @@ async function runAnthropic({
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify(body),
-      // TIMEOUT (deploy triage): failover only fires on a RETURNED error, so a
-      // provider that accepted the socket and then stalled hung routeLLM
-      // forever — a scheduled ritual that never completed and never logged.
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+      // fetchWithRetry (6.4) owns the timeout AND backs off on a transient 429/
+      // 529/5xx before the router fails over to a lesser provider — an overloaded
+      // Anthropic gets a couple of backed-off tries, not an instant demotion.
+    }, { timeoutMs: REQUEST_TIMEOUT_MS });
 
     const json = await res.json();
 
@@ -114,10 +120,18 @@ async function runAnthropic({
       );
     }
 
-    const tokensUsed =
-      (json?.usage?.input_tokens || 0) + (json?.usage?.output_tokens || 0);
+    // Split in/out, and keep cache reads separate. Output bills ~5x input,
+    // and cached input bills ~10% of input — the summed total this used to
+    // return could not price either correctly.
+    const tokensIn =
+      (json?.usage?.input_tokens || 0) +
+      (json?.usage?.cache_read_input_tokens || 0) +
+      (json?.usage?.cache_creation_input_tokens || 0);
+    const tokensOut = json?.usage?.output_tokens || 0;
+    const tokensCachedIn = json?.usage?.cache_read_input_tokens || 0;
+    const tokensUsed = tokensIn + tokensOut;
 
-    return { text, tokensUsed, raw: json };
+    return { text, tokensUsed, tokensIn, tokensOut, tokensCachedIn, raw: json };
   } catch (err: any) {
     console.error("[ANTHROPIC] Fetch error:", err);
     return {
@@ -140,6 +154,9 @@ export const anthropicAdapter: EngineAdapter = {
     return {
       text: result.text,
       tokensUsed: result.tokensUsed,
+      tokensIn: result.tokensIn,
+      tokensOut: result.tokensOut,
+      tokensCachedIn: result.tokensCachedIn,
       raw: result.raw,
     };
   },

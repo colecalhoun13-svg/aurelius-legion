@@ -147,16 +147,33 @@ Now create the `.env` file (`nano .env`, paste, fill in your values from Part 1)
 # ── Database (local on the Mini SSD) ──
 DATABASE_URL=postgresql://localhost:5432/aurelius
 
-# ── The brain (fund Anthropic at minimum) ──
+# ── The brain ──
+# ANTHROPIC IS THE DEFAULT TIER: a handful of task types route elsewhere and
+# EVERYTHING ELSE lands here. If this key is missing the system does not error —
+# it quietly fails over to whichever other provider is set, and you get a
+# substitute model's reasoning under Aurelius's name. On the Railway deploy that
+# went unnoticed for a week. Set this one first, and confirm it with /doctor.
 ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=            # optional
+OPENAI_API_KEY=           # optional (first failover)
 GROQ_API_KEY=             # optional (free tier — good for the fast lane + voice)
 GEMINI_API_KEY=AIza...    # free — powers embeddings
 DEEPSEEK_API_KEY=         # optional
 XAI_API_KEY=              # optional
 
+# Model overrides — only if your account can't reach the defaults
+# (claude-sonnet-5 for chat, claude-opus-4-8 for /deep). /doctor names the
+# models your key CAN reach when a probe 404s.
+# ANTHROPIC_CHAT_MODEL=
+# ANTHROPIC_OPUS_MODEL=
+
 # ── Memory (real recall, free via Gemini) ──
 EMBEDDINGS_PROVIDER=gemini
+# Never leave this as "mock" outside a sandbox — recall silently becomes
+# hash-based instead of semantic, and nothing reports an error.
+
+# ── Live web (research Tier 2 + the web tool) ──
+TAVILY_API_KEY=           # optional; without it, research falls back to Gemini
+                          # grounding, and says so rather than pretending
 
 # ── Phone bridge ──
 TELEGRAM_BOT_TOKEN=123456:ABC...
@@ -165,12 +182,41 @@ TELEGRAM_CHAT_ID=your-numeric-id
 # ── Macro data (optional) ──
 FRED_API_KEY=
 
-# ── Vault on the NAS ──
-VAULT_DIR=/Volumes/aurelius-vault
+# ── Files ──
+VAULT_DIR=/Volumes/aurelius-vault          # Obsidian vault mirror (NAS)
+INGEST_WATCH_DIR=/Volumes/aurelius-vault/_inbox   # drop PDFs here → corpus
+AURELIUS_BACKUP_DIR=/Volumes/aurelius-backups     # nightly dumps land here
+# AURELIUS_BACKUP_KEEP=14                  # retention, in dumps
+
+# ── The clock (every ritual hangs off this) ──
+# Without it the 07:00 briefing fires on the container's UTC clock. macOS will
+# usually give the process the right zone anyway, but set it explicitly — the
+# doctor cross-checks this against the zone the process is ACTUALLY running in.
+AURELIUS_TZ=America/Phoenix
+
+# ── The lock ──
+# With this set, every /api route demands an x-aurelius-key header. On a box
+# that Tailscale makes reachable from your phone, this is not optional.
+# Put the SAME value in the frontend's environment (see below).
+AURELIUS_API_KEY=<generate one: openssl rand -hex 32>
 
 # ── Google OAuth (from your Google Cloud project) ──
+# The client must be a WEB application client — a Desktop client cannot
+# register these redirect URIs.
 GOOGLE_CLIENT_ID=...apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=...
+# Loopback is CORRECT here and Google allows http on it. The OAuth browser is
+# this same Mini, so the callback comes straight back. Register BOTH strings,
+# character for character, in the Console's "Authorized redirect URIs".
+GOOGLE_REDIRECT_URI=http://localhost:3001/api/calendar/callback
+GOOGLE_GMAIL_REDIRECT_URI=http://localhost:3001/api/gmail/callback
+```
+
+The frontend needs two of these too. Create `frontend/.env.local`:
+
+```bash
+BACKEND_ORIGIN=http://127.0.0.1:3001
+AURELIUS_API_KEY=<the same value as above>   # or every request gets a 401
 ```
 
 Then set up the database and build the frontend:
@@ -178,15 +224,27 @@ Then set up the database and build the frontend:
 ```bash
 npx prisma migrate deploy          # creates all tables
 npx tsx prisma/seed.ts             # seeds starting knowledge (if present)
-npx tsx scripts/backfillEmbeddings.ts   # embeds everything with Gemini (fresh DB)
+
+# Embed everything. PIN THE PROVIDER — if the .env is misread, an unpinned run
+# writes mock hash vectors over real ones and recall degrades silently.
+npx tsx scripts/backfillEmbeddings.ts --provider gemini
 
 cd ../frontend && npm install && npx next build
 ```
 
 **Verify before going further:**
 ```bash
-cd ../aurelius && npx tsx scripts/smokeSuite.ts   # expect "46 passed, 0 failed"
+cd ../aurelius
+npx tsx scripts/smokeSuite.ts        # expect "285 passed, 0 failed" (or higher)
+npx tsc -p tsconfig.json --noEmit    # expect silence
+npx tsx scripts/doctor.ts            # live-probes every key and integration
 ```
+
+The doctor is the one that matters. It doesn't ask whether a variable is *set*
+— it makes the real call. A key that's set and rejected reports **BROKEN**, not
+"configured", and every failure line carries its own fix. Expect Google to read
+"never connected" until Part 5; everything else should be ✓ or "not configured"
+by choice.
 
 ---
 
@@ -228,9 +286,29 @@ Both processes now start on boot and self-restart. All the scheduled rituals
 (06:45 schedule-protection, 07:00 briefing, 21:30 debrief, etc.) live inside the
 backend — nothing else to configure.
 
+**Read the first ten lines of the log.** The backend prints one `[preflight]`
+line per subsystem at boot — what it woke up with, before any traffic:
+
+```bash
+head -30 /Volumes/aurelius-backups/logs/backend.log
+```
+
+You want to see `llm: anthropic → ...`, `embeddings: gemini — semantic recall
+live`, `api lock: armed`, `timezone: America/Phoenix`. Anything reading
+`DEFAULT TIER IS DOWN`, `DISABLED`, or `OPEN` is telling you a variable didn't
+land — fix it before going further, because none of those throw an error later.
+
 **Then connect Google, once:** open `http://localhost:3001/api/calendar/auth` and
-`http://localhost:3001/api/gmail/auth` in the Mini's browser, approve each. (On the
-Mini itself the `localhost` callback just works — no URL-swapping like Codespaces.)
+`http://localhost:3001/api/gmail/auth` in the Mini's browser, approve each. These
+two routes are exempt from the API lock, so a plain browser tap works.
+
+> **Publish the consent screen first** (Part 1, step 2). While it's in Testing,
+> Google expires every refresh token after 7 days — so a connection made today
+> dies next week and reads like "Google broke". Re-connecting without publishing
+> buys another 7 days and nothing more.
+
+Re-run `npx tsx scripts/doctor.ts` after connecting. Calendar and gmail should
+both read "live — refresh token works".
 
 ---
 
@@ -247,16 +325,40 @@ Mini itself the `localhost` callback just works — no URL-swapping like Codespa
 
 ## PART 7 — Backups (set once, forget) (~10 min)
 
-Nightly database dump to the NAS. Create
-`~/Library/LaunchAgents/com.aurelius.backup.plist` running this daily at 03:00:
+**There is nothing to schedule.** The backend already runs a nightly `pg_dump`
+at 02:00 as part of the ritual spine, prunes to `AURELIUS_BACKUP_KEEP` dumps,
+and warns loudly at boot when the newest one is stale. Setting
+`AURELIUS_BACKUP_DIR=/Volumes/aurelius-backups` in Part 4 is the entire
+configuration — that one variable turns the built-in job into the NAS backup.
+
+> **Do not add a second launchd `pg_dump`.** An earlier version of this runbook
+> did, and it was worse than redundant: it wrote `.sql.gz` files while the
+> built-in job writes `.dump` (custom format), on a different schedule with a
+> different retention. The doctor only counts `.dump` files, so it would have
+> reported **"backups EMPTY — no dump has ever landed"** while gzips quietly
+> piled up next to it. One job, one format.
+
+Confirm it after the first night:
 
 ```bash
-/bin/sh -c 'pg_dump aurelius | gzip > /Volumes/aurelius-backups/aurelius-$(date +\%F).sql.gz && find /Volumes/aurelius-backups -name "aurelius-*.sql.gz" -mtime +30 -delete'
+ls -lh /Volumes/aurelius-backups/          # expect aurelius-<timestamp>.dump
+cd ~/aurelius-legion/aurelius && npx tsx scripts/doctor.ts | grep backups
 ```
+
+The doctor doesn't trust the variable — it creates the directory, writes and
+deletes a probe file, and reads the age of the newest dump. Anything over 48h
+old is a failure, not a warning.
 
 Add the NAS's own snapshot/backup schedule for the vault folder in the UGREEN UI.
 **Once a month, restore-test a dump into a scratch DB** — a backup you've never
-restored is a hope, not a backup.
+restored is a hope, not a backup:
+
+```bash
+createdb aurelius_restore_test
+pg_restore --no-owner --no-privileges -d aurelius_restore_test /Volumes/aurelius-backups/aurelius-<newest>.dump
+psql aurelius_restore_test -c 'select count(*) from "Memory";'
+dropdb aurelius_restore_test
+```
 
 ---
 
@@ -289,9 +391,16 @@ engine.
 In rough priority. None are needed to go live.
 
 1. **Ollama** (`brew install ollama`) — local embeddings at $0 and a local fast
-   tier. Swap `EMBEDDINGS_PROVIDER=ollama` when ready (sovereignty upgrade; frees
-   you from Gemini's free-tier limits). Re-run `backfillEmbeddings.ts` after the
-   swap.
+   tier. **The adapter is not built yet** (`retrieval/embeddingAdapter.ts` has
+   the slot, not the code) — setting `EMBEDDINGS_PROVIDER=ollama` today disables
+   embeddings entirely, and preflight will say so at boot. When the adapter
+   lands, the swap also needs a full re-embed with the provider pinned, because
+   dimensions change:
+   ```bash
+   npx tsx scripts/backfillEmbeddings.ts --force --provider ollama
+   ```
+   `--force` re-embeds rows that already have vectors; without it the old
+   Gemini vectors survive and the index silently mixes two geometries.
 2. **Paperless-ngx** (Docker) — scan/drop PDFs, get OCR'd tagged text; a ~40-line
    poller feeds them into the corpus. Great for documents/receipts/contracts.
 3. **whisper.cpp** — local transcription of voice notes + athlete film → corpus.
@@ -316,6 +425,18 @@ In rough priority. None are needed to go live.
     publishes**. An outward action behind the grant gate (a `content.publish`
     class); never posts on its own. Needs a Meta Business/Creator account + Graph
     API app review. Build with the Business Engine, on Cole's real accounts.
+  - *Media hosting — this is the Mini's job.* Instagram fetches the image from
+    a **public URL** and cannot accept an upload, so publishing is unreachable
+    without somewhere to serve files from. `aurelius/media/host.ts` writes to
+    `MEDIA_DIR` (default `vault/public-media`) and Express serves it at
+    `/media`. Set **`MEDIA_PUBLIC_BASE_URL`** to the origin the Mini answers on
+    (e.g. `https://aurelius.yourdomain.com`) and publishing lights up; leave it
+    unset and the doctor honestly reports Instagram as `config`, not `live`.
+    Two things to know: that directory is deliberately **unauthenticated**
+    (Meta must fetch it anonymously, so it sits outside the API lock — put
+    nothing there but media meant to be published), and a `localhost` or
+    `192.168.x` base URL is **refused** rather than handed to Meta, because
+    the Graph error for an unreachable image is opaque enough to cost an hour.
 
 Rejected (so we stop relitigating): n8n/Huginn (Aurelius *is* the workflow/trigger
 engine), MinIO (Postgres + NAS filesystem suffice), Logseq (the vault is
@@ -323,8 +444,116 @@ Obsidian-format). Parked: Immich (revisit with the athlete-video pipeline).
 
 ---
 
+## PART 10 — Migrating an existing Railway deploy to the Mini
+
+If Aurelius has already been running on Railway, you are not starting fresh —
+there's a database with real memory in it. Four things move; nothing else does.
+
+**The code is host-agnostic.** There are exactly two places that mention Railway
+(`core/doctor.ts` reads `RAILWAY_PUBLIC_DOMAIN` as a fallback, and the frontend
+reads `RAILWAY_ENVIRONMENT` to pick an error hint), and both fall back cleanly
+when absent. There is no port of the application to do — only data and config.
+
+**1. The database (the only irreplaceable part).** Dump from Neon, restore
+locally:
+
+```bash
+pg_dump --no-owner --no-privileges -Fc "<neon DATABASE_URL>" -f ~/aurelius-migrate.dump
+createdb aurelius
+psql aurelius -c 'CREATE EXTENSION IF NOT EXISTS vector;'   # BEFORE the restore
+pg_restore --no-owner --no-privileges -d aurelius ~/aurelius-migrate.dump
+psql aurelius -c 'select count(*) from "VectorEmbedding";'  # sanity-check
+```
+
+Create the `vector` extension *first* — the restore replays column types that
+depend on it, and without it every vector column fails while the rest succeeds,
+leaving a database that looks restored and has no memory.
+
+Then run `npx prisma migrate deploy` to catch any migrations newer than the dump.
+
+**2. Google, which must be re-done — this is the real friction.** Refresh tokens
+are bound to both the client *and* the redirect URI. Changing the domain from
+`https://<something>.up.railway.app` to `http://localhost:3001` invalidates
+both stored tokens, and there is no way around it:
+
+- Add `http://localhost:3001/api/calendar/callback` and
+  `http://localhost:3001/api/gmail/callback` to the **same** Web OAuth client
+  (keep the Railway URIs too if you want to run both for a while — a client can
+  hold many).
+- Set `GOOGLE_REDIRECT_URI` / `GOOGLE_GMAIL_REDIRECT_URI` to the localhost pair.
+- Re-connect both at `/api/calendar/auth` and `/api/gmail/auth`.
+
+Budget ten minutes and expect the doctor to read "token REJECTED" until you do.
+
+**3. Environment variables.** Copy them out of the Railway service, then change
+exactly these:
+
+| Variable | Railway | Mini |
+|---|---|---|
+| `DATABASE_URL` | Neon connection string | `postgresql://localhost:5432/aurelius` |
+| `AURELIUS_BACKUP_DIR` | `/data/backups` (volume) | `/Volumes/aurelius-backups` (NAS) |
+| `GOOGLE_REDIRECT_URI` | `https://<domain>/api/calendar/callback` | `http://localhost:3001/api/calendar/callback` |
+| `GOOGLE_GMAIL_REDIRECT_URI` | `https://<domain>/api/gmail/callback` | `http://localhost:3001/api/gmail/callback` |
+| `BACKEND_ORIGIN` (frontend) | `http://<service>.railway.internal:3001` | `http://127.0.0.1:3001` |
+| `VAULT_DIR` / `INGEST_WATCH_DIR` | unset (no filesystem) | the NAS mounts |
+
+Everything else — every API key, `AURELIUS_API_KEY`, `AURELIUS_TZ`,
+`EMBEDDINGS_PROVIDER`, `TELEGRAM_*` — copies across unchanged.
+
+If you ever put the Mini behind a public hostname (Cloudflare Tunnel, a domain
+pointed at Tailscale Funnel), set `AURELIUS_PUBLIC_URL` to that origin. The
+doctor uses it to decide whether a loopback redirect URI is correct or broken,
+and to print auth links you can actually tap from your phone. **Also set
+`TRUST_PROXY` to the number of proxy hops in front** (a Cloudflare Tunnel is
+`1`) so the public write surfaces (`/intake`, `/start`, `/standard`) rate-limit
+per real visitor instead of bucketing every request under the tunnel's IP. Leave
+it unset (`0`) while the Mini is reachable only over Tailscale with no proxy —
+there the socket address is already the real client.
+
+**4. Turn Railway off *after* the soak, not before.** Run both for a few days
+with Railway's scheduled jobs stopped (or its service paused) so only one
+Aurelius is sending briefings and polling Telegram — **two pollers on one bot
+token cause 409 conflicts**, and the doctor will flag it. Keep Neon around as
+the cold backup the topology already assumes.
+
+---
+
+## When something isn't working
+
+One command, in this order:
+
+```bash
+cd ~/aurelius-legion/aurelius && npx tsx scripts/doctor.ts
+```
+
+Or from your phone: send `/doctor` to the Telegram bot. Or `GET
+/api/health/doctor` with the `x-aurelius-key` header.
+
+It live-probes every engine, key, and integration from inside the process and
+prints a fix under each line. Three things worth knowing about how to read it:
+
+- **"not configured" is a choice; ✗ is a fault.** A key that is set but rejected
+  reads BROKEN, never "dormant".
+- **The `failover` row is the one to fear.** If it shows a high substitution
+  rate, some provider is dead and the router has been papering over it — the
+  answers kept coming, they were just written by a different model.
+- **A green tick is a real call**, not a set variable. Backups get a write
+  probe, Google gets a token refresh, engines get a one-token ping.
+
+If a degraded stretch already happened — a provider dead for days without you
+noticing — `scripts/repairDegradedWindow.ts --since YYYY-MM-DD` reports what
+that window wrote into durable state (reuse cache, curriculum cursor, shadow
+verdicts), and `--apply` clears it. It's a dry run by default and touches only
+derived state.
+
+---
+
 ### Quick reference — the whole thing in order
 Buy (Part 0) → 4 clicks now (Part 1) → Mini setup (Part 2) → NAS + drives
 (Part 3) → install Aurelius (Part 4) → keep-alive (Part 5) → phone access
 (Part 6) → backups (Part 7) → **grant one keyhole, soak 7 days (Part 8)** →
-local upgrades later (Part 9).
+local upgrades later (Part 9). Coming from Railway instead of fresh? Read
+**Part 10** first — you skip Part 4's seed/backfill and restore a dump instead.
+
+Run `npx tsx scripts/doctor.ts` after Part 4, after Part 5, and once more after
+the first night's backup. Three runs catch essentially everything.

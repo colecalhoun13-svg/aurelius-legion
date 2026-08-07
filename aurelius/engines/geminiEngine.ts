@@ -105,8 +105,11 @@ export const geminiAdapter: EngineAdapter = {
       const tokensUsed =
         (json?.usageMetadata?.promptTokenCount || 0) +
         (json?.usageMetadata?.candidatesTokenCount || 0);
+      const tokensIn = json?.usageMetadata?.promptTokenCount || 0;
+      const tokensOut = json?.usageMetadata?.candidatesTokenCount || 0;
+      const tokensCachedIn = json?.usageMetadata?.cachedContentTokenCount || 0;
 
-      return { text, tokensUsed, raw: json };
+      return { text, tokensUsed, tokensIn, tokensOut, tokensCachedIn, raw: json };
     } catch (err: any) {
       return { text: `Gemini fetch error: ${err?.message || String(err)}`, tokensUsed: 0 };
     }

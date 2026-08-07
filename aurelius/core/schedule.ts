@@ -45,11 +45,11 @@ const DISABLED_KEY = "schedule_disabled";
 // Exported for the cockpit's spine-health strip (final council): the roster
 // of claimed jobs IS the list of rows the instrument draws.
 export const ONCE_PER_DAY = new Set([
-  "rss_ingest", "market_pulse", "schedule_protection", "morning_briefing",
+  "rss_ingest", "market_pulse", "schedule_protection", "morning_briefing", "inbox_triage", "outreach_sweep",
   "initiative_pulse", "midday_check", "nightly_debrief", "weekend_pulse",
   "persona_observer", "weekly_planning", "freshness_sweep", "weekly_scoreboard",
   "capability_gaps", "decision_curriculum", "curriculum_ingest", "db_backup",
-  "queue_sweep",
+  "queue_sweep", "marketing_pass", "content_outcome", "retention_sweep",
 ]);
 
 export function localDayKey(): string {
@@ -57,8 +57,25 @@ export function localDayKey(): string {
 }
 
 /** True = you own today's run. Availability beats dedup: if the claim STORE
- *  is unreachable (cold Neon at boot), run unclaimed rather than skip. */
-export async function claimDailyRun(jobName: string, day = localDayKey()): Promise<boolean> {
+ *  is unreachable (cold Neon at boot), run unclaimed rather than skip.
+ *
+ *  `staleRunningMs` is the lease past which a claim stuck "running" can be taken
+ *  over. It differs by caller (council M2): a BOOT sweep and the live scheduler
+ *  use a short 30-min lease (a row that stale can only be a crashed process's
+ *  orphan — the live cron fires a given daily job at most once/day). The hourly
+ *  INTERVAL sweep uses a LONG lease (6h): in a live, healthy process a row still
+ *  "running" is usually a job genuinely in flight — a curriculum ingest or
+ *  weekend synthesis can legitimately run past 30 minutes — so a short lease
+ *  would double-run it. A long lease still RECOVERS a genuinely hung job the same
+ *  day (nothing legitimate runs 6h) instead of stranding it until the next boot.
+ *  Pass 0 to never reclaim running. A "failed" row is always reclaimable — that's
+ *  the transient-error retry, bounded by the day key. "done" is never reclaimable. */
+export async function claimDailyRun(
+  jobName: string,
+  day = localDayKey(),
+  opts: { staleRunningMs?: number } = {}
+): Promise<boolean> {
+  const staleRunningMs = opts.staleRunningMs ?? 30 * 60_000;
   const { prisma, withDb } = await import("./db/prisma.ts");
   try {
     await withDb(() => prisma.jobRun.create({ data: { jobName, day } }));
@@ -68,10 +85,18 @@ export async function claimDailyRun(jobName: string, day = localDayKey()): Promi
       console.warn(`[schedule] claim store unreachable for ${jobName} — running unclaimed:`, err?.message ?? err);
       return true;
     }
-    // Someone owns it. Take over only a stale "running" claim (dead process).
+    // Someone owns it. What's reclaimable:
+    //   "failed"                       — always retryable (transient-error recovery).
+    //   "running" past staleRunningMs  — an orphan (crash) or a genuinely hung job;
+    //                                    the lease length is the caller's safety knob.
+    //   "done"                         — never (a completed job must not re-fire).
+    const reclaimable: any[] = [{ status: "failed" }];
+    if (staleRunningMs > 0) {
+      reclaimable.push({ status: "running", updatedAt: { lt: new Date(Date.now() - staleRunningMs) } });
+    }
     try {
       const takeover = await prisma.jobRun.updateMany({
-        where: { jobName, day, status: "running", updatedAt: { lt: new Date(Date.now() - 30 * 60_000) } },
+        where: { jobName, day, OR: reclaimable },
         data: { status: "running" }, // bumps updatedAt — the takeover marker
       });
       return takeover.count === 1;
@@ -102,8 +127,14 @@ function withDailyClaim(name: string, handler: () => void | Promise<void>): () =
       await handler();
       await finishDailyRun(name, true, day);
     } catch (err) {
+      // Record the run as FAILED (reclaimable by the hourly catch-up and the
+      // next claim — see claimDailyRun's takeover on "failed"). Deliberately do
+      // NOT re-throw: node-schedule doesn't await the callback, so a rejected
+      // promise here is an unhandledRejection, not a caught failure. runTraced
+      // inside the handler has already paged Cole and written the error trace —
+      // the JobRun status is the retry signal, and that's what we set.
       await finishDailyRun(name, false, day);
-      throw err;
+      console.error(`[schedule] ${name} failed (recorded, retryable):`, (err as any)?.message ?? err);
     }
   };
 }

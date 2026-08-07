@@ -12,8 +12,12 @@
 // IG BUSINESS/CREATOR account + a long-lived token with instagram_content_publish.
 // The Graph flow is two calls: create a media container, then publish it. IG
 // requires a PUBLIC image_url (it fetches the bytes itself) — raw uploads aren't
-// supported, so hosting the image is the caller's job (comes with the Mac Mini
-// deploy; until then pass an already-hosted URL). See docs/SETUP.md.
+// supported.
+//
+// Hosting used to be "the caller's job", which quietly meant nobody's: there
+// was no host anywhere in the system, so this lane could not complete even with
+// Instagram fully configured. media/host.ts now closes that — a local path is
+// hosted and handed over as a public URL. See docs/SETUP_AND_LAUNCH.md.
 
 import { getInstagramCreds, isInstagramConfigured } from "../instagram/auth.ts";
 
@@ -67,12 +71,20 @@ export async function publishToInstagram(input: InstagramPublishInput): Promise<
     );
   }
   if (!input.imageUrl?.trim()) {
-    throw new Error("Instagram publish needs a public image_url (Meta fetches the bytes itself).");
+    throw new Error("Instagram publish needs an image — a public URL or a local file path.");
   }
+
+  // Resolve to something Meta's servers can actually fetch. This used to be
+  // the caller's problem, which meant the outward lane was unreachable in
+  // practice: a local path or a localhost URL produced an opaque Graph error.
+  // A local path is now hosted first; a private-network URL is rejected with
+  // the real reason instead of being handed to Meta to fail on.
+  const { resolvePublicMediaUrl } = await import("../media/host.ts");
+  const publicUrl = await resolvePublicMediaUrl(input.imageUrl);
 
   // 1) create media container
   const container = await graphPost(`${c.igUserId}/media`, {
-    image_url: input.imageUrl,
+    image_url: publicUrl,
     caption: input.caption ?? "",
     access_token: c.token,
   });

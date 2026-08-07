@@ -24,7 +24,15 @@ import { setKnowledge, getKnowledge, resolveOperatorId } from "../knowledge/stor
 import { runLLM } from "../llm/runLLM.ts";
 import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import { extractDirectives } from "../llm/directiveParser.ts";
-import { CONFIRMED_FACTS, OPEN_QUESTIONS, BUSINESS_SCOPE, type OpenQuestion } from "./profile.ts";
+import {
+  CONFIRMED_FACTS,
+  OPEN_QUESTIONS,
+  BUSINESS_SCOPE,
+  RETIRED_FACTS,
+  REVISION_SOURCE_PREFIX,
+  factRevision,
+  type OpenQuestion,
+} from "./profile.ts";
 
 /** The business lens owns this knowledge. */
 async function businessOperatorId(): Promise<string | null> {
@@ -41,7 +49,11 @@ async function researchFor(query: string): Promise<{ text: string; grounding: st
   try {
     const { runResearch } = await import("../research/researchEngine.ts");
     const res: any = await runResearch({
-      query: `${query} — context: a coach specialising in high-school and college athletes, growing an in-person practice at a local gym`,
+      // Context DERIVED, not written here. This literal was corrected once
+      // already (2026-08-05) and the correction missed proposeOffer's separate
+      // copy, which kept aiming at the employer's athletes for another day.
+      // One derivation now serves every prompt in this file.
+      query: `${query} — context: ${await businessResearchContext()}`,
       operator: "business",
       depth: "deep",
       subject: query.slice(0, 80),
@@ -58,19 +70,75 @@ async function researchFor(query: string): Promise<{ text: string; grounding: st
 }
 
 /**
- * Seed Cole's stated facts into Living Knowledge. Idempotent: an existing
- * entry is left alone, because Cole's later corrections outrank this seed.
- * Returns what it actually wrote.
+ * Seed Cole's stated facts into Living Knowledge.
+ *
+ * Idempotent, with two deliberate exceptions — both of which exist because
+ * "never touch an existing entry" was quietly wrong when Cole RESTATED a fact
+ * rather than correcting one:
+ *
+ *   • REVISED facts. A seeded entry carries a `profile:rev{N}` sourceId. When
+ *     the source fact's revision is higher, Cole has answered that question
+ *     again and the newer answer wins — setKnowledge keeps the old value in
+ *     history. An entry with any OTHER sourceId was written by a correction or
+ *     a confirmed proposal, and is still left alone: Cole's hand outranks this
+ *     seed, which was the original rule and stays the original rule.
+ *   • RETIRED facts. Deactivated (soft — history intact). Without this, a fact
+ *     that stopped being true just stays live forever; `exploring` described
+ *     remote coaching as "not committed" long after it became the business.
+ *
+ * Returns what it actually wrote, revised, and retired.
  */
-export async function seedBusinessProfile(): Promise<{ written: string[]; skipped: string[] }> {
+export async function seedBusinessProfile(): Promise<{
+  written: string[];
+  skipped: string[];
+  revised: string[];
+  retired: string[];
+}> {
   const opId = await businessOperatorId();
-  if (!opId) return { written: [], skipped: [] };
+  if (!opId) return { written: [], skipped: [], revised: [], retired: [] };
   const written: string[] = [];
   const skipped: string[] = [];
+  const revised: string[] = [];
+  const retired: string[] = [];
+
+  // Retire first, so a retired key can't be resurrected by a same-run write.
+  for (const dead of RETIRED_FACTS) {
+    const existing = await getKnowledge(opId, BUSINESS_SCOPE, dead.key, { includeInactive: false });
+    if (!existing) continue;
+    await prisma.knowledgeEntry.updateMany({
+      where: { operatorId: opId, scope: BUSINESS_SCOPE, key: dead.key, active: true },
+      data: { active: false, updatedBy: "cole", rationale: `Retired: ${dead.reason}` },
+    });
+    retired.push(dead.key);
+  }
+
   for (const fact of CONFIRMED_FACTS) {
+    const rev = factRevision(fact);
+    const stamp = `${REVISION_SOURCE_PREFIX}${rev}`;
     const existing = await getKnowledge(opId, BUSINESS_SCOPE, fact.key, { includeInactive: false });
     if (existing) {
-      skipped.push(fact.key);
+      const storedSource = (existing as any)?.sourceId ?? null;
+      const storedRev =
+        typeof storedSource === "string" && storedSource.startsWith(REVISION_SOURCE_PREFIX)
+          ? Number(storedSource.slice(REVISION_SOURCE_PREFIX.length))
+          : null;
+      // Not seed-written (a real correction), or already at/ahead of this
+      // revision → leave it. Cole's own edits are never overwritten.
+      if (storedRev === null || !Number.isFinite(storedRev) || storedRev >= rev) {
+        skipped.push(fact.key);
+        continue;
+      }
+      await setKnowledge({
+        operatorId: opId,
+        scope: BUSINESS_SCOPE,
+        key: fact.key,
+        value: fact.value,
+        sourceType: "cole_conversation",
+        sourceId: stamp,
+        rationale: `Restated by Cole (revision ${rev}). ${fact.note}`,
+        updatedBy: "cole",
+      });
+      revised.push(fact.key);
       continue;
     }
     await setKnowledge({
@@ -79,6 +147,7 @@ export async function seedBusinessProfile(): Promise<{ written: string[]; skippe
       key: fact.key,
       value: fact.value,
       sourceType: "cole_conversation",
+      sourceId: stamp,
       rationale: `Stated by Cole in the business foundation session. ${fact.note}`,
       updatedBy: "cole",
     });
@@ -86,10 +155,17 @@ export async function seedBusinessProfile(): Promise<{ written: string[]; skippe
   }
   // Aim the research pipe at his real situation as part of seeding, so the
   // very next Sunday sweep compounds on Cole's business, not a stock persona.
-  await deriveStandingTopics().catch((err) =>
-    console.warn("[business] standing-topic derivation failed (non-fatal):", (err as any)?.message ?? err)
-  );
-  return { written, skipped };
+  //
+  // ONLY when the profile actually changed. deriveStandingTopics overwrites
+  // `research.standing_topics` outright, and this function now runs at every
+  // boot — deriving unconditionally would silently reset any topics Cole had
+  // tuned every time the process restarted. A no-op seed leaves them alone.
+  if (written.length || revised.length || retired.length) {
+    await deriveStandingTopics().catch((err) =>
+      console.warn("[business] standing-topic derivation failed (non-fatal):", (err as any)?.message ?? err)
+    );
+  }
+  return { written, skipped, revised, retired };
 }
 
 /**
@@ -109,17 +185,25 @@ export async function deriveStandingTopics(): Promise<{ business: string[]; cont
   const gaps = await openGaps();
   const topGap = gaps[0];
 
+  // Re-aimed 2026-08-05. The first topic used to be "how coaches grow
+  // high-school athlete enrollment at a gym they already work in" — research
+  // pointed at growing Cole's EMPLOYER. Cole is employed there; those athletes
+  // are not his. The subject is the remote business he owns, and its binding
+  // constraint is that nothing arrives on its own (`lead_reality`).
   const business = [
-    "how local sports performance coaches grow high-school athlete enrollment at a gym they already work in",
-    "requirement-and-standards positioning versus guarantee-based offers in youth athletic training — what earns trust with parents",
+    "how independent strength coaches get their first paying remote/online clients with no audience and no inbound",
+    "pricing structures for online athletic coaching — monthly retainers versus fixed training blocks versus one-off program sales, and when each fits",
     "remote athletic coaching models that sell capability and competency rather than measured outcomes",
-    "what parents of varsity high-school athletes actually evaluate when choosing a performance coach",
+    "requirement-and-standards positioning versus guarantee-based offers in youth athletic training — what earns trust with parents",
+    "what parents of varsity high-school athletes actually evaluate when choosing a remote performance coach they will never meet in person",
+    "how coaches running a side business alongside full-time employment structure delivery so it survives limited hours",
   ];
   if (topGap) business.push(`${topGap.question.replace(/\?$/, "")} — how comparable coaches have answered this`);
 
   const content = [
     "content formats that demonstrate coaching competency without guarantee claims",
     "how performance coaches show athlete progress credibly when they cannot publish verified numbers",
+    "how coaches with no existing following start producing content that reaches athletes and parents outside their local area",
   ];
 
   const opBiz = await businessOperatorId();
@@ -193,12 +277,23 @@ export async function recordGapAnswer(key: string, answer: string): Promise<{ ok
  * model that can see the gaps stops filling them in.
  */
 export async function businessContextBlock(): Promise<string> {
-  const facts = await knownFacts();
-  if (facts.length === 0) return "";
-  const gaps = await openGaps();
+  // The one line that must survive an empty or unreadable fact table. Every
+  // other sentence here is derived; this one is a boundary, and a boundary
+  // that disappears when a query fails is not a boundary. `proposeOffer`
+  // spent a day telling the model to grow "the high-school athletes at his
+  // gym" because the employment rule lived only in prose, not in the prompt.
+  const BOUNDARY =
+    "HARD BOUNDARY — Cole is EMPLOYED at a gym. The athletes he coaches there belong to his " +
+    "employer. They are NEVER the audience for an offer, price, campaign, or outreach, however " +
+    "commercially sensible that looks. Every commercial idea serves his own REMOTE business.";
+
+  const facts = await knownFacts().catch(() => []);
+  if (facts.length === 0) return BOUNDARY;
+  const gaps = await openGaps().catch(() => []);
   const lines = [
     "═══ COLE'S BUSINESS — CONFIRMED FACTS ═══",
     "Everything below came from Cole directly. Reason FROM it; never contradict it, never re-derive a generic persona.",
+    BOUNDARY,
     "",
     ...facts.map((f) => `• ${f.key.replace(/_/g, " ")}: ${f.value}`),
   ];
@@ -210,6 +305,18 @@ export async function businessContextBlock(): Promise<string> {
     );
   }
   return lines.join("\n");
+}
+
+/** One line of the same truth, for search queries rather than prompts. */
+export async function businessResearchContext(): Promise<string> {
+  const facts = await knownFacts().catch(() => []);
+  const get = (k: string) => facts.find((f) => f.key === k)?.value ?? "";
+  const audience = get("remote_audience") || get("ideal_client") || "high-school and college athletes";
+  return (
+    `a strength coach building his OWN remote/online coaching business serving ${audience.slice(0, 200)}. ` +
+    `He is employed full-time at a gym whose athletes are NOT his to sell to. The remote business has ` +
+    `no clients and no inbound lead flow yet. Answer for the remote business, never the gym job.`
+  );
 }
 
 /** Where the business actually stands — facts, and what would sharpen them. */
@@ -247,8 +354,12 @@ export async function proposeOffer(): Promise<
 
   // Research-informed, not improvised (Cole's standard): the draft sees how
   // comparable coaches actually structure this before it proposes anything.
+  // Was: "...offers for high-school athletes at a local gym". That researched
+  // how to sell to Cole's employer's athletes. The subject comes from the
+  // facts now, so it tracks the business rather than a stale literal.
   const evidence = await researchFor(
-    "how sports performance coaches structure offers for high-school athletes at a local gym — formats, session cadence, what parents respond to"
+    "how independent coaches structure and price REMOTE/online athletic coaching offers — " +
+      "formats, check-in cadence, what buyers respond to when they never meet the coach in person"
   );
   const response = await runLLM({
     taskType: "chat",
@@ -256,12 +367,15 @@ export async function proposeOffer(): Promise<
     noReuse: true,
     omitToolCatalog: true,
     input: `
+${await businessContextBlock()}
+
 Draft ONE concrete offer for Cole's coaching business, from the confirmed facts below.
 
 Rules:
 - Ground every element in a stated fact. Where you must assume something, mark it "ASSUMPTION:" on its own line — do not smuggle guesses in as fact.
 - Cole is a STANDARD-SETTER, not a promise/guarantee coach: state what's required and why, never "we'll get you X".
-- Serve the NEAR-TERM goal (growing the high-school athletes at his gym), not an online fantasy.
+- Serve the REMOTE business described in the context above. Never write an offer aimed at the
+  athletes at the gym that employs him — those are his employer's clients, not his.
 - Lead with the buyer's job, not "training". The measured metrics are the proof — use them.
 - His method edge (athletes who understand and can leverage their own bodies, not compliance-followers) must be the spine of the promise, not a footnote.
 - Parents typically buy at this age; write the promise so both athlete and parent recognise it.

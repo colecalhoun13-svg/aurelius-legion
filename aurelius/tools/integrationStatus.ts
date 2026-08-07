@@ -82,6 +82,9 @@ export async function getIntegrations(): Promise<Integration[]> {
   const igAppConfigured =
     has("INSTAGRAM_APP_ID") || has("META_APP_ID") || (has("INSTAGRAM_ACCESS_TOKEN") && has("INSTAGRAM_BUSINESS_ID"));
   const instagramLive = registered.has("content") && igConnected;
+  // Publishing needs a public URL for the image, not just a token.
+  const { isMediaHostConfigured } = await import("../media/host.ts");
+  const mediaHosted = isMediaHostConfigured();
   const webLive = registered.has("web") && (has("TAVILY_API_KEY") || has("GEMINI_API_KEY"));
 
   // Memory/recall: what's actually powering semantic recall right now.
@@ -233,14 +236,20 @@ export async function getIntegrations(): Promise<Integration[]> {
     },
     {
       name: "Content / Instagram",
-      status: instagramLive ? "live" : "config",
+      // A connected Instagram is NOT a publishable Instagram. Meta fetches the
+      // image from a public URL, so without a media host the publish call
+      // cannot complete — reporting "live" there would be the doctor lying
+      // about a lane that fails on first use.
+      status: instagramLive && mediaHosted ? "live" : "config",
       desc: "Draft posts in your voice (inward), read live metrics (reach/engagement/followers), and publish — outward, so every post stops for your one-tap confirm on the Bridge",
       glyph: "▣",
-      need: instagramLive
-        ? undefined
-        : igAppConfigured
+      need: !instagramLive
+        ? igAppConfigured
           ? "one click to connect at /api/instagram/auth"
-          : "create a Meta app → INSTAGRAM_APP_ID + INSTAGRAM_APP_SECRET, then connect at /api/instagram/auth (docs/SETUP_AND_LAUNCH.md). Drafting works keyless now.",
+          : "create a Meta app → INSTAGRAM_APP_ID + INSTAGRAM_APP_SECRET, then connect at /api/instagram/auth (docs/SETUP_AND_LAUNCH.md). Drafting works keyless now."
+        : !mediaHosted
+          ? "Instagram is connected, but publishing also needs somewhere to serve the image from — Meta fetches it by URL and cannot accept an upload. Set MEDIA_PUBLIC_BASE_URL to the origin Aurelius is reachable at (this lands with the Mac Mini). Drafting and metrics work now."
+          : undefined,
     },
     {
       name: "Cal.com (self-hosted)",

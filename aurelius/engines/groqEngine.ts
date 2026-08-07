@@ -75,6 +75,9 @@ export const groqAdapter: EngineAdapter = {
       return {
         text,
         tokensUsed: json.usage?.total_tokens ?? 0,
+        tokensIn: json.usage?.prompt_tokens ?? 0,
+        tokensOut: json.usage?.completion_tokens ?? 0,
+        tokensCachedIn: (json.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0,
         raw: json,
       };
     } catch (err: any) {

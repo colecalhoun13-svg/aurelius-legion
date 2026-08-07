@@ -39,6 +39,24 @@ function env(name: string): string | null {
   return v ? v : null;
 }
 
+/**
+ * Is the filesystem under us disposable?
+ *
+ * Every "durable storage" fix in this file used to be phrased as Railway
+ * advice. On the Mini that advice is nonsense — there is no volume to mount,
+ * the disk IS durable, and the real failure is an unmounted NAS share. Same
+ * verdict, different remedy, so the remedy has to know where it is.
+ */
+function ephemeralHost(): boolean {
+  return !!(
+    process.env.RAILWAY_ENVIRONMENT?.trim() ||
+    process.env.FLY_APP_NAME?.trim() ||
+    process.env.RENDER?.trim() ||
+    process.env.DYNO?.trim() ||
+    process.env.AURELIUS_EPHEMERAL_FS?.trim()
+  );
+}
+
 // ── Engines ──────────────────────────────────────────────────────────
 // A live 1-token ping is the only way to tell "key set" from "key works".
 
@@ -349,8 +367,10 @@ function checkIngestPaths(): Check[] {
   // under a green tick.
   const backups = env("AURELIUS_BACKUP_DIR");
   if (!backups) {
-    out.push(fail("core", "backups", "AURELIUS_BACKUP_DIR not set — nightly dumps have nowhere durable to land",
-      "set AURELIUS_BACKUP_DIR=/data/backups and mount a Railway volume at /data, or the 02:00 backup writes into a container that gets replaced"));
+    out.push(fail("core", "backups", "AURELIUS_BACKUP_DIR not set — the 02:00 dump lands in the working directory, which is not durable storage",
+      ephemeralHost()
+        ? "set AURELIUS_BACKUP_DIR=/data/backups and mount a persistent volume at /data, or every nightly dump dies with the container"
+        : "set AURELIUS_BACKUP_DIR to a path on durable storage — on the Mini that's the NAS mount, e.g. /Volumes/aurelius-backups"));
   } else {
     try {
       fs.mkdirSync(backups, { recursive: true });
@@ -364,7 +384,10 @@ function checkIngestPaths(): Check[] {
         .sort((a, b) => b - a);
       if (!dumps.length) {
         out.push(fail("core", "backups", `${backups} is writable but EMPTY — no dump has ever landed`,
-          "the 02:00 job has never succeeded. Check the backend log for [backup] lines, and confirm a Railway volume is mounted at the parent of this path — without one, dumps die with the container."));
+          "the 02:00 job has never succeeded. Check the backend log for [backup] lines" +
+            (ephemeralHost()
+              ? ", and confirm a persistent volume is mounted at the parent of this path — without one, dumps die with the container."
+              : ", and confirm pg_dump is on PATH (brew install postgresql@16) and the backup mount is actually attached.")));
       } else {
         const ageH = Math.round((Date.now() - dumps[0]) / 3600_000);
         out.push(ageH > 48
@@ -540,6 +563,13 @@ async function checkFailover(): Promise<Check | null> {
  * AUTH_EXEMPT, so a plain browser tap works.
  */
 function publicOrigin(): string | null {
+  // AURELIUS_PUBLIC_URL first: host-agnostic, so the Mini (or any box behind
+  // Tailscale/Cloudflare) declares its own origin without the doctor knowing
+  // what a Railway is. RAILWAY_PUBLIC_DOMAIN stays as a last-resort auto-detect.
+  const explicit = process.env.AURELIUS_PUBLIC_URL?.trim();
+  if (explicit) {
+    try { return new URL(explicit).origin; } catch { /* fall through */ }
+  }
   const r = process.env.GOOGLE_REDIRECT_URI?.trim();
   if (r) {
     try { return new URL(r).origin; } catch { /* fall through */ }
@@ -549,6 +579,42 @@ function publicOrigin(): string | null {
 }
 const authUrl = (p: string): string =>
   `${publicOrigin() ?? `http://localhost:${process.env.PORT || 3001}`}${p}`;
+
+/** Is this deploy reachable at a public hostname, or only from its own box? */
+function hostedOrigin(): string | null {
+  const o = publicOrigin();
+  if (!o) return null;
+  try { return isLoopback(new URL(o)) ? null : o; } catch { return null; }
+}
+
+function isLoopback(u: URL): boolean {
+  const h = u.hostname.toLowerCase();
+  return h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1" || h.endsWith(".localhost");
+}
+
+/**
+ * Validate an OAuth redirect URI. Returns "" when it's fine, else the reason.
+ *
+ * The subtlety this exists for: `http://localhost:3001/...` is CORRECT on the
+ * Mac Mini — Google exempts loopback from the https rule precisely so
+ * local-first installs work — and WRONG on a hosted deploy, where the browser
+ * isn't on the same machine. The old check hard-failed every localhost URI, so
+ * the Mini would have been greeted on day one by a red X next to a redirect
+ * that works. Judge it against where this process is actually reachable.
+ */
+export function validateRedirect(redirect: string, expectedPath: string): string {
+  let u: URL;
+  try { u = new URL(redirect); } catch { return "not a valid URL"; }
+  if (u.pathname !== expectedPath) return `path is "${u.pathname}", must be exactly ${expectedPath}`;
+  if (isLoopback(u)) {
+    const hosted = hostedOrigin();
+    return hosted
+      ? `points at your own machine, but this deploy is reachable at ${hosted} — the OAuth browser isn't on this box, so the callback can never arrive`
+      : ""; // local-first install: Google allows http on loopback. Correct.
+  }
+  if (u.protocol !== "https:") return "Google requires https for any non-loopback redirect";
+  return "";
+}
 
 // ── Google (calendar + gmail) ────────────────────────────────────────
 // The subtle one: a stored refresh token is bound to the CLIENT that
@@ -580,15 +646,10 @@ async function checkGoogle(): Promise<Check[]> {
     out.push(fail("google", "redirect uri", "GOOGLE_REDIRECT_URI not set — Connect will send your browser to localhost",
       `set GOOGLE_REDIRECT_URI=${authUrl("/api/calendar/callback")} and register that EXACT string in the Google Console`));
   } else {
-    let bad = "";
-    try {
-      const u = new URL(redirect);
-      if (u.protocol !== "https:") bad = "Google requires https for a Web client";
-      else if (u.pathname !== "/api/calendar/callback") bad = `path is "${u.pathname}", must be exactly /api/calendar/callback`;
-    } catch { bad = "not a valid URL"; }
+    const bad = validateRedirect(redirect, "/api/calendar/callback");
     out.push(bad
       ? fail("google", "redirect uri", `${redirect} — ${bad}`,
-          "point GOOGLE_REDIRECT_URI at the BACKEND service's public domain + /api/calendar/callback, and register that exact string in the Google Console — it must match character for character, trailing slash included")
+          `set GOOGLE_REDIRECT_URI=${authUrl("/api/calendar/callback")} and register that exact string in the Google Console — it must match character for character, trailing slash included`)
       : ok("google", "redirect uri", redirect));
   }
 
@@ -660,11 +721,15 @@ async function checkGoogle(): Promise<Check[]> {
         ? "GOOGLE_GMAIL_REDIRECT_URI not set — AND the Gmail token above is dead. Gmail CANNOT be re-connected until this is set: the consent screen would send your browser to localhost."
         : "GOOGLE_GMAIL_REDIRECT_URI not set — falls back to localhost",
       `set GOOGLE_GMAIL_REDIRECT_URI=${authUrl("/api/gmail/callback")} and add that EXACT URI to the same Web OAuth client in the Google Console (it is a SEPARATE var from GOOGLE_REDIRECT_URI), then open ${authUrl("/api/gmail/auth")}`));
-  } else if (gmailRedirect.includes("localhost")) {
-    out.push(fail("google", "gmail redirect uri", `points at localhost: ${gmailRedirect}`,
-      `on a hosted deploy this must be ${authUrl("/api/gmail/callback")}`));
   } else {
-    out.push(ok("google", "gmail redirect uri", gmailRedirect));
+    // Same loopback rule as the calendar redirect: correct on the Mini, wrong
+    // when hosted. A blanket "contains localhost → FAIL" was a false alarm on
+    // every local-first install.
+    const bad = validateRedirect(gmailRedirect, "/api/gmail/callback");
+    out.push(bad
+      ? fail("google", "gmail redirect uri", `${gmailRedirect} — ${bad}`,
+          `set GOOGLE_GMAIL_REDIRECT_URI=${authUrl("/api/gmail/callback")} and add that exact URI to the same Web OAuth client`)
+      : ok("google", "gmail redirect uri", gmailRedirect));
   }
 
   // Consent screen: only worth a row when a Google token is actually dead —

@@ -8,6 +8,7 @@
 import { registerActionFinalizer, registerActionInverse } from "./actionRegistry.ts";
 import { finalizeScheduleProtection } from "./workflows/scheduleProtection.ts";
 import { finalizeInboxDraft } from "./workflows/inboxTriage.ts";
+import { finalizeOutreachDraft } from "../crm/leadEngine.ts";
 import { finalizeContentPublish } from "./workflows/contentPublish.ts";
 import { finalizeResearchIngest } from "./workflows/researchIngest.ts";
 import { confirmHeuristic, retireHeuristic } from "../compiled/chatCompiler.ts";
@@ -25,9 +26,58 @@ export function registerAllActions(): void {
     return deleteCalendarEvent(result?.externalId);
   });
   registerActionFinalizer("inbox.triage_draft", finalizeInboxDraft);
+  // Inward: writes a Gmail DRAFT and advances the lead's follow-up date.
+  // Sending stays outward (outreach.send) and non-grantable.
+  registerActionFinalizer("outreach.draft", finalizeOutreachDraft);
+  // Inward: keep a drafted post in the content queue. `content.draft` was a
+  // declared class with NO finalizer, which meant every draft gated as an
+  // unactionable proposal and the copy died with the conversation.
+  registerActionFinalizer("content.draft", async (payload: any) => {
+    const { saveDraft } = await import("../content/queue.ts");
+    return saveDraft({
+      body: payload?.caption ?? "",
+      channel: payload?.channel,
+      title: payload?.title,
+      angleId: payload?.angleId,
+      format: payload?.format,
+    });
+  });
+  // Real undo: a kept draft is discarded, not deleted — the idea stays visible
+  // so nothing re-proposes it as if it were new.
+  registerActionInverse("content.draft", async (_payload, result) => {
+    const { discardDraft } = await import("../content/queue.ts");
+    return result?.id ? discardDraft(result.id) : { ok: true };
+  });
   // Outward: publishing content. executeAction always GATES this (outward class),
   // so the finalizer only runs on Cole's Bridge confirm.
   registerActionFinalizer("content.publish", finalizeContentPublish);
+  // Outward: send an SMS via Twilio. Gated by construction; runs on confirm only.
+  registerActionFinalizer("sms.send", async (payload: any) => {
+    const { sendSms } = await import("../crm/sms.ts");
+    return sendSms({ to: payload?.to, body: payload?.body });
+  });
+  // Outward: spend on a paid boost. Gated by construction; runs on confirm only.
+  registerActionFinalizer("ads.spend", async (payload: any) => {
+    const { finalizeBoost } = await import("../business/paidBoost.ts");
+    return finalizeBoost(payload);
+  });
+  // Never-grant inward: record a payment PARSED FROM AN EMAIL. The class carries
+  // neverGrant (a From header is spoofable), so executeAction/decideAction would
+  // always gate it anyway — but the email path surfaces the confirm directly, so
+  // this finalizer only ever runs on Cole's Bridge tap. recordSelfPayment is
+  // idempotent on externalRef, so a double-confirm can't double-count.
+  registerActionFinalizer("payment.record", async (payload: any) => {
+    const { recordSelfPayment } = await import("../crm/selfRecord.ts");
+    return recordSelfPayment({
+      amountCents: payload?.amountCents,
+      email: payload?.email ?? null,
+      phone: payload?.phone ?? null,
+      payerName: payload?.payerName ?? null,
+      method: payload?.method,
+      externalRef: payload?.externalRef ?? null,
+      recordedBy: payload?.recordedBy ?? "email_confirmed",
+    });
+  });
   // Inward: run a proposed research mission end-to-end + ingest its report.
   // Granted → the initiative pulse runs its own proposals; else Cole confirms.
   registerActionFinalizer("research.ingest", finalizeResearchIngest);

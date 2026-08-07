@@ -11,6 +11,7 @@ const NAV_GLYPHS: Record<string, string> = {
   Calendar: "◷",
   "Goals & Projects": "◎",
   Brain: "❈",
+  Business: "◈",
   Aurelius: "♛",
   Tools: "⚒",
   Engines: "⚙",

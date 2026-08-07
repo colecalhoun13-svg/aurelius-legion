@@ -157,6 +157,8 @@ export async function recentPostMetrics(limit = 8): Promise<PostMetrics[]> {
       engagement: likes + comments + saved + shares,
     });
   }
+  // Freshness heartbeat — IG insights were actually read just now.
+  await import("../core/connectorFreshness.ts").then((mod) => mod.recordConnectorRead("instagram")).catch(() => {});
   return out;
 }
 

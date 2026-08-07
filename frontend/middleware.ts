@@ -12,6 +12,17 @@ import { NextResponse, type NextRequest } from "next/server";
 const PUBLIC_PATHS = [
   /^\/unlock$/,
   /^\/api\/unlock$/,
+  // THE FRONT DOOR. A funnel that demands the unlock secret captures nobody,
+  // so the prospect-facing form and its write endpoint are public. They are
+  // narrow by construction: /api/start creates a Lead, returns no id, reads
+  // nothing, and is rate-limited per IP. Nothing else here is exempt.
+  /^\/start$/,
+  /^\/api\/start$/,
+  // THE STANDARD — the public assessment funnel (a lead magnet). Same contract
+  // as /start: computes a static benchmark and, only when an email is given,
+  // creates a Lead. Reads nothing, returns no id, rate-limited per IP.
+  /^\/standard$/,
+  /^\/api\/standard$/,
   /^\/manifest\.webmanifest$/,
   /^\/icons\//,
   /^\/favicon/,

@@ -37,6 +37,10 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
     missions,
     llmCalls,
     cacheReuses,
+    correctedReuses,
+    earnedThisWeekAgg,
+    earnedAllTimeAgg,
+    leadsThisWeek,
   ] = await Promise.all([
     prisma.task.count({ where: { status: "done", completedAt: window } }),
     prisma.task.count({ where: { createdAt: window } }),
@@ -62,10 +66,21 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
     }),
     prisma.logEntry.count({ where: { type: "llm_call", createdAt: window } }),
     // Compiled entries REUSED this week (created earlier, touched now) —
-    // the numerator of independence.
+    // the numerator of independence. A reuse Cole later CORRECTED is excluded:
+    // a wrong reuse must not read as independence (3.6). The corrected count is
+    // surfaced separately so a metric falling while corrections climb is visible.
     prisma.reasoningCacheEntry.count({
-      where: { updatedAt: window, createdAt: { lt: weekStart } },
+      where: { updatedAt: window, createdAt: { lt: weekStart }, correctedAt: null },
     }),
+    prisma.reasoningCacheEntry.count({
+      where: { updatedAt: window, createdAt: { lt: weekStart }, correctedAt: { not: null } },
+    }),
+    // MONEY. Earned = payments that arrived (real), split this-week vs all-time.
+    // Leads created is the pipeline motion — deliberately a DIFFERENT number, so
+    // "drafted" (a lead, a pipeline entry) is never read as "paid" (money in).
+    prisma.payment.aggregate({ where: { receivedAt: window }, _sum: { amountCents: true } }),
+    prisma.payment.aggregate({ _sum: { amountCents: true } }),
+    prisma.lead.count({ where: { createdAt: window } }),
   ]);
 
   // Freshness plane — how much of Living Knowledge is past its half-life.
@@ -96,6 +111,11 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
     // Trust loop — corrections are signal, not failure
     corrections,
     staleKnowledge,
+    // Money — earned is real (arrived), leads is motion. Kept distinct so the
+    // scoreboard can never let a busy pipeline read as a paid one.
+    earnedThisWeekCents: earnedThisWeekAgg._sum.amountCents ?? 0,
+    earnedAllTimeCents: earnedAllTimeAgg._sum.amountCents ?? 0,
+    leadsThisWeek,
     // The DoD metric: share of reasoning that still needed the base LLM.
     // Falls as compiled understanding takes over. null until there's data.
     llmCalls,
@@ -103,6 +123,14 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
     llmDependenceRate:
       llmCalls + cacheReuses > 0
         ? Math.round((llmCalls / (llmCalls + cacheReuses)) * 100)
+        : null,
+    // Of reuses served this week, the share Cole later corrected. The honesty
+    // check on independence: a falling dependence rate ALONGSIDE a rising
+    // correction rate is compiled understanding getting confidently wrong, not
+    // getting better. Integer percent, null until there are reuses to judge.
+    reuseCorrectionRate:
+      cacheReuses + correctedReuses > 0
+        ? Math.round((correctedReuses / (cacheReuses + correctedReuses)) * 100)
         : null,
   };
 

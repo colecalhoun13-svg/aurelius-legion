@@ -37,11 +37,14 @@ export async function POST(request: Request) {
   } catch (error: any) {
     // The backend isn't reachable. Say so plainly, with the fix that matches
     // where this is running (pre-flight: the old message gave codespace
-    // advice — meaningless on Railway).
+    // advice — meaningless on Railway). Three hosts, three different remedies:
+    // a managed platform, the Mini under launchd, and a dev box.
     console.error("[api/aurelius] backend unreachable:", error?.message ?? error);
     const hint = process.env.RAILWAY_ENVIRONMENT
       ? "check BACKEND_ORIGIN on the app service and that the backend service is up"
-      : "start it with `cd aurelius && npx tsx index.ts`";
+      : process.platform === "darwin"
+        ? "the backend isn't up — `launchctl kickstart -k gui/$(id -u)/com.aurelius.backend`, then check /Volumes/aurelius-backups/logs/backend.err"
+        : "start it with `cd aurelius && npx tsx index.ts`";
     return NextResponse.json(
       { error: `Backend not reachable on ${BACKEND_ORIGIN} — ${hint}.` },
       { status: 502 }

@@ -25,6 +25,7 @@ import { prisma, withDb } from "../core/db/prisma.ts";
 import { runTraced } from "../core/trace.ts";
 import { decideAction } from "./grants.ts";
 import { getActionFinalizer, getActionInverse, hasActionInverse } from "./actionRegistry.ts";
+import { getActionClass } from "./actionClasses.ts";
 
 export type PreparedAction = {
   title: string;
@@ -47,6 +48,17 @@ export async function executeAction(args: {
   sourceType?: string;
   sourceId?: string;
 }): Promise<ExecuteResult> {
+  // Refuse an undeclared class BEFORE staging any work. An unregistered class
+  // would gate a pending Bridge confirm that nothing can finalize (no registry
+  // entry → confirmAction can't resolve a tier or a finalizer) — a dead button,
+  // exactly the "built is not done" defect hard rule 8 exists to stop. Declare
+  // it in actionClasses.ts and register its finalizer.
+  if (!getActionClass(args.actionClass)) {
+    throw new Error(
+      `[executor] refused: "${args.actionClass}" is not a registered action class — ` +
+        `declare it in actionClasses.ts and register a finalizer before executing it.`
+    );
+  }
   const prepared = await args.prepare();
   const decision = await decideAction(args.actionClass);
   const finalizer = getActionFinalizer(args.actionClass);
@@ -88,7 +100,7 @@ export async function executeAction(args: {
             title: prepared.title,
             body:
               prepared.body +
-              `\n\n_Done on its own under grant \`${args.actionClass}\`.${undoable ? " Tap Undo (or say “undo that”) and I'll reverse it." : " Reversible — tell me if this was wrong."}_`,
+              `\n\n_Done on its own under grant \`${args.actionClass}\`.${undoable ? " Tap Undo (or say “undo that”) and I'll reverse it." : " I can't automatically undo this one — tell me if it was wrong and I'll help fix it by hand."}_`,
             actions,
           },
         })
@@ -108,34 +120,52 @@ export async function executeAction(args: {
   // Gate to Cole: not granted, outward by construction, or no finalizer yet.
   // Stash the payload so confirmAction() can commit it later from the Bridge.
   const gateReason = decision.finalize ? "no finalizer registered for this action" : decision.reason;
-  const sig = await prisma.bridgeSignal.create({
-    data: {
-      kind: "background_result",
-      operatorId: args.operatorId ?? null,
-      domain: prepared.domain ?? null,
-      sourceType: args.sourceType ?? "reasoning_output",
-      sourceId: args.sourceId ?? null,
-      severity: "attention",
-      status: "pending",
-      title: prepared.title,
-      body: prepared.body + `\n\n_Prepared, not executed — ${gateReason}. Confirm to proceed._`,
-      actions: [
-        {
-          label: "Confirm",
-          action: "confirm_action",
-          payload: { actionClass: args.actionClass, actionPayload: prepared.payload ?? null },
-        },
-        { label: "Dismiss", action: "dismiss", payload: {} },
-      ],
-    },
+
+  // SEVERITY COMES FROM THE TIER, not from a constant.
+  //
+  // Every gated ask used to file at `severity: "attention"` with
+  // `kind: "background_result"`. Run the numbers the salience gate actually
+  // uses: 0.7 × 0.65 + 0.4 × 0.35 = 0.595, against a 0.72 threshold. So NO
+  // gated ask could ever reach Cole's phone — including outward publish
+  // confirms, the single highest-consequence thing this system produces. The
+  // second council found four of exactly those sitting pending in the database.
+  //
+  // An OUTWARD action is non-grantable by construction (NORTH_STAR §2.5): it
+  // exists solely to ask Cole, and an ask he cannot hear is not an ask. Those
+  // file critical (1.0 × 0.65 + 0.4 × 0.35 = 0.79 → pushes). Inward asks keep
+  // "attention" and stay batched for the briefing, which is the behaviour the
+  // batching change below was actually written for.
+  const tier = getActionClass(args.actionClass)?.tier;
+  const severity = tier === "outward" ? "critical" : "attention";
+
+  // Route through surfaceSignal (6.3 dedup seam): it dedups on
+  // (sourceType, sourceId) so a repeated gated ask collapses onto the open row
+  // instead of filing a second pending confirm, and it handles the salience-
+  // gated push — as an ASK (Confirm/Dismiss buttons via pushBridgeAsk) because
+  // the signal carries a confirm_action. The manual create+push here bypassed
+  // both. Explicit status "pending": a gated ask always awaits Cole, whatever
+  // needsDecision would infer for an inward (attention-severity) one.
+  const { surfaceSignal } = await import("../core/bridge.ts");
+  const { id } = await surfaceSignal({
+    kind: "background_result",
+    operatorId: args.operatorId ?? null,
+    domain: prepared.domain ?? null,
+    sourceType: args.sourceType ?? "reasoning_output",
+    sourceId: args.sourceId ?? null,
+    severity,
+    status: "pending",
+    title: prepared.title,
+    body: prepared.body + `\n\n_Prepared, not executed — ${gateReason}. Confirm to proceed._`,
+    actions: [
+      {
+        label: "Confirm",
+        action: "confirm_action",
+        payload: { actionClass: args.actionClass, actionPayload: prepared.payload ?? null },
+      },
+      { label: "Dismiss", action: "dismiss", payload: {} },
+    ],
   });
-  // The phone Bridge: every ask reaches Cole's thumb with Confirm/Dismiss
-  // buttons (Cole's directive — the web Bridge alone starves the loop).
-  // Fire-and-forget; dormant-safe without a Telegram token.
-  import("../telegram/bot.ts")
-    .then((m) => m.pushBridgeAsk({ id: sig.id, title: sig.title, body: sig.body, status: sig.status, actions: sig.actions }))
-    .catch(() => {});
-  return { finalized: false, reason: gateReason, bridgeSignalId: sig.id };
+  return { finalized: false, reason: gateReason, bridgeSignalId: id };
 }
 
 /**

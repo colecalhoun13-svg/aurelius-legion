@@ -41,11 +41,27 @@ export async function runDbBackup(): Promise<{ ok: boolean; file?: string; bytes
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const file = path.join(BACKUP_DIR, `aurelius-${stamp}.dump`);
   try {
+    // Mount marker (6.2): prove BACKUP_DIR is actually writable before trusting
+    // it. On the Mini this points at a NAS mount — if the mount drops, mkdirSync
+    // can succeed against the empty mountpoint while the real target is gone. A
+    // marker write-then-read catches a silently-unmounted target.
+    const marker = path.join(BACKUP_DIR, ".backup-writable");
+    fs.writeFileSync(marker, String(Date.now()));
+    if (!fs.existsSync(marker)) throw new Error(`backup dir ${BACKUP_DIR} is not writable (mount dropped?)`);
+
     await pexec("pg_dump", ["--no-owner", "--no-privileges", "-Fc", "-f", file, url], {
       maxBuffer: 64 * 1024 * 1024,
     });
     const bytes = fs.statSync(file).size;
     if (bytes < 1024) throw new Error(`dump suspiciously small (${bytes} bytes)`);
+    // VERIFY the archive is READABLE, not merely the right size (6.2). A
+    // truncated or corrupt dump passes a byte count but fails here — pg_restore
+    // --list parses the archive's table of contents. Count the entries as a
+    // floor: a real Aurelius dump has dozens of tables and indexes, so a handful
+    // means the dump is broken however many bytes it is.
+    const toc = await pexec("pg_restore", ["--list", file], { maxBuffer: 32 * 1024 * 1024 });
+    const entries = (toc.stdout ?? "").split("\n").filter((l) => /\b(TABLE DATA|TABLE|INDEX|SEQUENCE)\b/.test(l)).length;
+    if (entries < 10) throw new Error(`dump verification failed — only ${entries} restorable entries (corrupt or truncated?)`);
     // Prune beyond retention — newest first, keep KEEP.
     for (const old of listDumps().slice(KEEP)) {
       try { fs.unlinkSync(old.file); } catch {}
@@ -69,16 +85,24 @@ export async function runDbBackup(): Promise<{ ok: boolean; file?: string; bytes
         select: { id: true },
       });
       if (!already) {
-        await prisma.bridgeSignal.create({
-          data: {
-            kind: "background_result",
-            domain: "personal",
-            sourceType: "backup_failure",
-            severity: "attention",
-            status: "surfaced",
-            title: "Nightly backup FAILED — the brain has no fresh copy",
-            body: `pg_dump error: ${msg.slice(0, 300)}\n\nUntil this is fixed, the newest dump is whatever last succeeded. ${/ENOENT/.test(msg) ? "Fix: install postgresql-client in the image/host." : "Check DATABASE_URL reachability and pg_dump/server version compatibility."}`,
-          },
+        // Was a raw create at severity "attention" — so it never went through
+        // salience (never buzzed), carried no action (so the queue sweep
+        // classified it a notice) and EXPIRED at 14 days. "The brain has no
+        // fresh copy" would silently age out of the only place it appeared.
+        //
+        // Now: critical, through surfaceSignal so it pushes, and carrying an
+        // acknowledge action so the sweep treats it as a decision rather than
+        // a notice to garbage-collect.
+        const { surfaceSignal } = await import("./bridge.ts");
+        await surfaceSignal({
+          kind: "risk",
+          domain: "personal",
+          sourceType: "backup_failure",
+          sourceId: `backup_failure:${new Date().toLocaleDateString("en-CA")}`,
+          severity: "critical",
+          title: "Nightly backup FAILED — the brain has no fresh copy",
+          body: `pg_dump error: ${msg.slice(0, 300)}\n\nUntil this is fixed, the newest dump is whatever last succeeded. ${/ENOENT/.test(msg) ? "Fix: install postgresql-client in the image/host." : "Check DATABASE_URL reachability and pg_dump/server version compatibility."}`,
+          actions: [{ label: "Acknowledged", action: "acknowledge", payload: {} }],
         });
       }
     } catch {

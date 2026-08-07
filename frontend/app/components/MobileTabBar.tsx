@@ -15,7 +15,7 @@ const TABS: Array<{ label: string; path: string; glyph: string; also?: string[] 
   { label: "Decisions", path: "/decisions", glyph: "⇄" },
   { label: "Calendar", path: "/calendar", glyph: "◷" },
   { label: "Goals", path: "/goals", glyph: "◎", also: ["/projects"] },
-  { label: "More", path: "/more", glyph: "⋯", also: ["/brain", "/aurelius", "/autonomy", "/tools", "/engines", "/traces", "/settings"] },
+  { label: "More", path: "/more", glyph: "⋯", also: ["/brain", "/business", "/aurelius", "/autonomy", "/tools", "/engines", "/traces", "/settings"] },
 ];
 
 export default function MobileTabBar() {

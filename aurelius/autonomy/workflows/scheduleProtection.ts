@@ -56,6 +56,9 @@ const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export async function runScheduleProtection(opts: {
   days?: number;
   blockMinutes?: number;
+  /** TEST ONLY — supply known availability. Production leaves this undefined
+   *  so the call goes through findAvailability's stale/disconnected guard. */
+  availability?: Awaited<ReturnType<typeof findAvailability>>;
 } = {}): Promise<ScheduleProtectionResult> {
   const days = Math.min(opts.days ?? 3, 14);
   const blockMinutes = opts.blockMinutes ?? 90;
@@ -69,7 +72,12 @@ export async function runScheduleProtection(opts: {
     signals: [],
   };
 
-  const availability = await findAvailability({ days, minMinutes: blockMinutes });
+  // Availability is INJECTABLE so the opportunity-and-gate logic stays testable
+  // without a Google credential. Production never passes it, so the real path
+  // always goes through findAvailability's guard — this is dependency
+  // injection, not an opt-out: there is no way to disable the guard on the
+  // live path, only to supply known availability in a test.
+  const availability = opts.availability ?? (await findAvailability({ days, minMinutes: blockMinutes }));
 
   for (const day of availability) {
     // Day already has a focus block? Leave it — don't stack holds.

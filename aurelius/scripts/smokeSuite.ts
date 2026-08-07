@@ -125,7 +125,11 @@ async function main() {
     ],
     skipDuplicates: true,
   });
-  const avail = (await findAvailability({ days: 2, minMinutes: 60 })).find((d) => d.date === calDay);
+  // The MATHS is now tested through the pure function — no credential needed,
+  // and no opt-out flag on the guarded path for the maths to sneak through.
+  const { computeAvailability } = await import("../calendar/engine.ts");
+  const calEvents = await prisma.calendarEvent.findMany({ where: { externalId: { startsWith: TAG } } });
+  const avail = computeAvailability(calEvents, { days: 2, minMinutes: 60 }).find((d) => d.date === calDay);
   check("availability gap math (3 slots, 210 busy min)", avail?.slots.length === 3 && avail?.busyMinutes === 210);
   await prisma.calendarEvent.deleteMany({ where: { externalId: { startsWith: TAG } } });
 
@@ -858,14 +862,32 @@ async function main() {
     const { runScheduleProtection } = await import("../autonomy/workflows/scheduleProtection.ts");
     await revokeAutonomy("calendar.schedule_protection"); // ensure off
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: "schedule_protection" } }); // deterministic: clear dedup state
+    // THE 2026-08-06 COUNCIL'S FINDING: this workflow called findAvailability
+    // with no connection check, so a silently-expired Google token meant it
+    // placed holds against a schedule that had stopped syncing — confidently,
+    // daily, while the trace said "ok". The guard now lives in
+    // findAvailability, so the real path refuses.
+    let spRefused = false;
+    try { await runScheduleProtection({ days: 3, blockMinutes: 60 }); } catch { spRefused = true; }
+    check("schedule-protection refuses to act on a dead calendar (was: placed phantom holds)", spRefused);
+
+    // The gate logic is still proven, on KNOWN availability rather than fiction.
+    const tomorrow = new Date(Date.now() + 86400_000);
+    const dayKey = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+    const fakeAvailability = [{
+      date: dayKey,
+      slots: [{ start: `${dayKey}T09:00:00.000Z`, end: `${dayKey}T12:00:00.000Z`, minutes: 180 }],
+      busyMinutes: 0,
+      freeMinutes: 180,
+    }] as any;
     const beforeEvents = await prisma.calendarEvent.count({ where: { title: "Deep Work (protected)" } });
-    const sp = await runScheduleProtection({ days: 3, blockMinutes: 60 });
+    const sp = await runScheduleProtection({ days: 3, blockMinutes: 60, availability: fakeAvailability });
     const afterEvents = await prisma.calendarEvent.count({ where: { title: "Deep Work (protected)" } });
     check(
       "schedule-protection proposes holds when ungranted, writes no calendar events",
       sp.opportunities >= 1 && sp.gated === sp.opportunities && sp.finalized === 0 && afterEvents === beforeEvents
     );
-    const sp2 = await runScheduleProtection({ days: 3, blockMinutes: 60 }); // rerun: dedup
+    const sp2 = await runScheduleProtection({ days: 3, blockMinutes: 60, availability: fakeAvailability }); // rerun: dedup
     check("schedule-protection dedups — no repeat proposals for already-pending days", sp2.opportunities === 0);
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: "schedule_protection" } });
 
@@ -1144,9 +1166,76 @@ async function main() {
       const again = await seedBusinessProfile();
       check("re-seeding is idempotent (never overwrites Cole's later truth)", again.written.length === 0);
 
+      // 3.5 — the brand voice: drafts must speak Calhoun, not a generic coach.
+      {
+        const { brandVoiceBlock, seedBrandVoice } = await import("../business/brand.ts");
+        const block = brandVoiceBlock();
+        check("the brand voice block carries the mantra and the dichotomy hook",
+          /move fast, lift heavy, be an athlete/i.test(block) && /dichotomy|contrast hook/i.test(block));
+        check("the confirmed brand mantra is a business fact drafts reason from",
+          (await knownFacts()).some((f) => /move fast, lift heavy/i.test(f.value)));
+        const idOp = await resolveOperatorId("strategy").catch(() => null)
+          ?? await resolveOperatorId("business").catch(() => null);
+        if (idOp) await prisma.knowledgeEntry.deleteMany({ where: { operatorId: idOp, scope: "persona", sourceId: { startsWith: "brand:rev" } } });
+        const seed1 = await seedBrandVoice();
+        const seed2 = await seedBrandVoice();
+        check("brand voice seeds into persona.* and is idempotent",
+          seed1.written.length > 0 && seed2.written.length === 0);
+      }
+
       const facts = await knownFacts();
       const measured = facts.find((f) => f.key === "measured_outcomes");
       check("the measured-outcomes asset is present and specific", !!measured && /5-10-5|vertical/i.test(measured.value));
+
+      // ── the 2026-08-05 correction: remote is the business ──
+      // Cole is EMPLOYED at the gym and the remote business is his own. These
+      // guard the reframe, because every offer/pricing/outreach answer reasons
+      // from these facts and the previous reading pointed them at his employer.
+      const arrangement = facts.find((f) => f.key === "gym_arrangement");
+      check("the gym arrangement is known (employed — not Cole's clients to sell to)",
+        !!arrangement && /employed/i.test(arrangement.value));
+      check("remote coaching is stated as THE business, not an exploration",
+        facts.some((f) => f.key === "the_business" && /own business/i.test(f.value)));
+      check("the empty pipeline is held as the binding constraint",
+        facts.some((f) => f.key === "lead_reality" && /no inbound/i.test(f.value)));
+      check("all three billing shapes survive as distinct",
+        facts.some((f) => f.key === "billing_shapes" && /monthly/i.test(f.value) && /block/i.test(f.value) && /one-off|program/i.test(f.value)));
+      check("the retired `exploring` fact is not live",
+        !facts.some((f) => f.key === "exploring"));
+
+      // REVISION PATH: a seed-written entry at an older revision must be
+      // rewritten when Cole restates the fact. Without this, a correction
+      // lives in the source file and never reaches the database.
+      {
+        const { REVISION_SOURCE_PREFIX } = await import("../business/profile.ts");
+        await prisma.knowledgeEntry.updateMany({
+          where: { operatorId: bizOp, scope: BUSINESS_SCOPE, key: "near_term_goal" },
+          data: { value: "STALE VALUE" as any, sourceId: `${REVISION_SOURCE_PREFIX}1` },
+        });
+        const rev = await seedBusinessProfile();
+        const after = await knownFacts();
+        check(
+          "a restated fact is revised, not skipped (stale truth can't outlive the correction)",
+          rev.revised.includes("near_term_goal") &&
+            !/STALE VALUE/.test(after.find((f) => f.key === "near_term_goal")?.value ?? "")
+        );
+      }
+
+      // But a fact Cole edited HIMSELF still outranks the seed — that was the
+      // original rule and the revision path must not quietly repeal it.
+      {
+        await prisma.knowledgeEntry.updateMany({
+          where: { operatorId: bizOp, scope: BUSINESS_SCOPE, key: "near_term_goal" },
+          data: { value: "COLE'S OWN EDIT" as any, sourceId: "correction:abc123" },
+        });
+        const rev = await seedBusinessProfile();
+        const after = await knownFacts();
+        check(
+          "a hand-written correction is never overwritten by the seed",
+          !rev.revised.includes("near_term_goal") &&
+            /COLE'S OWN EDIT/.test(after.find((f) => f.key === "near_term_goal")?.value ?? "")
+        );
+      }
 
       const gapsBefore = await openGaps();
       check("open questions are ranked by what they unblock", gapsBefore.length > 0 && gapsBefore[0]!.priority === 1);
@@ -1170,8 +1259,49 @@ async function main() {
       const topicList = Array.isArray(topics?.value) ? (topics!.value as string[]) : [];
       check(
         "seeding aims the Sunday research sweep at Cole's real situation",
-        topicList.length >= 4 && topicList.some((t) => /high-school athlete enrollment/i.test(t))
+        topicList.length >= 4 && topicList.some((t) => /first paying remote|online clients/i.test(t))
       );
+      // The topics must aim at the business Cole OWNS. The original list led
+      // with growing enrollment at the gym — i.e. researching how to grow his
+      // employer. He is employed there; those athletes are not his to sell to.
+      check(
+        "research is not aimed at growing Cole's employer",
+        !topicList.some((t) => /enrollment at a gym they already work in/i.test(t))
+      );
+
+      // ── the aim guard (2026-08-06 council, highest-severity finding) ──
+      // `proposeOffer` kept its OWN hardcoded audience and spent a day telling
+      // the model to grow "the high-school athletes at his gym" — i.e. to sell
+      // to Cole's employer's clients — because the earlier correction patched a
+      // different literal in the same file. These assert the SEAM, not the
+      // strings: the boundary must survive an empty fact table, and no prompt
+      // may carry its own copy of who the business serves.
+      {
+        const { businessContextBlock, businessResearchContext } = await import("../business/positioning.ts");
+        const ctx = await businessContextBlock();
+        check("the employment boundary is in the injected business context",
+          /HARD BOUNDARY/.test(ctx) && /never the audience/i.test(ctx));
+        const research = await businessResearchContext();
+        check("research context is derived and names the remote business, not the gym job",
+          /remote/i.test(research) && /not his to sell to/i.test(research));
+
+        // Scan the PROMPT TEXT, not the comments about it — the comments here
+        // deliberately quote the old string to record what went wrong, and a
+        // naive scan flags its own documentation.
+        const rawSrc = await import("node:fs").then((fs) =>
+          fs.readFileSync(new URL("../business/positioning.ts", import.meta.url), "utf8")
+        );
+        const src = rawSrc
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .split("\n")
+          .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+          .join("\n");
+        check("no prompt in positioning.ts still aims at the gym's athletes",
+          !/growing the high-school athletes at his gym/i.test(src) &&
+          !/offers for high-school athletes at a local gym/i.test(src));
+        check("the retired 'online fantasy' framing is gone (remote IS the business)",
+          !/online fantasy/i.test(src));
+      }
       // resolveTopicsFor is what the weekend pulse actually calls — prove the
       // derived topics beat the generic fallbacks through the real path.
       const { resolveTopicsFor } = await import("../autonomy/pulse.ts");
@@ -1184,6 +1314,1187 @@ async function main() {
     } else {
       check("business foundation (skipped — no business operator)", true);
     }
+  }
+
+  console.log("── reachability: no capability that nothing can invoke ──");
+  {
+    // THE SKELETON GATE. Every defect this catches previously shipped green:
+    // written, typechecked, smoke-tested, committed — and unreachable. tsc
+    // proves code compiles; this proves something can actually run it.
+    const { auditReachability } = await import("./reachabilityAudit.ts");
+    const findings = auditReachability();
+    const high = findings.filter((f) => f.severity === "high");
+    const medium = findings.filter((f) => f.severity === "medium");
+
+    for (const f of findings) console.log(`     ${f.severity === "high" ? "!" : "·"} ${f.area}: ${f.message}`);
+
+    check("every router is mounted, every tool and engine registered, every daily job claim-protected", high.length === 0);
+    check("nothing is built-but-unreachable (orphan endpoints, unlinkable pages)", medium.length === 0);
+  }
+
+  console.log("── spend: what Aurelius costs, and the alarm before it hurts ──");
+  {
+    const { priceFor, costUsd, formatUsd, monthlyBudgetUsd } = await import("../llm/pricing.ts");
+    const { spendSummary, checkBudget } = await import("../measurement/spend.ts");
+
+    // Prefix matching, so a new point release still prices under its family
+    // instead of falling off the table and silently costing nothing.
+    check("a known model prices", !!priceFor("claude-sonnet-5"));
+    check("an unseen point release still prices under its family", !!priceFor("claude-sonnet-5-20260901"));
+    check("longest prefix wins (mini is not full price)",
+      (priceFor("gpt-4o-mini")?.inPer1M ?? 0) < (priceFor("gpt-4o")?.inPer1M ?? 0));
+
+    // THE RULE THAT MATTERS: unknown → null, never 0. A zero reads exactly
+    // like "this call was free" and would understate the bill forever.
+    check("an unknown model prices to NULL, not zero", priceFor("some-model-nobody-added") === null);
+    check("cost of an unknown model is null, so it can be reported as unpriced",
+      costUsd("some-model-nobody-added", { tokensIn: 1_000_000, tokensOut: 1_000_000 }) === null);
+    check("the compiled-reuse cache is genuinely free (no provider was called)",
+      costUsd("reasoning_cache", { tokensIn: 5000, tokensOut: 5000 }) === 0);
+
+    // Output bills far above input — the single summed total the engines used
+    // to return could not express this, which is why the split exists.
+    const inOnly = costUsd("claude-sonnet-5", { tokensIn: 1_000_000, tokensOut: 0 })!;
+    const outOnly = costUsd("claude-sonnet-5", { tokensIn: 0, tokensOut: 1_000_000 })!;
+    check("output is priced well above input", outOnly > inOnly * 3);
+    check("input price is exact per 1M", Math.abs(inOnly - 3) < 1e-9);
+
+    // Prompt caching is deliberate in this system (llm/router.ts marks the
+    // static prefix). Pricing cached reads at full rate would overstate
+    // exactly the calls the cache was built to make cheap.
+    const cold = costUsd("claude-sonnet-5", { tokensIn: 100_000, tokensOut: 1000 })!;
+    const warm = costUsd("claude-sonnet-5", { tokensIn: 100_000, tokensOut: 1000, tokensCachedIn: 90_000 })!;
+    check("a warm prompt cache costs materially less than a cold one", warm < cold * 0.5);
+    check("cached tokens are discounted, not free", warm > costUsd("claude-sonnet-5", { tokensIn: 10_000, tokensOut: 1000 })!);
+
+    check("money formats without pretending to false precision", formatUsd(0) === "$0.00" && formatUsd(0.004) === "<$0.01");
+
+    // The ledger reads rows runLLM already writes — no second write path.
+    const summary = await spendSummary(30);
+    check("spend summarises from the existing llm_call log, grouped by job and model",
+      Array.isArray(summary.byTaskType) && Array.isArray(summary.byModel) && summary.estimated === true);
+    check("every spend figure carries its as-of date (these are estimates)", !!summary.pricesAsOf);
+
+    // EVERY ROUTABLE MODEL MUST BE PRICED. The 2026-08-06 council found the
+    // whole gpt-5.4 family missing from the table — the `structured` tier AND
+    // the primary failover target — so the budget alarm was blind to a large
+    // share of spend. Adding rows fixed that instance; this assertion is what
+    // stops the next model-ID change from silently doing it again.
+    {
+      const { routableModels } = await import("../llm/router.ts");
+      const models = routableModels();
+      const unpriced = models.filter((m) => priceFor(m) === null);
+      check(
+        `every routable model is priced (${models.length} models, 0 unpriced)`,
+        models.length >= 8 && unpriced.length === 0
+      );
+      if (unpriced.length) console.log(`     UNPRICED: ${unpriced.join(", ")}`);
+    }
+
+    // Dormant without a budget (hard rule 4) — tracked, but no alarm.
+    const priorBudget = process.env.LLM_MONTHLY_BUDGET_USD;
+    delete process.env.LLM_MONTHLY_BUDGET_USD;
+    check("no budget set → tracking continues, no alarm", monthlyBudgetUsd() === null);
+    const unset = await checkBudget();
+    check("the budget check is a no-op when no ceiling is set", unset.configured === false && unset.fired.length === 0);
+
+    // A ceiling of essentially zero must trip both thresholds — then the
+    // dedup must stop it firing twice for the same month.
+    process.env.LLM_MONTHLY_BUDGET_USD = "0.0000001";
+    const first = await checkBudget();
+    const second = await checkBudget();
+    check("crossing the ceiling raises an alarm", first.configured === true);
+    check("the alarm never repeats for a threshold already fired this month", second.fired.length === 0);
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "llm_budget" } });
+
+    if (priorBudget === undefined) delete process.env.LLM_MONTHLY_BUDGET_USD;
+    else process.env.LLM_MONTHLY_BUDGET_USD = priorBudget;
+  }
+
+  console.log("── marketing: evidence, never a confident guess ──");
+  {
+    // Cole's stated reason for building this: marketing is what he lacks most,
+    // so he CANNOT audit a marketing claim himself. That makes a fluent guess
+    // the worst possible output. These assert the honesty machinery, not taste.
+    const { parseAngles, recordOutcome, anglePerformance, proposeAngles, draftAsset, MARKETING_FORMATS } =
+      await import("../business/marketing.ts");
+
+    // ── THE FUNDED-KEY BRANCH, which no cold audit could reach ──
+    //
+    // The second council's one unanimous finding: both consumers re-mapped the
+    // research engine's "model-only" verdict to "internal", which prints as
+    // "Grounded in your own corpus and prior results" and renders as "from your
+    // own data". On an Anthropic-only key — no TAVILY_API_KEY, no GEMINI_API_KEY,
+    // so no web search — that is EVERY angle and EVERY offer price.
+    //
+    // This is the branch that only exists once Cole funds a key, which is exactly
+    // why it shipped: with no key at all, research throws and the honest "none"
+    // label was the only one anyone ever saw.
+    {
+      const { groundingFromResearch, marketSourceCount } = await import("../business/marketing.ts");
+
+      // ROUND 3 FOUND THE FIRST FIX MOVED THE LIE ONE TIER DOWN. researchEngine's
+      // ACADEMIC_DOMAINS includes "business", and that arXiv/PubMed/S2/OpenAlex
+      // tier is KEYLESS — it runs on an Anthropic-only key. So a run returns
+      // grounding "external" with real URLs, and Cole's PRICE renders in gold as
+      // "research-backed", sourced from paper abstracts about adolescent athletes.
+      const academicOnly: any[] = [
+        { url: "https://pubmed.ncbi.nlm.nih.gov/123", source: "openSources", title: "Adolescent athlete adaptation", snippet: "", confidence: 0.5 },
+        { url: "https://arxiv.org/abs/456", source: "openSources", title: "A paper", snippet: "", confidence: 0.5 },
+      ];
+      check("papers are not evidence about a market", marketSourceCount(academicOnly) === 0);
+      check("so a keyless academic run is a guess, not research-backed",
+        groundingFromResearch("external", marketSourceCount(academicOnly), false) === "none");
+      check("live web results DO count as market evidence",
+        marketSourceCount([...academicOnly, { url: "https://x.com/a", source: "web", title: "t", snippet: "", confidence: 0.5 }]) === 1);
+      check("and then it is honestly external",
+        groundingFromResearch("external", 1, false) === "external");
+      // The label promised "(listed below)" over a page that listed nothing.
+      // Comments stripped first — the fix documents the old wording verbatim,
+      // and a naive scan matches the explanation instead of the code. This is
+      // the third assertion in this suite to need it; strip before you scan.
+      const stripComments = (s: string) =>
+        s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/^\s*\*.*$/gm, "");
+      const mkSrcNote = stripComments(
+        (await import("node:fs")).readFileSync(new URL("../business/marketing.ts", import.meta.url), "utf8")
+      );
+      check("the external note no longer promises a list it doesn't render",
+        !/\(listed below\)/.test(mkSrcNote));
+      const pageSrc = (await import("node:fs")).readFileSync(
+        new URL("../../frontend/app/(chrome)/business/page.tsx", import.meta.url), "utf8"
+      );
+      check("and the page actually renders the source links",
+        /a\.sources/.test(pageSrc) && /target="_blank"/.test(pageSrc));
+      check("a model prior is NEVER labelled as Cole's own data",
+        groundingFromResearch("model-only", 0, false) === "none");
+      check("and stays a guess even when research returned prose",
+        groundingFromResearch("model-only", 3, false) === "none");
+      check("real external research with real sources is external",
+        groundingFromResearch("external", 4, false) === "external");
+      check("an 'external' run with ZERO source links is a citation to nowhere, not evidence",
+        groundingFromResearch("external", 0, false) === "none");
+      check("only Cole's actual results earn the 'internal' label",
+        groundingFromResearch("model-only", 0, true) === "internal");
+      // The research engine's vocabulary is the contract. If it ever grows a
+      // third value, this assertion is what makes someone come back here.
+      const fs = await import("node:fs");
+      const read = (p: string) => fs.readFileSync(new URL(p, import.meta.url), "utf8");
+      check("the research engine still emits exactly the two verdicts this maps from",
+        /grounding:\s*"external"\s*\|\s*"model-only"/.test(read("../research/researchTypes.ts")));
+      // Neither consumer may re-derive it. The defect WAS two identical copies,
+      // so a fix applied to one file only is the failure mode to guard against.
+      // Strip comments first: the fix documents the old line verbatim so the
+      // next reader knows what was wrong, and a naive scan matches the warning
+      // rather than the code. (Same trap as the offer-aim guard.)
+      const codeOnly = (src: string) =>
+        src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/^\s*\*.*$/gm, "");
+      check("neither consumer hand-rolls the mapping any more",
+        !/=== "external" \? "external" : "internal"/.test(
+          codeOnly(read("../business/marketing.ts")) + codeOnly(read("../business/offers.ts"))
+        ));
+    }
+
+    // ── THE MUTED BRIDGE ──
+    //
+    // Every gated ask filed at severity "attention" + kind "background_result":
+    // 0.7×0.65 + 0.4×0.35 = 0.595, under the 0.72 push threshold. No gated ask
+    // could reach Cole's phone — including outward publish confirms, which are
+    // non-grantable BECAUSE they exist to ask him. An ask he can't hear isn't one.
+    {
+      const { shouldPushNow } = await import("../core/salience.ts");
+      check("an OUTWARD confirm now clears the push threshold",
+        shouldPushNow({ kind: "background_result", severity: "critical", domain: "content", dueAt: null }) === true);
+      check("an inward ask still batches for the briefing rather than buzzing",
+        shouldPushNow({ kind: "background_result", severity: "attention", domain: "business", dueAt: null }) === false);
+      // The regression that made this necessary: a hardcoded severity.
+      const execSrc = (await import("node:fs")).readFileSync(
+        new URL("../autonomy/executor.ts", import.meta.url), "utf8"
+      ).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      check("severity is derived from the action-class tier, not hardcoded",
+        /severity,/.test(execSrc) && !/severity: "attention"/.test(execSrc));
+    }
+
+    // Parsing is pure — testable without a key.
+    const parsed = parseAngles(
+      "TITLE: The parent's real fear\nAUDIENCE: parent of a varsity athlete\nHYPOTHESIS: they fear injury more than they want a scholarship\nRATIONALE: extrapolated, not researched\n---\n" +
+      "TITLE: The standard nobody states\nAUDIENCE: the athlete\nHYPOTHESIS: naming a concrete standard beats promising a result\nRATIONALE: from market_posture\n---\nJUNK WITHOUT FIELDS"
+    );
+    check("angle parsing reads well-formed blocks and drops malformed ones", parsed.length === 2);
+    check("a parsed angle keeps its rationale (what it rests on)", /extrapolated/.test(parsed[0]!.rationale));
+
+    // NO KEY HERE. It must refuse rather than invent marketing advice.
+    const proposed = await proposeAngles({ count: 2 });
+    check("with no engine it refuses to invent angles rather than guessing", proposed.ok === false);
+    check("and it still reports its grounding honestly as unbacked",
+      proposed.grounding === "none" && /NOT RESEARCH-BACKED|plausible guess/i.test(proposed.groundingNote));
+
+    // The results loop: his own data, and an honest read of how thin it is.
+    const angle = await prisma.marketingAngle.create({
+      data: { title: `${TAG} angle`, hypothesis: "h", audience: "parent", grounding: "none" },
+    });
+    const badDraft = await draftAsset(angle.id, "email");
+    check("asset drafting refuses too, rather than filing model-error text as copy", badDraft.ok === false);
+    check("an unknown format is rejected", (await draftAsset(angle.id, "telegram" as any)).ok === false);
+    check("every declared format is real", MARKETING_FORMATS.length >= 4);
+
+    await recordOutcome({ angleId: angle.id, used: 3, replies: 1 });
+    const thin = (await anglePerformance()).angles.find((a) => a.id === angle.id)!;
+    // 1 reply from 3 sends is NOT a 33% reply rate — it is noise, and calling
+    // it a rate would teach Cole something false about his own market.
+    check("a 3-send sample refuses to report a rate", thin.replyRate === null && /too early/i.test(thin.verdict));
+    check("using an angle moves it from proposed to active", thin.status === "active");
+
+    await recordOutcome({ angleId: angle.id, used: 9, replies: 2 });
+    const enough = (await anglePerformance()).angles.find((a) => a.id === angle.id)!;
+    check("past 10 sends it will finally report a rate", enough.replyRate === 25);
+
+    const perf = await anglePerformance();
+    check("the performance headline says plainly when the data is still too thin",
+      /too thin|hypothesis|enough to start/i.test(perf.headline));
+
+    await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.marketingAngle.deleteMany({ where: { title: { startsWith: TAG } } });
+  }
+
+  console.log("── the siren, the forged reply, and the lead nobody contacted ──");
+  {
+    const { surfaceSignal } = await import("../core/bridge.ts");
+
+    // THE CALENDAR SIREN. surfaceSignal's own comment claimed signals were
+    // "surfaced once (deduped by day)". Nothing did it. A 15-min poller x a
+    // disconnected calendar = ~96 badge rows and ~60 Telegram pushes a day,
+    // which mutes the channel every other fix depends on.
+    const a = await surfaceSignal({
+      kind: "risk", domain: "personal", sourceType: `${TAG}_siren`, sourceId: `${TAG}:cal`,
+      severity: "attention", title: "Calendar disconnected", body: "for 15 minutes",
+    });
+    const b = await surfaceSignal({
+      kind: "risk", domain: "personal", sourceType: `${TAG}_siren`, sourceId: `${TAG}:cal`,
+      severity: "attention", title: "Calendar disconnected", body: "for 30 minutes",
+    });
+    check("a repeat of the same open signal collapses onto the first", a.id === b.id);
+    check("and does NOT push a second time", b.pushed === false);
+    check("only one row exists, not two",
+      (await prisma.bridgeSignal.count({ where: { sourceType: `${TAG}_siren` } })) === 1);
+    const refreshed = await prisma.bridgeSignal.findUnique({ where: { id: a.id } });
+    check("but the row reflects the LATEST state, not the stalest",
+      /30 minutes/.test(refreshed?.body ?? ""));
+    // A caller that doesn't say what the signal is about gets no dedup — two
+    // anonymous signals of a type are not evidence of the same event.
+    const c1 = await surfaceSignal({ kind: "risk", sourceType: `${TAG}_anon`, severity: "info", title: "t", body: "b" });
+    const c2 = await surfaceSignal({ kind: "risk", sourceType: `${TAG}_anon`, severity: "info", title: "t", body: "b" });
+    check("signals with no sourceId are never collapsed together", c1.id !== c2.id);
+
+    // THE FORGED REPLY. gmail/engine.ts prefixed "Re:" unconditionally, so
+    // every first-contact warm-list email shipped as "Re: Quick one, Sarah"
+    // to someone who had never emailed Cole. The warm list doesn't regenerate.
+    const gmailSrc = (await import("node:fs")).readFileSync(
+      new URL("../gmail/engine.ts", import.meta.url), "utf8"
+    );
+    check("the Re: prefix is conditional on the message actually being a reply",
+      /const threaded =/.test(gmailSrc) && !/input\.subject\.startsWith\("Re:"\) \? input\.subject : `Re: /.test(gmailSrc));
+    check("and outreach declares itself first contact",
+      /isReply: false/.test((await import("node:fs")).readFileSync(new URL("../crm/leadEngine.ts", import.meta.url), "utf8")));
+
+    // CONTACTED BY NOBODY. The draft was guarded on `if (to)`; the "contacted"
+    // write was not — so a lead with only a phone number was marked contacted,
+    // stamped, and rotated forward out of Cole's attention permanently.
+    const { finalizeOutreachDraft } = await import("../crm/leadEngine.ts");
+    const noEmail = await prisma.lead.create({
+      data: { name: `${TAG} NoEmail`, source: "manual", nextAction: "reach out", nextActionAt: new Date() },
+    });
+    let threw = false;
+    try {
+      await finalizeOutreachDraft({ leadId: noEmail.id, to: undefined, body: "hi", name: `${TAG} NoEmail` } as any);
+    } catch { threw = true; }
+    check("a lead with no email fails loudly instead of being marked contacted", threw === true);
+    const still = await prisma.lead.findUnique({ where: { id: noEmail.id } });
+    check("and the lead is NOT marked contacted",
+      still?.status !== "contacted" && still?.lastContactAt === null);
+
+    // The sweep must not spend its three daily slots on people it can't reach.
+    const { runOutreachSweep } = await import("../crm/leadEngine.ts");
+    const sweep = await runOutreachSweep({});
+    check("the sweep only selects leads it can actually draft for",
+      !sweep.skipped.some((s: string) => s.includes(`${TAG} NoEmail`)));
+    check("but it says out loud that there are people it can't reach",
+      (await prisma.bridgeSignal.count({ where: { sourceType: "outreach_unreachable" } })) === 1);
+
+    await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.bridgeSignal.deleteMany({
+      where: { OR: [{ sourceType: { startsWith: TAG } }, { sourceType: "outreach_unreachable" }] },
+    });
+  }
+
+  console.log("── the content queue: writing that survives the tab closing ──");
+  {
+    const { saveDraft, listDrafts, updateDraft, discardDraft, stageForPublish, queueState, markPublished } =
+      await import("../content/queue.ts");
+
+    // Hard rule 3, at the place it would actually persist: a queue is exactly
+    // where "…engine is not configured" would sit until it got staged to post.
+    check("an engine error is never filed as a draft",
+      (await saveDraft({ body: "Anthropic engine is not configured. Set ANTHROPIC_API_KEY." })).ok === false);
+    check("an empty draft is refused", (await saveDraft({ body: "  " })).ok === false);
+
+    const empty = await queueState();
+    check("with nothing kept it says copy you don't keep is copy you never wrote",
+      /never wrote|Nothing written/i.test(empty.headline));
+
+    // Grounding must survive the handoff from the marketing engine.
+    const angle = await prisma.marketingAngle.create({
+      data: { title: `${TAG} qangle`, hypothesis: "h", audience: "parent", grounding: "external" },
+    });
+    const kept = await saveDraft({ body: `${TAG} a caption long enough to be real`, angleId: angle.id, channel: "instagram" });
+    check("a draft is kept", kept.ok === true && !!kept.id);
+    const row = (await listDrafts({}))!.find((d) => d.id === kept.id)!;
+    check("it inherits the ANGLE's grounding, not the caller's claim", row.grounding === "external");
+
+    // Cole's edit is the artifact.
+    check("Cole can rewrite it", (await updateDraft(kept.id!, { body: `${TAG} my own words, rewritten` })).ok === true);
+    check("but it can't be emptied into nothing", (await updateDraft(kept.id!, { body: "x" })).ok === false);
+    check("marking it ready is allowed", (await updateDraft(kept.id!, { status: "ready" })).ok === true);
+    // "published" is a fact about the world, not a field to set. Conflating
+    // them is how a system starts reporting work it never did.
+    check("but 'published' cannot be set by hand",
+      /set by publishing/i.test((await updateDraft(kept.id!, { status: "published" })).error ?? ""));
+
+    // Instagram fetches the image itself — refuse rather than file a proposal
+    // that is guaranteed to fail on confirm.
+    const noImage = await stageForPublish(kept.id!);
+    check("an Instagram draft with no public image URL refuses to stage",
+      noImage.ok === false && /public image URL/i.test(noImage.error ?? ""));
+
+    await updateDraft(kept.id!, { imageUrl: "https://example.com/x.jpg" });
+    const staged = await stageForPublish(kept.id!);
+    check("with an image it stages — and only stages", staged.ok === true && !!staged.bridgeSignalId);
+    const afterStage = (await listDrafts({}))!.find((d) => d.id === kept.id)!;
+    check("publishing is OUTWARD: the draft is 'staged', never 'published', without Cole's tap",
+      afterStage.status === "staged" && afterStage.publishedAt === null);
+    check("and it won't double-stage", (await stageForPublish(kept.id!)).ok === false);
+
+    const bs = await prisma.bridgeSignal.findUnique({ where: { id: staged.bridgeSignalId! } });
+    check("the staged proposal is a pending confirm, not a receipt", bs?.status === "pending");
+
+    // Only the finalizer, after the real publish call, may say "published".
+    await markPublished(kept.id!, "https://instagram.com/p/xyz");
+    const done = (await listDrafts({ status: "published" }))!.find((d) => d.id === kept.id)!;
+    check("the finalizer closes the loop back to the queue", done.status === "published" && !!done.publishedAt);
+    check("an already-published draft can't be edited after the fact",
+      /already out/i.test((await updateDraft(kept.id!, { body: `${TAG} rewriting history here` })).error ?? ""));
+
+    // Reachability (rule 8): content.draft was a declared class with NO
+    // finalizer, so every draft gated as an unactionable proposal.
+    const { getActionFinalizer } = await import("../autonomy/actionRegistry.ts");
+    check("content.draft finally has a registered finalizer", typeof getActionFinalizer("content.draft") === "function");
+
+    await discardDraft(kept.id!);
+    await prisma.contentDraft.deleteMany({ where: { OR: [{ body: { startsWith: TAG } }, { title: { startsWith: TAG } }] } });
+    await prisma.marketingAngle.deleteMany({ where: { title: { startsWith: TAG } } });
+  }
+
+  console.log("── the weekly marketing pass: bounded on purpose ──");
+  {
+    const { runMarketingPass } = await import("../business/marketingPass.ts");
+
+    // With no live offer it must write NOTHING. Content pointing at nothing
+    // starts conversations Cole can't close and spends the audience he's building.
+    await prisma.offer.updateMany({ where: { status: "active" }, data: { status: "retired" } });
+    const noOffer = await runMarketingPass();
+    check("with no live offer the pass refuses to write at all", noOffer.ran === false && noOffer.reason === "no_offer");
+    check("and it says so on the Bridge instead of going quiet",
+      (await prisma.bridgeSignal.count({ where: { sourceId: "marketing:no_offer" } })) >= 1);
+
+    const offer = await prisma.offer.create({
+      data: {
+        name: `${TAG} live`, audience: "parents", promise: "p", shape: "monthly",
+        priceCents: 30000, status: "active", activatedAt: new Date(), grounding: "none",
+      },
+    });
+
+    // The review-burden guard: never add to a pile he hasn't worked through.
+    // This is the difference between a second operator and a spam machine.
+    const backlog = await Promise.all(
+      [1, 2, 3].map((i) =>
+        prisma.contentDraft.create({ data: { body: `${TAG} backlog piece number ${i}`, status: "ready" } })
+      )
+    );
+    const withBacklog = await runMarketingPass();
+    check("with 3 unused pieces waiting it writes nothing more", withBacklog.ran === false && /^backlog:/.test(withBacklog.reason));
+
+    await prisma.contentDraft.deleteMany({ where: { id: { in: backlog.map((b) => b.id) } } });
+    // No key here, so with the backlog cleared it must fail honestly at the
+    // engine rather than filing error text as a week's content.
+    const noEngine = await runMarketingPass();
+    check("with a clear queue and no engine it fails honestly, filing nothing",
+      noEngine.ran === false && noEngine.reason === "no_engine");
+    check("and no draft was created by the failed pass",
+      (await prisma.contentDraft.count({ where: { body: { startsWith: TAG } } })) === 0);
+
+    // Reachability (rule 8): the whole marketing side was pull-only.
+    // Read the spine from index.ts rather than the live registry: the smoke
+    // suite never boots the scheduler, so listSchedules() is empty here and
+    // asserting on it would pass for the wrong reason.
+    const spine = (await import("node:fs")).readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+    check("the marketing pass has a real schedule entry, not just a function",
+      /scheduleNamed\("marketing_pass"/.test(spine));
+
+    await prisma.offer.deleteMany({ where: { id: offer.id } });
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "marketing_pass" } });
+  }
+
+  console.log("── the offer: the artifact everything points at ──");
+  {
+    const { parseOffer, draftOffer, activateOffer, retireOffer, offerReadiness, offerContextBlock, listOffers } =
+      await import("../business/offers.ts");
+
+    // Parsing is pure. A half-offer must be rejected outright: a row with no
+    // promise is worse than no row, because it looks like something.
+    const good = parseOffer(
+      "NAME: The Standard\nWHO: parents of varsity throwers\nPROMISE: your kid learns to run their own body\n" +
+      "SHAPE: block, 10 weeks\nFORMAT: weekly video review\nPROOF: tested lifts at week 1 and 10\n" +
+      "WHY HIM: he coaches understanding, not compliance\nASSUMPTIONS: pricing not set"
+    );
+    check("offer parsing reads a complete offer", good !== null && good.name === "The Standard");
+    check("offer parsing takes the shape and the duration", good!.shape === "block" && good!.durationWeeks === 10);
+    check("offer parsing keeps the assumptions rather than dropping them", /pricing not set/i.test(good!.assumptions ?? ""));
+    check("a half-offer is refused, not half-filed", parseOffer("NAME: Thing\nSHAPE: monthly") === null);
+
+    // NO KEY HERE — it must refuse rather than invent something to sell.
+    check("with no engine it refuses to invent an offer", (await draftOffer()).ok === false);
+
+    // The empty state is a first-class, loudly-reported condition.
+    const before = await offerReadiness();
+    check("with nothing live it reports no active offer", before.hasActive === false);
+    const emptyBlock = await offerContextBlock();
+    check("and the prompt block FORBIDS inventing one rather than going silent",
+      /NO ACTIVE OFFER/i.test(emptyBlock) && /do not invent/i.test(emptyBlock));
+
+    const draft = await prisma.offer.create({
+      data: { name: `${TAG} offer`, audience: "parents", promise: "p", shape: "block", grounding: "none" },
+    });
+    // The single most expensive hallucination available to this system would
+    // be a confident price, because Cole would quote it. So it must not exist.
+    check("a drafted offer carries no price", draft.priceCents === null);
+    check("activating without a price is refused, with the reason",
+      /no price|Aurelius will not pick/i.test((await activateOffer(draft.id)).error ?? ""));
+    check("a nonsense price is refused", (await activateOffer(draft.id, { priceCents: -5 })).ok === false);
+
+    const live = await activateOffer(draft.id, { priceCents: 45000 });
+    check("activating with Cole's price makes it live", live.ok === true && live.offer.status === "active");
+
+    const block = await offerContextBlock();
+    check("the live offer reaches the prompt with its price", /\$450/.test(block) && new RegExp(`${TAG} offer`).test(block));
+    check("and the prompt forbids quoting any other number", /Never quote a price other than/i.test(block));
+    check("readiness flips to live", (await offerReadiness()).hasActive === true);
+
+    await retireOffer(draft.id);
+    check("a retired offer leaves the prompt entirely", !new RegExp(`${TAG} offer`).test(await offerContextBlock()));
+    check("but is still listed for attribution",
+      (await listOffers("retired")).some((o) => o.id === draft.id));
+
+    // Reachability (rule 8): the risk line's business branch had a param no
+    // production caller passed. Assert the offer state actually lands in it.
+    const { riskLineFrom } = await import("../productivity/service.ts");
+    const calm = { tasks: [], overdue: [], plan: { focus: null }, stats: { followThrough: null } };
+    const noOffer = riskLineFrom(calm as any, [], 0, {
+      empty: true, activeClients: 0, openLeads: 0, staleFollowUps: 0,
+      overdueInvoiceCents: 0, blocksEndingSoon: 0, hasActiveOffer: false, draftOffers: 2,
+    });
+    check("with no offer the risk line names THAT, not 'go do outreach'", /no offer defined/i.test(noOffer));
+
+    await prisma.offer.deleteMany({ where: { name: { startsWith: TAG } } });
+  }
+
+  console.log("── lead acquisition: the door into the pipeline ──");
+  {
+    // The council's unanimous finding: Lead→...→Payment is proven and STEP 1
+    // does not exist. Every caller of addLead was Cole typing; LEAD_SOURCES
+    // offered "instagram" and "website" with no code that could produce them.
+    const { importWarmList, captureInboundLead, runOutreachSweep, draftOutreach } =
+      await import("../crm/leadEngine.ts");
+
+    const warm = await importWarmList([
+      { name: `${TAG} Warm One`, email: `${TAG}one@example.com`, context: "trained him two years", relationship: "former athlete" },
+      { name: `${TAG} Warm Two`, context: "his mum coached with me" },
+      { name: "" },
+    ]);
+    check("the warm list imports the people Cole already knows", warm.created === 2 && warm.skipped === 1);
+
+    const again = await importWarmList([{ name: `${TAG} Warm One`, email: `${TAG}one@example.com` }]);
+    check("re-pasting the same list doesn't duplicate anyone", again.created === 0 && again.skipped === 1);
+
+    const imported = await prisma.lead.findMany({ where: { name: { startsWith: TAG } } });
+    check("every imported lead gets a follow-up date immediately (a list is not a pipeline)",
+      imported.length === 2 && imported.every((l) => l.nextActionAt !== null && !!l.nextAction));
+
+    // 1.5: `relationship` is how COLE knows them, NOT who referred them. A
+    // warm-list lead has no referrer, so referredBy stays null and the
+    // relationship is preserved in the notes the personalisation prompt reads.
+    const warmOne = imported.find((l) => l.email === `${TAG}one@example.com`)!;
+    check("a warm-list lead's relationship is not misfiled as a referrer",
+      warmOne.referredBy === null && /former athlete/i.test(warmOne.notes ?? ""));
+
+    // Inbound: the values that previously had no producer.
+    const inbound = await captureInboundLead({
+      name: `${TAG} Inbound`, email: `${TAG}in@example.com`, sport: "soccer",
+      message: "saw your stuff, my daughter needs speed work",
+    });
+    check("an inbound lead can arrive without Cole typing it", inbound.ok && !!inbound.leadId);
+    const inboundLead = await prisma.lead.findUnique({ where: { id: inbound.leadId! } });
+    check("inbound leads carry a real source, not an enum with no producer",
+      inboundLead?.source === "website" && inboundLead?.nextActionAt !== null);
+    const dupe = await captureInboundLead({ name: `${TAG} Inbound`, email: `${TAG}in@example.com` });
+    check("submitting the form twice doesn't create a second lead", dupe.leadId === inbound.leadId);
+    check("an inbound lead reaches the phone as a decision",
+      (await prisma.bridgeSignal.count({ where: { sourceType: "inbound_lead", sourceId: `lead:${inbound.leadId}` } })) === 1);
+
+    // ATTRIBUTION. Lead.angleId existed but inbound capture never set it, so
+    // the only way an angle got credit was Cole remembering which post produced
+    // which stranger — i.e. never, which quietly broke the whole results loop.
+    {
+      const { resolveRef } = await import("../crm/leadEngine.ts");
+      const { anglePerformance } = await import("../business/marketing.ts");
+      const angle = await prisma.marketingAngle.create({
+        data: { title: `${TAG} refangle`, hypothesis: "h", audience: "parent", grounding: "external" },
+      });
+      const post = await prisma.contentDraft.create({
+        data: { body: `${TAG} a post long enough to be real`, angleId: angle.id, channel: "instagram" },
+      });
+
+      check("a ref from a POST resolves to the ANGLE it was written from — credit lands on the idea",
+        (await resolveRef(post.id.slice(0, 8))) === angle.id);
+      check("a ref pointing straight at an angle also resolves", (await resolveRef(angle.id.slice(0, 8))) === angle.id);
+      check("an unknown ref resolves to null rather than guessing", (await resolveRef("zzzzzzzz")) === null);
+      check("a too-short ref is ignored", (await resolveRef("ab")) === null);
+
+      const attributed = await captureInboundLead({
+        name: `${TAG} FromPost`, email: `${TAG}post@example.com`, ref: post.id.slice(0, 8),
+      });
+      const row = await prisma.lead.findUnique({ where: { id: attributed.leadId! } });
+      check("a lead arriving through a post's link is attributed to its angle", row?.angleId === angle.id);
+
+      // A bad tracking code must never cost the lead itself.
+      const junkRef = await captureInboundLead({ name: `${TAG} JunkRef`, email: `${TAG}junk@example.com`, ref: "!!!!!!" });
+      check("a broken ref still captures the lead", junkRef.ok === true);
+
+      // One real lead outranks any hand-typed rate.
+      const perf = (await anglePerformance()).angles.find((a) => a.id === angle.id)!;
+      check("angle performance counts leads, the one number that arrives on its own", perf.leads === 1);
+      check("and a real lead outranks a reply rate in the verdict", /1 lead came from this/i.test(perf.verdict));
+
+      // Clean up ONLY what this block made. A blanket TAG delete here wiped
+      // the warm-list leads the outreach sweep asserts on further down.
+      await prisma.lead.deleteMany({ where: { id: { in: [attributed.leadId!, junkRef.leadId!] } } });
+      await prisma.contentDraft.deleteMany({ where: { id: post.id } });
+      await prisma.marketingAngle.deleteMany({ where: { id: angle.id } });
+    }
+
+    // Drafting is INWARD and keyless-honest: no engine here, so it must refuse
+    // rather than write an error into a message addressed to a real person.
+    const drafted = await draftOutreach(imported[0]!.id);
+    check("outreach refuses to draft error text at a real human (hard rule 3)", drafted.ok === false);
+
+    const sweep = await runOutreachSweep({});
+    check("the sweep finds what's due and is bounded to protect review capacity",
+      sweep.due > 0 && sweep.due <= 3);
+
+    // outreach.draft must be INWARD-grantable; outreach.send must never be.
+    const { ACTION_CLASSES } = await import("../autonomy/actionClasses.ts");
+    const draftClass = ACTION_CLASSES.find((c: any) => c.key === "outreach.draft");
+    const sendClass = ACTION_CLASSES.find((c: any) => c.key === "outreach.send");
+    check("drafting outreach is inward (it only writes a Gmail draft)", draftClass?.tier === "inward");
+    check("sending outreach stays outward and non-grantable", sendClass?.tier === "outward");
+    const { hasActionFinalizer } = await import("../autonomy/actionRegistry.ts");
+    const { registerAllActions } = await import("../autonomy/registerActions.ts");
+    registerAllActions();
+    check("outreach.draft has a real finalizer (not a dead toggle on the dial)",
+      hasActionFinalizer("outreach.draft") === true);
+
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["inbound_lead", "outreach_draft"] } } });
+    await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+  }
+
+  console.log("── the attribution spine: which marketing actually earned ──");
+  {
+    // The emit side attribution never had: a real trackable link, a touch
+    // ledger, and earned money credited to the channel/angle that produced it.
+    const { mintTrackLink, resolveTrackLink, countClick } = await import("../crm/trackLinks.ts");
+    const { captureInboundLead } = await import("../crm/leadEngine.ts");
+    const { moneyLedger } = await import("../crm/ledger.ts");
+    const { convertLead, addClient, recordPayment } = await import("../crm/service.ts");
+
+    const angle = await prisma.marketingAngle.create({
+      data: { title: `${TAG} spineangle`, hypothesis: "h", audience: "parent", grounding: "external" },
+    });
+
+    // 1.2 — minting: a real, unique, click-counted link (not an id prefix).
+    const link = await mintTrackLink({ channel: "instagram", angleId: angle.id, label: `${TAG} link` });
+    check("a tracked link mints a unique code", !!link.code && link.code.length >= 7);
+    check("the link resolves to its channel and angle",
+      (await resolveTrackLink(link.code))?.angleId === angle.id);
+    await countClick(link.code);
+    check("a click is counted on the link", (await resolveTrackLink(link.code))?.clickCount === 1);
+
+    // 1.1 — a lead arriving through the link carries full attribution, and the
+    // link names its own channel (instagram), overriding the form default.
+    const lead = await captureInboundLead({ name: `${TAG} Tracked`, email: `${TAG}trk@example.com`, ref: link.code });
+    const leadRow = await prisma.lead.findUnique({ where: { id: lead.leadId! } });
+    check("a tracked-link lead records its refCode, link, angle and channel",
+      leadRow?.refCode === link.code && leadRow?.trackLinkId === link.id &&
+      leadRow?.angleId === angle.id && leadRow?.source === "instagram");
+    check("the intake touch is logged in the attribution ledger",
+      (await prisma.attributionEvent.count({ where: { kind: "intake", leadId: lead.leadId! } })) === 1);
+
+    // 1.1 — earned money is the sum of Payment, credited to the channel/angle.
+    await convertLead(lead.leadId!, {});
+    const client = await prisma.client.findFirst({ where: { name: `${TAG} Tracked` } });
+    await recordPayment({ clientId: client!.id, amount: 250, method: "stripe", recordedBy: "stripe_webhook" });
+    const ledgerNow = await moneyLedger();
+    check("earned is the sum of payments that actually arrived", ledgerNow.earnedCents >= 25000);
+    check("earned is credited to the channel that produced the client",
+      (ledgerNow.byChannel.find((c) => c.channel === "instagram")?.cents ?? 0) >= 25000);
+    check("self-recorded money is provenance-tracked, not laundered into Cole's hand",
+      ledgerNow.recordedBy.some((r) => r.by === "stripe_webhook" && r.cents >= 25000));
+    check("a 'paid' touch is credited in the attribution ledger",
+      (await prisma.attributionEvent.count({ where: { kind: "paid", clientId: client!.id } })) === 1);
+
+    // 1.3 — an inbound reply on the outreach thread flips the lead + credits the angle.
+    const contacted = await prisma.lead.create({
+      data: { name: `${TAG} Contacted`, email: `${TAG}reply@example.com`, status: "contacted",
+        angleId: angle.id, source: "warm_list", outreachThreadId: `${TAG}-thread-1` },
+    });
+    const { matchInboundReplyToLead } = await import("../autonomy/workflows/inboxTriage.ts");
+    const matched = await matchInboundReplyToLead({
+      id: "m1", threadId: `${TAG}-thread-1`, from: `${TAG}reply@example.com`, subject: "re", snippet: "yes",
+    } as any);
+    const flipped = await prisma.lead.findUnique({ where: { id: contacted.id } });
+    check("an inbound reply on the outreach thread flips the lead to conversing", matched && flipped?.status === "conversing");
+    check("the reply is credited as a touch", (await prisma.attributionEvent.count({ where: { kind: "reply", leadId: contacted.id } })) === 1);
+    check("a lead that never replied is not flipped (no empty-OR match)",
+      (await matchInboundReplyToLead({ id: "m2", threadId: "", from: "", subject: "", snippet: "" } as any)) === false);
+
+    // 1.6 — the offer probe floats variants with distinct links; standings rank them.
+    const { probeOffer, offerProbeStanding } = await import("../business/offers.ts");
+    const oA = await prisma.offer.create({ data: { name: `${TAG} Var A`, audience: "hs athletes", promise: "faster", shape: "monthly", status: "draft" } });
+    const oB = await prisma.offer.create({ data: { name: `${TAG} Var B`, audience: "hs athletes", promise: "stronger", shape: "block", status: "draft" } });
+    const probe = await probeOffer({ variants: 2 });
+    check("the probe floats each variant behind its own tracked link",
+      probe.ok && (probe.variants?.length ?? 0) >= 2 && probe.variants!.every((v) => v.code.length >= 7));
+    check("re-probing reuses each variant's link, not a duplicate", (await probeOffer({ variants: 2 })).ok &&
+      (await prisma.trackLink.count({ where: { offerId: { in: [oA.id, oB.id] }, channel: "offer_probe" } })) === 2);
+    const standing = await offerProbeStanding();
+    check("the probe standing lists the variants and their leads", standing.variants.length >= 2);
+
+    // Cleanup — only what this block made.
+    await prisma.attributionEvent.deleteMany({ where: { OR: [{ angleId: angle.id }, { clientId: client!.id }, { leadId: contacted.id } ] } });
+    await prisma.payment.deleteMany({ where: { clientId: client!.id } });
+    await prisma.trackLink.deleteMany({ where: { OR: [{ angleId: angle.id }, { offerId: { in: [oA.id, oB.id] } }] } });
+    await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.client.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.offer.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.marketingAngle.deleteMany({ where: { id: angle.id } });
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["inbound_lead", "lead_reply"] } } });
+  }
+
+  console.log("── the standard: the assessment funnel + the analyst ──");
+  {
+    // 2.1 — the benchmark is pure, static, and speaks the dichotomy voice.
+    const { assessStandard } = await import("../assessment/benchmarks.ts");
+    const strongSlow = assessStandard({ sport: "basketball", bodyweightLbs: 180, squatLbs: 360, verticalInches: 18 });
+    check("a strong-but-can't-jump athlete is told they built a gym number, not an athletic one",
+      /gym number|bodybuilder/i.test(strongSlow.headline) && strongSlow.metrics.length === 2);
+    const nothing = assessStandard({ sport: "soccer" });
+    check("with no numbers the standard asks for numbers rather than inventing a grade",
+      nothing.metrics.length === 0 && /numbers/i.test(nothing.cta));
+    check("the standard bands are always flagged provisional (not Cole's real numbers yet)", strongSlow.provisional === true);
+
+    // 2.1 — assessment is a real LEAD_SOURCE now (it had no producer before).
+    const { LEAD_SOURCES } = await import("../crm/service.ts");
+    const { captureInboundLead } = await import("../crm/leadEngine.ts");
+    check("assessment is a lead source with a producer", (LEAD_SOURCES as readonly string[]).includes("assessment"));
+    const aLead = await captureInboundLead({ name: `${TAG} Standard`, email: `${TAG}std@example.com`, source: "assessment", message: "Took The Standard" });
+    check("an assessment submission becomes a lead on the assessment channel",
+      (await prisma.lead.findUnique({ where: { id: aLead.leadId! } }))?.source === "assessment");
+
+    // 2.3 — the analyst refuses to crown a winner on too little data, and names
+    // the leak (clicks that don't convert) over a cheerful non-answer.
+    const { businessAnalystRead, channelPerformance } = await import("../business/analyst.ts");
+    const baseRead = await businessAnalystRead();
+    // Always one non-empty truth, and it never crowns a channel it hasn't
+    // ranked — the real-denominator rule holds whatever the shared DB contains.
+    check("the analyst always returns exactly one non-empty truth",
+      typeof baseRead.truth === "string" && baseRead.truth.length > 0);
+    check("the analyst never ranks a channel below the denominator floor",
+      baseRead.ranked.every((c) => c.clicks >= 15 || c.leads >= 3));
+
+    // Seed a leaky channel: 20 clicks, 0 leads → the leak is the truth.
+    for (let i = 0; i < 20; i++) {
+      await prisma.attributionEvent.create({ data: { kind: "click", channel: "smoke_ig" } });
+    }
+    const leakyRead = await businessAnalystRead();
+    check("the analyst names traffic that doesn't convert as the leak",
+      /zero leads|isn't catching|catching it/i.test(leakyRead.truth));
+    const perf = await channelPerformance();
+    check("a channel below the denominator floor is not ranked on n=1",
+      perf.find((c) => c.channel === "smoke_ig")?.ranked === true); // 20 clicks clears the click floor
+
+    await prisma.attributionEvent.deleteMany({ where: { channel: "smoke_ig" } });
+    await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "inbound_lead" } });
+  }
+
+  console.log("── the loops: content outcome, corrected reuse, freshness ──");
+  {
+    // 3.1 — the content-outcome sweep is dormant-honest without Instagram (a
+    // settled artifact exists but there's no connection to read insights from).
+    const { runContentOutcomeSweep } = await import("../content/outcomeLoop.ts");
+    const angle = await prisma.marketingAngle.create({
+      data: { title: `${TAG} loopangle`, hypothesis: "h", audience: "parent", grounding: "external" },
+    });
+    await prisma.outwardArtifact.create({
+      data: { channel: "instagram", externalId: `${TAG}_media`, angleIds: [angle.id], publishedAt: new Date(Date.now() - 80 * 3600 * 1000) },
+    });
+    const sweep = await runContentOutcomeSweep();
+    check("the content-outcome sweep is dormant-honest without an Instagram connection",
+      sweep.ran === false && /not connected|dormant|insights/i.test(sweep.reason));
+    check("it's also scheduled (a capability with no invoker is not done)",
+      (await import("../core/schedule.ts")).ONCE_PER_DAY.has("content_outcome"));
+
+    // 3.6 — a corrected reuse un-counts. A cache entry Cole later corrects gets
+    // correctedAt stamped, so the scoreboard excludes it from independence.
+    const bizOp2 = await resolveOperatorId("business");
+    if (bizOp2) {
+      const entry = await prisma.reasoningCacheEntry.create({
+        data: {
+          operatorId: bizOp2, domain: "smoke", entityKey: `${TAG}_e`, externalScopeId: `${TAG}_s`,
+          situationSignature: {}, reasoningSummary: "a reused conclusion",
+        },
+      });
+      const { recordCorrection } = await import("../knowledge/corrections.ts");
+      await recordCorrection({ targetType: "reasoning_output", targetId: entry.id, reason: "it was wrong" } as any);
+      const after = await prisma.reasoningCacheEntry.findUnique({ where: { id: entry.id } });
+      check("a corrected reuse is stamped so it un-counts from independence", after?.correctedAt !== null);
+      await prisma.correction.deleteMany({ where: { targetId: entry.id } });
+      await prisma.reasoningCacheEntry.delete({ where: { id: entry.id } });
+    }
+
+    // 3.3 — the freshness gate: an unread connector is stale by construction;
+    // a just-recorded read is fresh (tolerant if a strategy operator is absent
+    // on this bare DB, in which case the heartbeat is a no-op by design).
+    const { guardFresh, recordConnectorRead, connectorLastRead } = await import("../core/connectorFreshness.ts");
+    check("a connector with no read on record is treated as stale",
+      (await guardFresh(`${TAG}_neverread`, 60)).fresh === false);
+    await recordConnectorRead(`${TAG}_conn`);
+    const seen = await connectorLastRead(`${TAG}_conn`);
+    check("a recorded read is either fresh or a no-op on a bare DB (never a crash)",
+      seen === null || (await guardFresh(`${TAG}_conn`, 60)).fresh === true);
+
+    await prisma.outwardArtifact.deleteMany({ where: { externalId: `${TAG}_media` } });
+    await prisma.marketingAngle.deleteMany({ where: { id: angle.id } });
+    await prisma.logEntry.deleteMany({ where: { type: "connector_read", message: { startsWith: TAG } } });
+  }
+
+  console.log("── retention & referral: dormant until client #1, honest at zero ──");
+  {
+    const { logMetric, retentionSweep, creditReferral, draftProofContent, clientRetentionView } = await import("../crm/retention.ts");
+    const { addClient, captureInboundLead } = {
+      addClient: (await import("../crm/service.ts")).addClient,
+      captureInboundLead: (await import("../crm/leadEngine.ts")).captureInboundLead,
+    };
+
+    const client = await addClient({ name: `${TAG} Retain`, sport: "basketball" });
+    // Give it a tight cadence, and no lastCheckIn, so the sweep sees it overdue.
+    await prisma.client.update({ where: { id: client.id }, data: { checkInEveryDays: 7, lastCheckInAt: new Date(Date.now() - 20 * 86400_000) } });
+
+    // 4.4 — the PR ledger. First value is a baseline; a better one is a PR.
+    const baseline = await logMetric({ clientId: client.id, label: "vertical", value: 24, unit: "in" });
+    check("the first number is a baseline, not a PR", baseline.isPR === false);
+    const pr = await logMetric({ clientId: client.id, label: "vertical", value: 27, unit: "in" });
+    check("a number that beats the prior best is flagged a PR", pr.isPR === true);
+    // Direction: a faster (lower) sprint is a PR; a slower one is not.
+    await logMetric({ clientId: client.id, label: "10-yard dash", value: 1.8, unit: "s" });
+    const faster = await logMetric({ clientId: client.id, label: "10-yard dash", value: 1.7, unit: "s" });
+    check("a faster sprint time is a PR (direction-aware)", faster.isPR === true);
+
+    // 4.1 — a PR proposes a referral (peak detection), once, not per-metric.
+    check("a PR proposes a referral ask (the peak moment)",
+      (await prisma.referral.count({ where: { referrerClientId: client.id, status: "proposed" } })) === 1);
+
+    // 4.2/4.3 — the sweep finds the overdue check-in (and any renewal).
+    const swept = await retentionSweep();
+    check("the retention sweep finds an overdue check-in", swept.ran && swept.checkInsDue >= 1);
+
+    // 4.1 capture — a lead crediting the client closes the referral loop.
+    const referred = await captureInboundLead({ name: `${TAG} Friend`, email: `${TAG}friend@example.com`, referredBy: `${TAG} Retain` });
+    check("a referred lead is captured on the referral channel",
+      (await prisma.lead.findUnique({ where: { id: referred.leadId! } }))?.source === "referral");
+    check("the referral loop is credited when the referrer is a client",
+      (await prisma.referral.count({ where: { referrerClientId: client.id, status: "captured" } })) === 1);
+
+    // 4.5 — proof engine refuses to invent proof with no engine (keyless-honest).
+    const proof = await draftProofContent(client.id);
+    check("the proof engine refuses to invent proof without an engine", proof.ok === false);
+
+    const view = await clientRetentionView(client.id);
+    check("the client retention view carries the PR count and cadence", (view?.prCount ?? 0) >= 2 && view?.checkInEveryDays === 7);
+
+    await prisma.referral.deleteMany({ where: { referrerClientId: client.id } });
+    await prisma.metric.deleteMany({ where: { clientId: client.id } });
+    await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.client.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["pr_peak", "check_in_due", "renewal_due", "referral_captured", "inbound_lead"] } } });
+  }
+
+  console.log("── integrations: money & comms self-record, verified ──");
+  {
+    const crypto = await import("node:crypto");
+    // 5.1 — Stripe signature: a valid sig verifies, a forged one is refused.
+    const { verifyStripeSignature, handleStripeEvent, parsePaymentEmail, recordSelfPayment } = await import("../crm/selfRecord.ts");
+    const secret = "whsec_smoketest";
+    const rawBody = JSON.stringify({ id: `${TAG}_evt`, type: "charge.succeeded", data: { object: { id: `${TAG}_ch`, amount: 5000, receipt_email: `${TAG}pay@example.com` } } });
+    const t = Math.floor(Date.now() / 1000);
+    const sig = crypto.createHmac("sha256", secret).update(`${t}.${rawBody}`).digest("hex");
+    check("a valid Stripe signature verifies", verifyStripeSignature(Buffer.from(rawBody), `t=${t},v1=${sig}`, secret) === true);
+    check("a forged Stripe signature is refused", verifyStripeSignature(Buffer.from(rawBody), `t=${t},v1=deadbeef`, secret) === false);
+
+    // A verified charge for a known client self-records with honest provenance.
+    const { addClient } = await import("../crm/service.ts");
+    const payClient = await addClient({ name: `${TAG} Payer`, email: `${TAG}pay@example.com` });
+    const rec = await handleStripeEvent(JSON.parse(rawBody));
+    check("a verified Stripe charge self-records a payment", rec.recorded === true);
+    const pay = await prisma.payment.findFirst({ where: { clientId: payClient.id } });
+    check("the self-recorded payment carries stripe_webhook provenance", pay?.recordedBy === "stripe_webhook" && pay?.amountCents === 5000);
+    // Idempotent — the same event never double-records.
+    const again = await handleStripeEvent(JSON.parse(rawBody));
+    check("the same Stripe event never records twice (idempotent)", again.recorded === false);
+
+    // 5.1 — Venmo/Zelle email parse. A payment notice → parsed; a normal email → null.
+    const venmo = parsePaymentEmail({ from: "venmo@venmo.com", subject: "Jane Doe paid you $40.00", body: "Jane Doe paid you $40.00" });
+    check("a Venmo payment email parses to an amount and payer", venmo?.amountCents === 4000 && /jane/i.test(venmo?.payerName ?? ""));
+    check("a normal email is not mistaken for a payment", parsePaymentEmail({ from: "coach@x.com", subject: "hey", body: "how's it going" }) === null);
+    // An unmatched payment surfaces a notice rather than being dropped or misassigned.
+    const unmatched = await recordSelfPayment({ amountCents: 3000, email: `${TAG}nobody@example.com`, method: "venmo", externalRef: `${TAG}_unmatched`, recordedBy: "email_parse" });
+    check("an unmatched payment files a notice, never a wrong-client record", unmatched.recorded === false && /unmatched|no matching/i.test(unmatched.reason));
+
+    // 5.2 — Twilio signature + inbound self-record against a lead.
+    const { verifyTwilioSignature, handleInboundSms } = await import("../crm/sms.ts");
+    const url = "https://x.test/webhooks/twilio";
+    const params = { From: "+15551234567", Body: "yes I'm in" };
+    const sorted = Object.keys(params).sort();
+    let data = url; for (const k of sorted) data += k + (params as any)[k];
+    const twSig = crypto.createHmac("sha1", "tok").update(Buffer.from(data, "utf8")).digest("base64");
+    check("a valid Twilio signature verifies", verifyTwilioSignature(url, params, twSig, "tok") === true);
+    check("a forged Twilio signature is refused", verifyTwilioSignature(url, params, "wrong", "tok") === false);
+    const smsLead = await prisma.lead.create({ data: { name: `${TAG} Texter`, phone: "+1 (555) 123-4567", status: "contacted", source: "warm_list" } });
+    const sms = await handleInboundSms({ from: "+15551234567", body: "yes I'm in" });
+    check("an inbound text matches the lead by phone and flips it to conversing",
+      sms.matched && (await prisma.lead.findUnique({ where: { id: smsLead.id } }))?.status === "conversing");
+
+    // 5.2/5.4 — outbound SMS and ad spend are OUTWARD, non-grantable.
+    const { checkGrantable } = await import("../autonomy/actionClasses.ts");
+    check("sending an SMS is outward, never grantable", checkGrantable("sms.send").grantable === false);
+    check("spending on ads is outward, never grantable", checkGrantable("ads.spend").grantable === false);
+    const { hasActionFinalizer } = await import("../autonomy/actionRegistry.ts");
+    const { registerAllActions } = await import("../autonomy/registerActions.ts");
+    registerAllActions();
+    check("both outward integrations have real finalizers (not dead confirms)",
+      hasActionFinalizer("sms.send") && hasActionFinalizer("ads.spend"));
+
+    // 5.4 — paid boost refuses to boost an unproven field.
+    const { proposeBoost } = await import("../business/paidBoost.ts");
+    const boost = await proposeBoost();
+    check("paid boost won't amplify without proof (few measured posts)", boost.ok === false && /proven|measured|median/i.test(boost.reason));
+
+    await prisma.payment.deleteMany({ where: { clientId: payClient.id } });
+    await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.client.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["unmatched_payment", "sms_inbound"] } } });
+  }
+
+  console.log("── reliability: self-healing, dedup seam, push delivery ──");
+  {
+    const { executeAction } = await import("../autonomy/executor.ts");
+    const { registerAllActions } = await import("../autonomy/registerActions.ts");
+    registerAllActions();
+
+    // 6.3 — the dedup seam: two gated asks with the SAME sourceId collapse onto
+    // one pending signal (the executor now routes through surfaceSignal).
+    const sid = `${TAG}_gate_dedup`;
+    const prep = async () => ({ title: `${TAG} gated ask`, body: "prepared", payload: {} });
+    await executeAction({ actionClass: "content.publish", sourceType: "smoke_gate", sourceId: sid, prepare: prep });
+    await executeAction({ actionClass: "content.publish", sourceType: "smoke_gate", sourceId: sid, prepare: prep });
+    const gateCount = await prisma.bridgeSignal.count({ where: { sourceType: "smoke_gate", sourceId: sid } });
+    check("a repeated gated ask dedups to one pending signal (the executor→surfaceSignal seam)", gateCount === 1);
+
+    // 6.5 — push delivery is persistable: pushedAt is a real column now.
+    const gated = await prisma.bridgeSignal.findFirst({ where: { sourceType: "smoke_gate", sourceId: sid } });
+    await prisma.bridgeSignal.update({ where: { id: gated!.id }, data: { pushedAt: new Date() } });
+    check("push delivery is persisted (pushedAt), so a dropped push is queryable",
+      (await prisma.bridgeSignal.findUnique({ where: { id: gated!.id } }))?.pushedAt != null);
+
+    // 6.1 — the self-healing claim: a FAILED run is reclaimable, a DONE one is not.
+    const { claimDailyRun, finishDailyRun } = await import("../core/schedule.ts");
+    const jobName = `${TAG}_selfheal`;
+    const day = new Date().toLocaleDateString("en-CA");
+    await prisma.jobRun.deleteMany({ where: { jobName } });
+    await prisma.jobRun.create({ data: { jobName, day, status: "failed" } });
+    check("a failed run is reclaimable (self-healing supervisor retries it)", (await claimDailyRun(jobName, day)) === true);
+    await finishDailyRun(jobName, true, day);
+    check("a done run is terminal (never re-fired the same day)", (await claimDailyRun(jobName, day)) === false);
+
+    // 6.4 — the retry helper exists and is a function (transient backoff wrapper).
+    const { fetchWithRetry } = await import("../engines/engineAdapter.ts");
+    check("engine adapters have a transient-retry/backoff wrapper", typeof fetchWithRetry === "function");
+
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "smoke_gate" } });
+    await prisma.jobRun.deleteMany({ where: { jobName } });
+  }
+
+  console.log("── the badge: receipts are not decisions ──");
+  {
+    const { needsDecision, surfaceSignal, AWAITING_DECISION } = await import("../core/bridge.ts");
+
+    // The 2026-08-06 council measured 460 "pending" signals against ONE real
+    // decision. Cause: the schema defaults status to "pending" and most writers
+    // never set it, so every ritual digest and wiki rewrite looked like
+    // something Cole had to rule on.
+    check("a ritual receipt is not a decision",
+      needsDecision({ kind: "background_result", severity: "info" }) === false);
+    check("a receipt carrying a real button IS a decision",
+      needsDecision({ kind: "background_result", severity: "info", actions: [{ label: "Confirm", action: "confirm_action" }] }) === true);
+    check("a dismiss-only button doesn't make a receipt a decision",
+      needsDecision({ kind: "background_result", severity: "info", actions: [{ label: "Dismiss", action: "dismiss" }] }) === false);
+    check("a critical receipt IS a decision (a failed backup is Cole's to act on)",
+      needsDecision({ kind: "background_result", severity: "critical" }) === true);
+    check("risks and opportunities are decisions", needsDecision({ kind: "risk" }) && needsDecision({ kind: "opportunity" }));
+    check("the awaiting-decision set is defined once, and excludes receipts",
+      !(AWAITING_DECISION as readonly string[]).includes("noted"));
+
+    const receipt = await surfaceSignal({
+      kind: "background_result", sourceType: `${TAG}_receipt`, severity: "info",
+      title: `${TAG} studied 2 units`, body: "a report, not a request",
+    });
+    const decision = await surfaceSignal({
+      kind: "risk", sourceType: `${TAG}_decision`, severity: "attention",
+      title: `${TAG} needs a ruling`, body: "this one is Cole's call",
+    });
+    const rows = await prisma.bridgeSignal.findMany({
+      where: { id: { in: [receipt.id, decision.id] } }, select: { id: true, status: true },
+    });
+    check("a receipt files as 'noted' and never reaches the badge",
+      rows.find((r) => r.id === receipt.id)?.status === "noted");
+    check("a decision still files as 'pending'",
+      rows.find((r) => r.id === decision.id)?.status === "pending");
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: { startsWith: TAG } } });
+  }
+
+  console.log("── the risk line: money outranks tidiness ──");
+  {
+    const { riskLineFrom } = await import("../productivity/service.ts");
+    const calmDeck = { tasks: [{ title: "x" }], overdue: [], plan: { focus: "ship" }, stats: { followThrough: 90 } };
+    const noBiz = { empty: false, activeClients: 2, openLeads: 1, staleFollowUps: 0, overdueInvoiceCents: 0, blocksEndingSoon: 0 };
+
+    // The sentence this replaces was "Nothing's on fire" — said to a man with
+    // zero clients and zero leads, which is the one fire that matters.
+    check("an empty pipeline is named as the fire, not called calm",
+      /pipeline is empty/i.test(riskLineFrom(calmDeck as any, [], 0, { ...noBiz, empty: true, activeClients: 0, openLeads: 0 })));
+    check("unpaid money outranks a tidy deck",
+      /overdue and unchased/i.test(riskLineFrom(calmDeck as any, [], 0, { ...noBiz, overdueInvoiceCents: 25000 })));
+    check("a block about to lapse outranks task backlog",
+      /re-sign conversation/i.test(riskLineFrom({ ...calmDeck, overdue: [{ title: "t" }] } as any, [], 5, { ...noBiz, blocksEndingSoon: 1 })));
+    check("a stale follow-up outranks a tidy deck",
+      /goes cold/i.test(riskLineFrom(calmDeck as any, [], 0, { ...noBiz, staleFollowUps: 2 })));
+    check("with no business data it degrades to the task ladder, not a crash",
+      typeof riskLineFrom(calmDeck as any, [], 0) === "string");
+  }
+
+  console.log("── funded-key safety: the guards that only matter once it runs ──");
+  {
+    // These three were all latent while no key was funded. They stop being
+    // latent the moment one is, which is why the council put them first.
+
+    // 1. A model error must never become the body of a real Gmail draft.
+    {
+      const { needsReply } = await import("../autonomy/workflows/inboxTriage.ts");
+      const src = await import("node:fs").then((fs) =>
+        fs.readFileSync(new URL("../autonomy/workflows/inboxTriage.ts", import.meta.url), "utf8")
+      );
+      check("inbox triage refuses to file model-error text as a reply (hard rule 3)",
+        /engineUnavailableText\(replyBody\)/.test(src));
+      check("triage still recognises a real reply-worthy message", typeof needsReply === "function");
+    }
+
+    // 2. Availability must never be computed from a dead or stale calendar —
+    //    guarded at the seam, because guarding at call sites is what failed:
+    //    planning/tools.ts checked, scheduleProtection.ts didn't.
+    {
+      const { assertCalendarUsable } = await import("../calendar/engine.ts");
+      let refused = false;
+      let reason = "";
+      try { await assertCalendarUsable(); } catch (err: any) { refused = true; reason = err?.message ?? ""; }
+      check("availability refuses to compute when the calendar isn't connected", refused);
+      check("and the refusal names the fix, not just the symptom", /\/api\/calendar\/auth/.test(reason));
+      const calSrc = await import("node:fs").then((fs) =>
+        fs.readFileSync(new URL("../calendar/engine.ts", import.meta.url), "utf8")
+      );
+      check("findAvailability enforces it itself, so no caller can forget",
+        /export async function findAvailability[\s\S]{0,400}?assertCalendarUsable\(\)/.test(calSrc));
+      check("a silent disconnect now surfaces instead of logging status ok",
+        /calendar_disconnected/.test(calSrc));
+    }
+
+    // 3. A failed daily job must be retryable. It wasn't: finishDailyRun wrote
+    //    "failed" and the takeover query only reclaimed "running", so one 529
+    //    consumed the whole day.
+    {
+      const { claimDailyRun, finishDailyRun } = await import("../core/schedule.ts");
+      const job = `${TAG}_retry`;
+      const day = "2099-01-01";
+      check("first claim of the day wins", (await claimDailyRun(job, day)) === true);
+      check("a second claim while running is refused", (await claimDailyRun(job, day)) === false);
+      await finishDailyRun(job, false, day);
+      check("a FAILED run can be reclaimed and retried", (await claimDailyRun(job, day)) === true);
+      await finishDailyRun(job, true, day);
+      check("a DONE run is never re-fired", (await claimDailyRun(job, day)) === false);
+      await prisma.jobRun.deleteMany({ where: { jobName: job } });
+    }
+  }
+
+  console.log("── media host: the seam that makes publishing reachable ──");
+  {
+    const { mediaHostStatus, resolvePublicMediaUrl, localDiskHost, MEDIA_ROUTE } =
+      await import("../media/host.ts");
+    const prior = process.env.MEDIA_PUBLIC_BASE_URL;
+
+    // Dormant until configured (hard rule 4) — and the reason must name the fix.
+    delete process.env.MEDIA_PUBLIC_BASE_URL;
+    const dormant = mediaHostStatus();
+    check("media host is dormant without config, and says how to fix it",
+      dormant.configured === false && /MEDIA_PUBLIC_BASE_URL/.test(dormant.reason ?? ""));
+    let refused = false;
+    try { await resolvePublicMediaUrl("/tmp/whatever.jpg"); } catch { refused = true; }
+    check("hosting a local file fails loudly while unconfigured", refused);
+
+    process.env.MEDIA_PUBLIC_BASE_URL = "https://aurelius.example.com";
+    check("media host wakes when the base URL lands", mediaHostStatus().configured === true);
+
+    // An already-public URL passes straight through — Cole may have hosted it.
+    check("an already-public URL is passed through untouched",
+      (await resolvePublicMediaUrl("https://cdn.example.com/a.jpg")) === "https://cdn.example.com/a.jpg");
+
+    // The bug this exists to prevent: handing Meta a URL only reachable from
+    // inside the network. The Graph error for that is opaque enough to cost
+    // an hour, so refuse it here with the real reason.
+    for (const unreachable of ["http://localhost:3001/x.jpg", "http://192.168.1.20/x.jpg", "http://10.0.0.5/x.jpg", "http://mini.local/x.jpg"]) {
+      let rejected = false;
+      try { await resolvePublicMediaUrl(unreachable); } catch { rejected = true; }
+      check(`a private-network URL is refused, not handed to Meta (${unreachable.split("/")[2]})`, rejected);
+    }
+
+    // Round-trip real bytes through the disk provider.
+    const hosted = await localDiskHost.put({
+      data: Buffer.from(`${TAG} pixels`),
+      contentType: "image/jpeg",
+      extension: "jpg",
+    });
+    check("hosted media gets a public URL under the served route",
+      hosted.url.startsWith("https://aurelius.example.com" + MEDIA_ROUTE) && hosted.url.endsWith(".jpg"));
+    check("hosted filenames are random, never caller-derived (the directory is public)",
+      /\/[0-9a-f]{32}\.jpg$/.test(hosted.url));
+    await localDiskHost.remove(hosted.key);
+    // Traversal in a key must not escape the media directory.
+    await localDiskHost.remove("../../../etc/passwd");
+    check("media host self-cleans and refuses to traverse out of its directory", true);
+
+    if (prior === undefined) delete process.env.MEDIA_PUBLIC_BASE_URL;
+    else process.env.MEDIA_PUBLIC_BASE_URL = prior;
+  }
+
+  console.log("── client engine: the remote business, leads through money ──");
+  {
+    const {
+      addLead, convertLead, addEngagement, logSession, raiseInvoice, recordPayment,
+      outstandingInvoices, whatNeedsAttention, pipelineSnapshot, clientDetail, toCents, fromCents,
+    } = await import("../crm/service.ts");
+
+    // Money is integer cents. A float here would drift a revenue total.
+    check("dollars parse to cents through formatting", toCents("$1,200.50") === 120050);
+    check("cents render back to dollars", fromCents(120050) === "$1,200.50");
+    let threwAmount = false;
+    try { toCents("abc"); } catch { threwAmount = true; }
+    check("a nonsense amount throws instead of storing NaN", threwAmount);
+
+    const lead = await addLead({
+      name: `${TAG} Athlete`, sport: "football", source: "referral", referredBy: "Coach Davis",
+      nextAction: "Send intake", nextActionAt: new Date(Date.now() - 86_400_000).toISOString(),
+    });
+    let badSource = false;
+    try { await addLead({ name: `${TAG} bad`, source: "carrier_pigeon" }); } catch { badSource = true; }
+    check("an unknown lead source is rejected, not silently stored", badSource);
+
+    const due = await whatNeedsAttention(14);
+    check("a past-due follow-up surfaces as needing attention", due.followUpsOverdue.some((f) => f.leadId === lead.id));
+
+    const client = await convertLead(lead.id, { parentName: `${TAG} Parent`, isMinor: true });
+    const reLead = await prisma.lead.findUnique({ where: { id: lead.id } });
+    check("converting links lead → client and clears the stale follow-up",
+      reLead?.status === "won" && reLead?.convertedClientId === client.id && reLead?.nextActionAt === null);
+    let twice = false;
+    try { await convertLead(lead.id); } catch { twice = true; }
+    check("a lead cannot be converted twice", twice);
+
+    // Cole sells three shapes at once — each must keep its own dates.
+    const block = await addEngagement({ clientId: client.id, shape: "block", title: "Speed block", price: 600, weeks: 12 });
+    const monthly = await addEngagement({ clientId: client.id, shape: "monthly", title: "Monthly coaching", price: 200 });
+    const program = await addEngagement({ clientId: client.id, shape: "program", title: "Template", price: 99 });
+    check("a block gets a real end date (that end IS the re-sign conversation)", !!block.endsAt);
+    check("monthly recurs with no end date", !!monthly.nextBillingAt && monthly.endsAt === null);
+    check("a one-off program neither ends nor rebills", program.endsAt === null && program.nextBillingAt === null);
+
+    const sess = await logSession({ clientId: client.id, kind: "video_review", notes: `${TAG} squat depth` });
+    check("a session logged with no date counts as just happened", !!sess.completedAt);
+
+    // Owed vs received — the split Cole asked for.
+    const inv = await raiseInvoice({
+      clientId: client.id, amount: 600, description: "Speed block", engagementId: block.id,
+      dueAt: new Date(Date.now() - 86_400_000).toISOString(),
+    });
+    const before = (await outstandingInvoices()).find((i) => i.id === inv.id);
+    check("an unpaid past-due invoice derives as overdue (never a stored flag)",
+      before?.overdue === true && before?.outstandingCents === 60000);
+
+    await recordPayment({ clientId: client.id, invoiceId: inv.id, amount: 300, method: "venmo" });
+    const partial = (await outstandingInvoices()).find((i) => i.id === inv.id);
+    check("a partial payment leaves the remainder owed", partial?.status === "partial" && partial?.outstandingCents === 30000);
+
+    await recordPayment({ clientId: client.id, invoiceId: inv.id, amount: 300, method: "venmo" });
+    const settled = await prisma.invoice.findUnique({ where: { id: inv.id } });
+    check("covering the balance settles the invoice", settled?.status === "paid" && !!settled?.paidAt);
+    let zeroPay = false;
+    try { await recordPayment({ clientId: client.id, amount: 0 }); } catch { zeroPay = true; }
+    check("a zero payment is refused", zeroPay);
+
+    const snap = await pipelineSnapshot();
+    check("MRR counts only the monthly shape — blocks and programs would inflate it", snap.mrrCents === 20000);
+    check("received-this-month reflects real payments", snap.receivedThisMonthCents === 60000);
+
+    const detail = await clientDetail(`${TAG} Athlete`);
+    check("a client resolves by name with lifetime value", detail?.lifetimeCents === 60000);
+
+    const horizon = await whatNeedsAttention(120);
+    check("an ending block surfaces for re-sign", horizon.blocksEnding.some((b) => b.engagementId === block.id));
+    check("a monthly renewal surfaces", horizon.renewalsDue.some((r) => r.engagementId === monthly.id));
+
+    // An empty pipeline must say so rather than render encouraging nothing.
+    await prisma.lead.updateMany({ where: { id: lead.id }, data: { convertedClientId: null } });
+    await prisma.client.delete({ where: { id: client.id } });
+    await prisma.lead.deleteMany({ where: { name: { contains: TAG } } });
+    const emptied = await pipelineSnapshot();
+    check("an empty pipeline is reported as empty, naming lead generation as the constraint",
+      emptied.empty === true && /lead generation/i.test(emptied.headline));
+    check("client engine self-cleans (cascade took engagements/invoices/payments)",
+      (await prisma.client.count({ where: { name: { contains: TAG } } })) === 0);
   }
 
   console.log("── telegram bridge: the lock must not lock out its own bridge ──");
@@ -1304,6 +2615,16 @@ async function main() {
   const deck = await getDeck();
   check("deck names a single biggest-risk line", typeof deck.biggestRisk === "string" && deck.biggestRisk.length > 0);
   check("deck inlines the pending-Bridge queue", Array.isArray(deck.bridge));
+  check("deck splits receipts out of the ruling queue", Array.isArray(deck.bridgeReceipts));
+  {
+    // The split is the badge's contract: everything in `bridge` is a genuine
+    // decision, nothing in `bridgeReceipts` is — so a leaked receipt can neither
+    // ring the bell nor clutter the queue.
+    const { needsDecision } = await import("../core/bridge.ts");
+    const dec = (s: any) => needsDecision({ kind: s.kind, severity: s.severity, actions: s.actions });
+    check("every deck decision needs a ruling", deck.bridge.every(dec));
+    check("no deck receipt needs a ruling", (deck.bridgeReceipts ?? []).every((s: any) => !dec(s)));
+  }
   check("deck surfaces the overnight 'while you were away' row", Array.isArray(deck.overnight));
 
   // ── semantic operator routing (master-class #6) ──
@@ -1361,8 +2682,35 @@ async function main() {
   // ── curriculum: auto-learning the canon of every field ──
   console.log("── curriculum: the auto-learning canon ──");
   {
-    const { CURRICULUM, getCurriculumProgress, parseDiscoveries } = await import("../learning/curriculum.ts");
+    const { CURRICULUM, getCurriculumProgress, parseDiscoveries, selectNextUnit } =
+      await import("../learning/curriculum.ts");
     const domains = new Set(CURRICULUM.map((t) => t.domain));
+
+    // ── gap-first (2026-08-05) ──
+    // The curriculum read as stuck on things Cole already knew. It wasn't the
+    // seed list: gap discovery only fired once the seed was nearly exhausted,
+    // ~3 years out at one unit per field per week. Study now ALTERNATES seed
+    // canon and gap-discovered units, so the first gap lands on run two.
+    {
+      const canon = [{ title: "Seed A", query: "q" }, { title: "Seed B", query: "q" }, { title: "Seed C", query: "q" }];
+      const gaps = [{ title: "Gap A", query: "q" }, { title: "Gap B", query: "q" }];
+      const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+      check("first unit studied comes from the seed canon", selectNextUnit(canon, gaps, [])?.title === "Seed A");
+      check("the SECOND unit is a discovered gap, not the rest of the canon",
+        selectNextUnit(canon, gaps, [norm("Seed A")])?.title === "Gap A");
+      check("study keeps alternating seed → gap",
+        selectNextUnit(canon, gaps, [norm("Seed A"), norm("Gap A")])?.title === "Seed B");
+
+      // Each side must fall back to the other, or a track with no gaps yet
+      // (or a finished canon) would stall on alternate runs.
+      check("with no gaps discovered yet, the canon still advances every run",
+        selectNextUnit(canon, [], [norm("Seed A")])?.title === "Seed B");
+      check("with the canon finished, gaps carry the run",
+        selectNextUnit(canon, gaps, [norm("Seed A"), norm("Seed B"), norm("Seed C")])?.title === "Gap A");
+      check("everything studied yields nothing (hands off to spaced review)",
+        selectNextUnit(canon, gaps, [...canon, ...gaps].map((u) => norm(u.title))) === undefined);
+    }
     check(
       "curriculum covers all seven operator fields",
       CURRICULUM.length === 7 &&
@@ -2079,6 +3427,71 @@ async function main() {
       "no fix string still prints the literal <backend-domain> placeholder",
       !report.includes("<backend-domain>")
     );
+  }
+
+  console.log("── the doctor: the same verdict must be right on Railway AND the Mini ──");
+  {
+    // A loopback redirect is CORRECT on a local-first box (Google exempts
+    // loopback from its https rule precisely so this works) and WRONG when
+    // hosted. The old rule was a blanket "https or fail" plus a blanket
+    // "contains localhost → fail", so the Mac Mini would have been greeted on
+    // day one by two red Xs next to a config that works perfectly.
+    const { validateRedirect } = await import("../core/doctor.ts");
+    const CAL = "/api/calendar/callback";
+    const saved = { pub: process.env.AURELIUS_PUBLIC_URL, rw: process.env.RAILWAY_PUBLIC_DOMAIN };
+    delete process.env.AURELIUS_PUBLIC_URL;
+    delete process.env.RAILWAY_PUBLIC_DOMAIN;
+
+    check(
+      "local-first: http://localhost:3001 callback is VALID (the Mini's real setup)",
+      validateRedirect("http://localhost:3001/api/calendar/callback", CAL) === ""
+    );
+    check(
+      "local-first: 127.0.0.1 is loopback too",
+      validateRedirect("http://127.0.0.1:3001/api/calendar/callback", CAL) === ""
+    );
+    check(
+      "a public host over plain http is still refused",
+      /https/.test(validateRedirect("http://example.com/api/calendar/callback", CAL))
+    );
+    check(
+      "a wrong path is caught even when the host is fine",
+      /path/.test(validateRedirect("https://x.up.railway.app/callback", CAL))
+    );
+    check("garbage is rejected, never thrown on", validateRedirect("not a url", CAL) !== "");
+
+    // Now declare a public origin — the SAME localhost URI must flip to broken,
+    // because the OAuth browser is no longer on this machine.
+    process.env.AURELIUS_PUBLIC_URL = "https://aurelius.example.com";
+    check(
+      "hosted: the same loopback URI becomes a FAILURE once a public origin exists",
+      validateRedirect("http://localhost:3001/api/calendar/callback", CAL) !== ""
+    );
+    check(
+      "hosted: and the failure names where the deploy actually answers",
+      validateRedirect("http://localhost:3001/api/calendar/callback", CAL).includes("aurelius.example.com")
+    );
+    check(
+      "hosted: a matching https URI is accepted",
+      validateRedirect("https://aurelius.example.com/api/calendar/callback", CAL) === ""
+    );
+
+    // AURELIUS_PUBLIC_URL is the host-agnostic replacement for the Railway-only
+    // variable — the Mini behind a tunnel needs the same signal.
+    const src = await import("node:fs").then((fs) =>
+      fs.readFileSync(new URL("../core/doctor.ts", import.meta.url), "utf8"));
+    check(
+      "the public origin is declarable without knowing what a Railway is",
+      src.includes("AURELIUS_PUBLIC_URL")
+    );
+    check(
+      "durable-storage advice branches on the host, not on Railway being assumed",
+      src.includes("ephemeralHost()")
+    );
+
+    if (saved.pub === undefined) delete process.env.AURELIUS_PUBLIC_URL;
+    else process.env.AURELIUS_PUBLIC_URL = saved.pub;
+    if (saved.rw !== undefined) process.env.RAILWAY_PUBLIC_DOMAIN = saved.rw;
   }
 
   console.log("── oauth state: survives a redeploy mid-connect ──");

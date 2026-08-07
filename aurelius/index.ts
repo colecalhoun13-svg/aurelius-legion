@@ -74,6 +74,8 @@ import { calendarRouter } from "./router/calendarRouter.ts";
 import { correctionsRouter } from "./router/correctionsRouter.ts";
 import { gmailRouter } from "./router/gmailRouter.ts";
 import { instagramRouter } from "./router/instagramRouter.ts";
+import { crmRouter } from "./router/crmRouter.ts";
+import { MEDIA_DIR, MEDIA_ROUTE } from "./media/host.ts";
 
 // Structured tracing — every request and scheduled run leaves a LogEntry
 // row the cockpit can read. Telemetry is fire-and-forget by design.
@@ -98,14 +100,54 @@ process.on("uncaughtException", (err: any) => {
 });
 
 const app = express();
-app.use(express.json({ limit: "25mb" })); // room for base64 photos / short clips attached in chat
+// TRUST PROXY — required for req.ip to be correct behind a reverse proxy (the
+// Mini's nginx, a hosting edge). Without it, Express reports the PROXY's socket
+// address for every request, so the /intake per-IP limiter buckets the whole
+// internet together (one shared 5/hour window) — useless as a flood guard. Set
+// TRUST_PROXY to a hop COUNT (how many proxies sit in front, e.g. "1") so
+// Express derives the real client from the RIGHT of X-Forwarded-For and a client
+// can't forge a leftmost entry to rotate buckets. Default 0 (direct) when unset,
+// which correctly uses the socket address for a directly-exposed process.
+{
+  const raw = process.env.TRUST_PROXY;
+  const hops = raw ? (/^\d+$/.test(raw.trim()) ? Number(raw.trim()) : raw.trim() === "true" ? 1 : 0) : 0;
+  if (hops > 0) app.set("trust proxy", hops);
+}
+// Capture the raw body alongside the parsed one — webhook signature checks
+// (Stripe) must verify the EXACT bytes, which a re-serialised JSON object can't
+// reproduce. Cheap: it stores a reference to the buffer express already read.
+app.use(express.json({
+  limit: "25mb", // room for base64 photos / short clips attached in chat
+  verify: (req, _res, buf) => { (req as any).rawBody = buf; },
+}));
+// Twilio posts application/x-www-form-urlencoded, not JSON — parse that too so
+// the SMS webhook can read req.body.
+app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 app.use(
   cors({
     // Lockable: set FRONTEND_ORIGIN (comma-separated) to pin CORS to the real
     // frontend host(s). Unset keeps the open default for local dev.
     origin: process.env.FRONTEND_ORIGIN ? process.env.FRONTEND_ORIGIN.split(",").map((s) => s.trim()) : "*",
-    methods: ["GET", "POST"],
+    // PATCH/DELETE added with the Client Engine — moving a lead through the
+    // pipeline is a PATCH, and without it a cross-origin caller gets a CORS
+    // preflight failure rather than a useful error.
+    methods: ["GET", "POST", "PATCH", "DELETE"],
     credentials: true,
+  })
+);
+
+// PUBLIC MEDIA. Instagram fetches images from its own servers by URL, so this
+// directory is deliberately unauthenticated — it sits outside /api and so
+// outside THE LOCK below, which is the point. Only media intended for
+// publication is ever written here (media/host.ts writes random filenames).
+// Dormant when MEDIA_PUBLIC_BASE_URL is unset: the directory is still served,
+// but nothing writes to it because the host reports itself unconfigured.
+app.use(
+  MEDIA_ROUTE,
+  express.static(MEDIA_DIR, {
+    index: false,
+    dotfiles: "deny",
+    maxAge: "365d", // filenames are content-random, so they never need revalidating
   })
 );
 
@@ -120,6 +162,14 @@ const API_KEY = process.env.AURELIUS_API_KEY?.trim();
 // matched the old regex — Express doesn't collapse dot-segments pre-route).
 const AUTH_EXEMPT = new Set([
   "/health", "/",
+  // Payment/SMS webhooks — a provider (Stripe, Twilio) has no API key. Each is
+  // verified by SIGNATURE instead (Stripe HMAC, Twilio X-Twilio-Signature), so
+  // an unsigned or forged POST is refused inside the handler, not here.
+  "/webhooks/stripe", "/webhooks/twilio",
+  // Public lead intake. A prospect has no API key; a funnel that demands one
+  // captures nobody. Narrow by construction (creates a Lead, nothing else),
+  // input-sanitised, and rate-limited per IP at the route.
+  "/intake",
   "/api/calendar/auth", "/api/calendar/callback",
   "/api/gmail/auth", "/api/gmail/callback",
   "/api/instagram/auth", "/api/instagram/callback",
@@ -130,6 +180,10 @@ if (!API_KEY) {
 app.use((req, res, next) => {
   if (!API_KEY) return next();
   if (AUTH_EXEMPT.has(req.path)) return next();
+  // Public tracked-link redirects: a stranger clicking a link in a bio or a
+  // story has no API key. The route only counts a click and 302s to the form —
+  // it writes no lead and takes no outward action.
+  if (req.path.startsWith("/l/")) return next();
   if (req.get("x-aurelius-key") === API_KEY) return next();
   return res.status(401).json({ error: "unauthorized — send x-aurelius-key (set AURELIUS_API_KEY on the caller)" });
 });
@@ -164,6 +218,107 @@ app.use("/api/calendar", calendarRouter);
 app.use("/api/corrections", correctionsRouter);
 app.use("/api/gmail", gmailRouter);
 app.use("/api/instagram", instagramRouter);
+app.use("/api/crm", crmRouter);
+
+// PUBLIC LEAD INTAKE. Deliberately outside THE LOCK: a prospect filling in a
+// form has no API key, and a funnel that requires one captures nobody. This is
+// the only unauthenticated write in the system, so it is narrow by
+// construction — it creates a Lead and nothing else, every field is length-
+// capped and directive-defused, and it triggers no outward action. Rate-limited
+// per-IP so a bot cannot flood the pipeline Cole is trying to read.
+const intakeHits = new Map<string, { n: number; resetAt: number }>();
+app.post("/intake", async (req: Request, res: Response) => {
+  const ip = String(req.ip ?? req.socket.remoteAddress ?? "unknown");
+  const now = Date.now();
+  const win = intakeHits.get(ip);
+  if (!win || now > win.resetAt) intakeHits.set(ip, { n: 1, resetAt: now + 3600_000 });
+  else if (++win.n > 5) {
+    return res.status(429).json({ error: "Too many submissions. Try again later, or email directly." });
+  }
+  try {
+    const { captureInboundLead } = await import("./crm/leadEngine.ts");
+    const out = await captureInboundLead(req.body ?? {});
+    if (!out.ok) return res.status(400).json({ error: out.error });
+    // Never leak the lead id to an anonymous caller.
+    return res.json({ ok: true, message: "Thanks — Cole will come back to you personally." });
+  } catch (err: any) {
+    console.error("[intake] failed:", err?.message ?? err);
+    return res.status(500).json({ error: "Couldn't record that. Please email instead." });
+  }
+});
+
+// PUBLIC TRACKED-LINK REDIRECT. The emit side of attribution: `/l/:code` counts
+// the click and forwards to the public form carrying the ref, so the intake can
+// credit the exact link (and its channel/angle) that produced the lead. A code
+// that doesn't resolve still sends the person to the form — losing a real human
+// over a stale link would be the worst possible trade. Never 404s a click.
+app.get("/l/:code", async (req: Request, res: Response) => {
+  const code = String(req.params.code ?? "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 30);
+  // Absolute when a public origin is configured; relative otherwise (works when
+  // the frontend is served from the same origin as this backend).
+  const base = (process.env.APP_PUBLIC_URL || process.env.MEDIA_PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+  const dest = `${base}/start?ref=${encodeURIComponent(code)}`;
+  try {
+    if (code.length >= 5) {
+      const { resolveTrackLink, countClick, recordAttribution } = await import("./crm/trackLinks.ts");
+      const link = await resolveTrackLink(code).catch(() => null);
+      if (link) {
+        await countClick(code);
+        await recordAttribution({
+          kind: "click",
+          channel: link.channel,
+          refCode: link.code,
+          trackLinkId: link.id,
+          angleId: link.angleId,
+        });
+      }
+    }
+  } catch (err: any) {
+    console.warn("[l] click tracking failed (non-fatal):", err?.message ?? err);
+  }
+  return res.redirect(302, dest);
+});
+
+// STRIPE WEBHOOK — money that records itself. Public but signature-verified:
+// an unsigned POST is refused inside the handler. Dormant (503) without the
+// secret. Idempotent + client-matched inside handleStripeEvent.
+app.post("/webhooks/stripe", async (req: Request, res: Response) => {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!secret) return res.status(503).json({ error: "stripe webhook not configured" });
+  try {
+    const { verifyStripeSignature, handleStripeEvent } = await import("./crm/selfRecord.ts");
+    const raw = (req as any).rawBody as Buffer | undefined;
+    if (!raw || !verifyStripeSignature(raw, req.get("stripe-signature"), secret)) {
+      return res.status(400).json({ error: "invalid signature" });
+    }
+    const out = await handleStripeEvent(req.body);
+    return res.json({ received: true, ...out });
+  } catch (err: any) {
+    console.error("[stripe] webhook failed:", err?.message ?? err);
+    return res.status(500).json({ error: "handler failed" });
+  }
+});
+
+// TWILIO SMS WEBHOOK — an inbound text self-records against the phone identity
+// (a lead's reply, a client's message). Signature-verified; dormant without the
+// auth token. Outbound SMS is a separate outward action (Cole's confirm).
+app.post("/webhooks/twilio", async (req: Request, res: Response) => {
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  if (!token) return res.status(503).send("twilio not configured");
+  try {
+    const { verifyTwilioSignature, handleInboundSms } = await import("./crm/sms.ts");
+    const fullUrl = `${process.env.APP_PUBLIC_URL?.replace(/\/+$/, "") ?? ""}/webhooks/twilio`;
+    if (!verifyTwilioSignature(fullUrl, req.body ?? {}, req.get("x-twilio-signature"), token)) {
+      return res.status(403).send("invalid signature");
+    }
+    await handleInboundSms({ from: String(req.body?.From ?? ""), body: String(req.body?.Body ?? "") });
+    // Twilio expects TwiML (or empty 200) — we never auto-reply (outbound is Cole's).
+    res.set("Content-Type", "text/xml").send("<Response></Response>");
+  } catch (err: any) {
+    console.error("[twilio] webhook failed:", err?.message ?? err);
+    res.status(500).send("handler failed");
+  }
+});
 
 app.get("/", (req: Request, res: Response) => {
   res.send("Aurelius OS backend is running");
@@ -1476,180 +1631,203 @@ import("./calendar/engine.ts")
 // Market pulse at 06:30 — crypto/equities/macro digest into the wealth
 // corpus before the day starts. Signals only; Cole makes the calls.
 scheduleNamed("market_pulse", "30 6 * * *", "market pulse", async () => {
-  try {
     await runTraced("schedule", "market_pulse", async () => {
       const { runMarketPulse } = await import("./wealth/engine.ts");
       return runMarketPulse();
     });
-  } catch (err) {
-    console.error("[wealth] market pulse failed:", err);
-  }
 });
 // RSS standing feeds at 06:00 — reading digests into the corpus. Dormant
 // until research.rss_feeds exists in Living Knowledge.
 scheduleNamed("rss_ingest", "0 6 * * *", "RSS ingest", async () => {
-  try {
     await runTraced("schedule", "rss_ingest", async () => {
       const { pollRssOnce } = await import("./corpus/rssIngest.ts");
       return pollRssOnce();
     });
-  } catch (err) {
-    console.error("[rss] poll failed:", err);
-  }
 });
 // Schedule-protection at 06:45 — defend deep-work time before the day fills.
 // Acts on its own if granted (calendar.schedule_protection), else proposes on
 // the Bridge; deduped so it never spams. Runs before the 07:00 briefing so the
 // briefing reflects any holds just placed.
 scheduleNamed("schedule_protection", "45 6 * * *", "schedule protection", async () => {
-  try {
     await runTraced("schedule", "schedule_protection", async () => {
       const { runScheduleProtection } = await import("./autonomy/workflows/scheduleProtection.ts");
       await runScheduleProtection({ days: 5 });
     });
-  } catch (err) {
-    console.error("[scheduleProtection] daily sweep failed:", err);
-  }
+});
+// Inbox triage at 05:30 — before the briefing, so the 07:00 push can say what's
+// waiting. This workflow already existed but was only reachable from Telegram
+// and the autonomy router: it had never been on the spine, so it only ran when
+// Cole thought to ask for it, which defeats the point of an overnight pass.
+// Drafts land in Gmail as DRAFTS — nothing is ever sent (outward stays gated).
+scheduleNamed("inbox_triage", "30 5 * * *", "inbox triage", async () => {
+    await runTraced("schedule", "inbox_triage", async () => {
+      const { runInboxTriage } = await import("./autonomy/workflows/inboxTriage.ts");
+      await runInboxTriage({});
+    });
 });
 // Morning briefing at 07:00 — the day opens with a push, not a blank page.
 scheduleNamed("morning_briefing", "0 7 * * *", "morning briefing", async () => {
-  try {
     await runTraced("schedule", "morning_briefing", async () => {
       const { briefing } = await generateMorningBriefing();
       await sendToCole(briefing);
     });
-  } catch (err) {
-    console.error("[rituals] morning failed:", err);
-  }
+});
+// Outreach sweep at 07:30 — straight after the briefing, so the day starts
+// with the prospecting already drafted rather than as another intention.
+// Bounded to 3 drafts/run: the constraint is Cole's review capacity, not
+// generation. Inward only — it writes Gmail drafts and never contacts anyone.
+scheduleNamed("outreach_sweep", "30 7 * * *", "outreach sweep", async () => {
+    await runTraced("schedule", "outreach_sweep", async () => {
+      const { runOutreachSweep } = await import("./crm/leadEngine.ts");
+      await runOutreachSweep({});
+    });
+});
+// Weekly marketing pass, Sun 16:00 — deliberately BEFORE weekly planning at
+// 18:00, so the week Cole plans can already contain "post this". Bounded to
+// ONE piece per run and refuses entirely when there's a backlog or no live
+// offer: the constraint on this business is his review time, not supply.
+scheduleNamed("marketing_pass", "0 16 * * 0", "weekly marketing pass", async () => {
+    await runTraced("schedule", "marketing_pass", async () => {
+      const { runMarketingPass } = await import("./business/marketingPass.ts");
+      const out = await runMarketingPass();
+      console.log(`[marketing] weekly pass: ${out.ran ? `drafted a ${out.format}` : `skipped (${out.reason})`}`);
+    });
+});
+// Content-outcome read-back at 09:00 daily — reads insights on posts that went
+// out ~72h ago, credits their angle, and records reach so leads-per-reach is
+// real. Dormant-honest without an Instagram connection.
+scheduleNamed("content_outcome", "0 9 * * *", "content outcome read-back", async () => {
+    await runTraced("schedule", "content_outcome", async () => {
+      const { runContentOutcomeSweep } = await import("./content/outcomeLoop.ts");
+      const out = await runContentOutcomeSweep();
+      console.log(`[content] outcome sweep: ${out.ran ? `read ${out.processed}, reinforced ${out.reinforced}` : `skipped (${out.reason})`}`);
+    });
+});
+// Retention sweep at 08:30 daily — overdue check-ins + renewals coming due.
+// Dormant-honest: with no active clients it finds nothing and says so.
+scheduleNamed("retention_sweep", "30 8 * * *", "retention sweep", async () => {
+    await runTraced("schedule", "retention_sweep", async () => {
+      const { retentionSweep } = await import("./crm/retention.ts");
+      const out = await retentionSweep();
+      console.log(`[retention] sweep: ${out.ran ? `${out.checkInsDue} check-ins, ${out.renewalsDue} renewals due` : `skipped (${out.reason})`}`);
+    });
 });
 // Nightly debrief at 21:30 — wraps the deterministic pulse (gap math) in voice.
 scheduleNamed("nightly_debrief", "30 21 * * *", "nightly debrief", async () => {
-  try {
     await runTraced("schedule", "nightly_debrief", async () => {
       const { debrief } = await generateNightlyDebrief();
       await sendToCole(debrief);
     });
-  } catch (err) {
-    console.error("[rituals] nightly failed:", err);
-  }
 });
 // Midday check at 13:00 — corrective, and silent when Cole is on pace.
 scheduleNamed("midday_check", "0 13 * * *", "midday check", async () => {
-  try {
     await runTraced("schedule", "midday_check", async () => {
       const { runMiddayCheck } = await import("./planning/tools.ts");
       return runMiddayCheck();
     });
-  } catch (err) {
-    console.error("[planning] midday check failed:", err);
-  }
 });
 // Persona observation — Sunday 17:00: how did Cole actually communicate
 // this week? Calibration proposals land on the bench (propose, never impose).
 scheduleNamed("persona_observer", "0 17 * * 0", "persona observer", async () => {
-  try {
     await runTraced("schedule", "persona_observer", async () => {
       const { observeCommunicationStyle } = await import("./persona/observer.ts");
       return observeCommunicationStyle();
     });
-  } catch (err) {
-    console.error("[persona] observer failed:", err);
-  }
 });
 // Weekly planning session — Sunday 18:00, after the research pass digests.
 scheduleNamed("weekly_planning", "0 18 * * 0", "weekly planning", async () => {
-  try {
     await runTraced("schedule", "weekly_planning", async () => {
       const { planWeekLite } = await import("./planning/tools.ts");
       const { briefing } = await planWeekLite();
       const { sendToCole } = await import("./telegram/bot.ts");
       await sendToCole(briefing);
     });
-  } catch (err) {
-    console.error("[planning] weekly session failed:", err);
-  }
 });
 scheduleNamed("weekend_pulse", "0 9 * * 0", "weekend research pulse", async () => {
-  try {
     await runTraced("schedule", "weekend_pulse", async () => {
       await runWeekendPulse();
       // After the research pass lands, the wiki absorbs the week.
       const { synthesizeAllDomains } = await import("./wiki/engine.ts");
       await synthesizeAllDomains("weekend_pulse");
     });
-  } catch (err) {
-    console.error("[pulse] weekend failed:", err);
-  }
 });
 // Knowledge freshness — Sunday 19:00: stale entries get re-check
 // proposals on the bench (capped, cooldown; propose, never impose).
 scheduleNamed("freshness_sweep", "0 19 * * 0", "freshness sweep", async () => {
-  try {
     await runTraced("schedule", "freshness_sweep", async () => {
       const { runFreshnessSweep } = await import("./knowledge/freshness.ts");
       return runFreshnessSweep();
     });
-  } catch (err) {
-    console.error("[freshness] sweep failed:", err);
-  }
 });
 // Capability gaps — Sunday 19:30: mine the week's tool failures; a
 // capability that keeps failing files ONE deduped "I keep failing you
 // here + the fix" signal. Finding gaps is automatic; closing them is
 // Cole's call (hard rule 1).
 scheduleNamed("capability_gaps", "30 19 * * 0", "capability gap sweep", async () => {
-  try {
     await runTraced("schedule", "capability_gaps", async () => {
       const { sweepCapabilityGaps } = await import("./autonomy/capabilityGaps.ts");
       return sweepCapabilityGaps();
     });
-  } catch (err) {
-    console.error("[gaps] sweep failed:", err);
-  }
 });
 // Weekly scoreboard — Sunday 20:00, one honest snapshot of both lanes.
-scheduleNamed("weekly_scoreboard", "0 20 * * 0", "weekly scoreboard", () => {
-  runTraced("schedule", "weekly_scoreboard", () => computeWeeklySnapshot()).catch((err) =>
-    console.error("[scoreboard] failed:", err)
-  );
+scheduleNamed("weekly_scoreboard", "0 20 * * 0", "weekly scoreboard", async () => {
+  await runTraced("schedule", "weekly_scoreboard", () => computeWeeklySnapshot());
 });
 // Nightly backup — 02:00: pg_dump the whole brain, prune to retention.
 // The one copy of everything Aurelius knows stops being the only copy.
-scheduleNamed("db_backup", "0 2 * * *", "nightly database backup", () => {
-  runTraced("schedule", "db_backup", async () => {
+scheduleNamed("db_backup", "0 2 * * *", "nightly database backup", async () => {
+  await runTraced("schedule", "db_backup", async () => {
     const { runDbBackup } = await import("./core/backup.ts");
-    return runDbBackup();
-  }).catch((err) => console.error("[backup] failed:", err));
+    const r = await runDbBackup();
+    // THROW on failure (6.2) so the JobRun records "failed" and the run is
+    // reclaimable — a swallowed {ok:false} used to mark the backup "done".
+    if (!r.ok) throw new Error(r.error ?? "backup failed");
+    return r;
+  });
 });
 // Queue sweep — nightly 21:15: the pending queue maintains itself. Backlog
 // proposals born keyhole-eligible apply under the grant (receipts + undo),
 // proposals unanswered 30 days expire, stale Bridge notices clear at 14.
 // A queue that only grows is a backlog wearing a badge (Cole's ruling).
-scheduleNamed("queue_sweep", "15 21 * * *", "queue sweep", () => {
-  runTraced("schedule", "queue_sweep", async () => {
+scheduleNamed("queue_sweep", "15 21 * * *", "queue sweep", async () => {
+  await runTraced("schedule", "queue_sweep", async () => {
     const { sweepQueues } = await import("./knowledge/queueSweep.ts");
-    return sweepQueues();
-  }).catch((err) => console.error("[queueSweep] failed:", err));
+    const result = await sweepQueues();
+    // Budget check rides the nightly sweep rather than owning a cron slot —
+    // it's a cheap read over rows that already exist, and daily is the right
+    // resolution for a monthly ceiling. Dormant without
+    // LLM_MONTHLY_BUDGET_USD; fires once per threshold per month, because an
+    // alarm that repeats every night gets muted, and a muted alarm is worse
+    // than no alarm. Non-fatal: a spend read must never fail the sweep.
+    try {
+      const { checkBudget } = await import("./measurement/spend.ts");
+      const b = await checkBudget();
+      if (b.fired.length) console.log(`[spend] budget alarm fired at ${b.fired.join("%, ")}%`);
+    } catch (err) {
+      console.warn("[spend] budget check failed (non-fatal):", (err as any)?.message ?? err);
+    }
+    return result;
+  });
 });
 // Curriculum ingest — Sunday 22:00: Aurelius studies the next unit of each
 // field's canon (strategy → Sun Tzu, Musashi, …; wealth → Buffett, Taleb, …;
 // identity → the Stoics), ingests the synthesis into the second brain, and
 // refreshes each touched field's wiki. Auto-learning the literature so every
 // operator reasons from the best thinking in its domain, not the model default.
-scheduleNamed("curriculum_ingest", "0 22 * * 0", "curriculum ingest", () => {
-  runTraced("schedule", "curriculum_ingest", async () => {
+scheduleNamed("curriculum_ingest", "0 22 * * 0", "curriculum ingest", async () => {
+  await runTraced("schedule", "curriculum_ingest", async () => {
     const { runCurriculumIngest } = await import("./learning/curriculum.ts");
     return runCurriculumIngest();
-  }).catch((err) => console.error("[curriculum] failed:", err));
+  });
 });
 // Decision Curriculum — Sunday 21:00: study COLE's own corrections and propose the
 // decision-heuristics they imply (mined from his reversals, not a book). Runs
 // before the canon curriculum so the week's mined principles are freshest.
-scheduleNamed("decision_curriculum", "0 21 * * 0", "decision curriculum", () => {
-  runTraced("schedule", "decision_curriculum", async () => {
+scheduleNamed("decision_curriculum", "0 21 * * 0", "decision curriculum", async () => {
+  await runTraced("schedule", "decision_curriculum", async () => {
     const { runDecisionCurriculum } = await import("./learning/decisionCurriculum.ts");
     return runDecisionCurriculum();
-  }).catch((err) => console.error("[decisionCurriculum] failed:", err));
+  });
 });
 // Initiative — 08:00 daily, after the briefing: Aurelius scans its own
 // state and proposes missions. Proposed only; Cole launches.
@@ -1660,10 +1838,8 @@ scheduleNamed("decision_curriculum", "0 21 * * 0", "decision curriculum", () => 
 // disabled-set loop does registry.has(name) with no retry).
 import("./autonomy/initiative.ts")
   .then(({ runInitiativePulse }) => {
-    scheduleNamed("initiative_pulse", "0 8 * * *", "initiative pulse", () => {
-      runTraced("schedule", "initiative_pulse", () => runInitiativePulse()).catch((err) =>
-        console.error("[initiative] failed:", err)
-      );
+    scheduleNamed("initiative_pulse", "0 8 * * *", "initiative pulse", async () => {
+      await runTraced("schedule", "initiative_pulse", () => runInitiativePulse());
     });
   })
   .catch((err) => console.error("[initiative] init failed:", err))
@@ -1679,6 +1855,11 @@ import("./autonomy/initiative.ts")
     import("./core/catchUp.ts")
       .then((m) => m.startCatchUp())
       .catch((err) => console.error("[catchup] init failed:", err));
+    // Self-watchdog (6.5): exit a spine that's stopped recording JobRuns so the
+    // supervisor restarts a clean one. Uptime-guarded, so a healthy boot is safe.
+    import("./core/watchdog.ts")
+      .then((m) => m.startWatchdog())
+      .catch((err) => console.error("[watchdog] init failed:", err));
   });
 
 // JSON error handler — MUST be last (after all routes). Without it, a body that
@@ -1700,6 +1881,41 @@ app.use((err: any, _req: Request, res: Response, _next: any) => {
   console.error("[express] unhandled error:", err?.message ?? err);
   return res.status(500).json({ error: "Aurelius hit an unexpected server error." });
 });
+
+// ── BUSINESS TRUTH RECONCILIATION (2026-08-05) ───────────────────────
+// Cole's stated business facts used to reach the database only when someone
+// remembered to run `scripts/seedBusiness.ts` by hand. That was survivable
+// while the profile was append-only; it stopped being survivable once facts
+// could be REVISED or RETIRED. A stale fact isn't inert — `exploring` told
+// every business answer that remote coaching was hypothetical for as long as
+// it stayed live. Reconciling at boot means a correction lands on deploy.
+//
+// Cheap and quiet: a handful of indexed reads, writes only on real drift, and
+// standing-topic derivation is skipped entirely when nothing changed. Failure
+// is non-fatal — a business seed must never keep the server from booting.
+import("./business/positioning.ts")
+  .then(async ({ seedBusinessProfile }) => {
+    const { written, revised, retired } = await seedBusinessProfile();
+    const changes = [
+      written.length ? `${written.length} new` : "",
+      revised.length ? `revised ${revised.join(", ")}` : "",
+      retired.length ? `retired ${retired.join(", ")}` : "",
+    ].filter(Boolean);
+    if (changes.length) console.log(`[business] profile reconciled — ${changes.join(" · ")}`);
+  })
+  .catch((err) => console.warn("[business] profile reconcile failed (non-fatal):", err?.message ?? err));
+
+// The brand voice → persona.* Living Knowledge, same idempotent reconcile. So
+// drafts speak Calhoun ("move fast, lift heavy, be an athlete") from boot, not
+// a generic coach voice. Non-fatal by construction.
+import("./business/brand.ts")
+  .then(async ({ seedBrandVoice }) => {
+    const { written, revised } = await seedBrandVoice();
+    if (written.length || revised.length) {
+      console.log(`[brand] voice reconciled — ${[written.length ? `${written.length} new` : "", revised.length ? `revised ${revised.join(", ")}` : ""].filter(Boolean).join(" · ")}`);
+    }
+  })
+  .catch((err) => console.warn("[brand] voice reconcile failed (non-fatal):", err?.message ?? err));
 
 const PORT = Number(process.env.PORT) || 3001;
 // Dead-man heartbeat: a 5-min proof-of-life ping to an external check

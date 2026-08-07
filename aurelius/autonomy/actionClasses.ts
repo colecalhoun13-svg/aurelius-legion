@@ -31,6 +31,12 @@ export type ActionClass = {
   domain?: string; // set to "training" | "health" to lock it out by domain
   description: string;
   gate: string; // where it stops for Cole (human-readable)
+  // Inward-SHAPED classes that must still never auto-apply, even under a grant.
+  // Changing what grounds reasoning (pattern.*) and flipping the grant switch
+  // itself (autonomy.*) ride Cole's explicit hand only — set this to the reason.
+  // Present so a finalizer can be declared (reachability) without becoming
+  // grantable. checkGrantable() refuses any class carrying it.
+  neverGrant?: string;
 };
 
 // Domains where Aurelius reports signals and never acts (hard rule 5).
@@ -71,14 +77,6 @@ export const ACTION_CLASSES: ActionClass[] = [
     gate: "publishing — the separate outward class content.publish",
   },
   {
-    key: "systems.sop_draft",
-    operator: "business",
-    tier: "inward",
-    description:
-      "Draft SOPs and workflow docs into the Business OS living document.",
-    gate: "propose→confirm before it becomes canonical",
-  },
-  {
     key: "knowledge.apply_proposal",
     operator: "knowledge",
     tier: "inward",
@@ -103,6 +101,14 @@ export const ACTION_CLASSES: ActionClass[] = [
     gate: "always Cole's confirm",
   },
   {
+    key: "outreach.draft",
+    operator: "business",
+    tier: "inward",
+    description:
+      "Research a lead and draft a personal outreach message into Gmail drafts. Never contacts anyone.",
+    gate: "the send button — sending is the separate outward class outreach.send",
+  },
+  {
     key: "outreach.send",
     operator: "business",
     tier: "outward",
@@ -115,6 +121,65 @@ export const ACTION_CLASSES: ActionClass[] = [
     tier: "outward",
     description: "Execute a trade or move money.",
     gate: "always Cole's confirm (spend)",
+  },
+  {
+    key: "sms.send",
+    operator: "business",
+    tier: "outward",
+    description: "Send an SMS to a lead or client via Twilio.",
+    gate: "always Cole's confirm",
+  },
+  {
+    key: "ads.spend",
+    operator: "business",
+    tier: "outward",
+    description: "Boost a post / spend on paid ads.",
+    gate: "always Cole's confirm (spend)",
+  },
+
+  // ── Inward-shaped but NEVER auto-applied (neverGrant) ──────────────
+  // Declared so their finalizers resolve (reachability: finalizer→class) and
+  // so the executor won't throw when they gate — but grantability is refused,
+  // so no keyhole can ever fire them. Only Cole's Bridge tap does.
+  {
+    key: "pattern.confirm",
+    operator: "identity",
+    tier: "inward",
+    description:
+      "Promote a proposed heuristic to confirmed, so it starts grounding future reasoning.",
+    gate: "always Cole's Bridge confirm",
+    neverGrant:
+      "confirming a heuristic changes what grounds reasoning — trust rises only on Cole's explicit ratification (decision curriculum), never on silence or a grant",
+  },
+  {
+    key: "pattern.retire",
+    operator: "identity",
+    tier: "inward",
+    description:
+      "Retire a confirmed heuristic that has decayed to the trust floor (confirmed rules never die silently).",
+    gate: "always Cole's Bridge confirm",
+    neverGrant:
+      "retiring a confirmed rule is a trust change — proposed for Cole, never executed on a grant",
+  },
+  {
+    key: "payment.record",
+    operator: "business",
+    tier: "inward",
+    description:
+      "Record a payment parsed from a Venmo/Zelle/PayPal notification email against a matched client.",
+    gate: "always Cole's Bridge confirm",
+    neverGrant:
+      "an email From header is spoofable — a parsed payment notification is a claim, not a verified receipt, so recording it always rides Cole's explicit tap (Stripe and Twilio, which are cryptographically verified, self-record and never use this class)",
+  },
+  {
+    key: "autonomy.apply_grant",
+    operator: "autonomy",
+    tier: "inward",
+    description:
+      "Apply an autonomy grant (turn a keyhole on) after Cole confirms it on the Bridge.",
+    gate: "always Cole's Bridge confirm — the grant switch is only ever Cole's hand (hard rule 1)",
+    neverGrant:
+      "autonomy never escalates its own autonomy (hard rule 1) — the grant switch is only ever Cole's hand",
   },
 
   // ── Non-grantable by domain — signals only ─────────────────────────
@@ -176,6 +241,11 @@ export function checkGrantable(key: string): Grantability {
       grantable: false,
       reason: `"${key}" is an OUTWARD action (${cls.gate}) — non-grantable by construction; Cole confirms every instance`,
     };
+  }
+  if (cls.neverGrant) {
+    // Inward-shaped but a trust/autonomy change — refused even though it's not
+    // outward and not domain-locked. Only Cole's explicit tap ever fires it.
+    return { grantable: false, reason: cls.neverGrant };
   }
   if (cls.domain && NON_GRANTABLE_DOMAINS.has(cls.domain)) {
     return {

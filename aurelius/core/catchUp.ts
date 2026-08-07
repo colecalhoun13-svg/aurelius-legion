@@ -39,6 +39,15 @@ const JOBS: CatchUpJob[] = [
     run: async () => (await import("../autonomy/workflows/scheduleProtection.ts")).runScheduleProtection({ days: 5 }),
   },
   {
+    name: "inbox_triage",
+    hour: 5,
+    minute: 30,
+    // Pointless once the day is underway — Cole has read the inbox himself by
+    // then, and a pile of stale drafts is worse than none.
+    expiresHour: 11,
+    run: async () => (await import("../autonomy/workflows/inboxTriage.ts")).runInboxTriage({}),
+  },
+  {
     name: "morning_briefing",
     hour: 7,
     run: async () => {
@@ -47,6 +56,14 @@ const JOBS: CatchUpJob[] = [
       const { briefing } = await generateMorningBriefing();
       await sendToCole(`(late — catching up after downtime)\n\n${briefing}`);
     },
+  },
+  {
+    name: "outreach_sweep",
+    hour: 7,
+    minute: 30,
+    // Drafting yesterday's outreach at 4pm is still useful; at 9pm it isn't.
+    expiresHour: 18,
+    run: async () => (await import("../crm/leadEngine.ts")).runOutreachSweep({}),
   },
   {
     name: "initiative_pulse",
@@ -86,6 +103,15 @@ const JOBS: CatchUpJob[] = [
       const { synthesizeAllDomains } = await import("../wiki/engine.ts");
       await synthesizeAllDomains("weekend_pulse");
     },
+  },
+  {
+    name: "marketing_pass",
+    hour: 16,
+    sundayOnly: true,
+    // The only invoker of the whole marketing lane. Without this catch-up row a
+    // Mini asleep Sunday afternoon loses the weekly pass — and the "no offer /
+    // nothing to write toward" nudge — silently for a week.
+    run: async () => (await import("../business/marketingPass.ts")).runMarketingPass().then(() => undefined),
   },
   {
     name: "persona_observer",
@@ -146,6 +172,16 @@ const JOBS: CatchUpJob[] = [
 
 /** Did this job leave a trace row today (fired = counted, even if it errored — never re-fire a crash loop)? */
 async function ranToday(name: string, todayStart: Date): Promise<boolean> {
+  // The JobRun status is authoritative (self-healing supervisor, 6.1): a run
+  // recorded "failed" has NOT successfully run, so catch-up should retry it
+  // (claimDailyRun reclaims a failed row atomically). Only "done" is terminal.
+  // A trace row alone no longer counts as "ran" — a failed job writes one too,
+  // which is exactly why swallowed failures never retried before.
+  const day = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, process TZ
+  const jr = await prisma.jobRun.findFirst({ where: { jobName: name, day }, select: { status: true } });
+  if (jr) return jr.status === "done";
+  // No claim row (a job outside ONCE_PER_DAY, or a very old run) — fall back to
+  // the trace-row signal so we don't re-fire something that clearly already ran.
   const row = await prisma.logEntry.findFirst({
     where: {
       type: "trace",
@@ -157,7 +193,17 @@ async function ranToday(name: string, todayStart: Date): Promise<boolean> {
   return !!row;
 }
 
-export async function runCatchUp() {
+export async function runCatchUp(opts: { isBoot?: boolean } = {}) {
+  // A stale "running" row means different things depending on WHO is asking, so
+  // boot and interval use different leases (council M2). At boot a stale-running
+  // row can only be an orphan a crashed process left behind — reclaim it after a
+  // short 30-min lease. During the hourly interval sweep in a live, healthy
+  // process a "running" row is usually a job genuinely in flight (a long
+  // synthesis/ingest), so a short lease would double-run it — but a LONG 6h lease
+  // still recovers a genuinely HUNG job the same day (nothing legitimate runs 6h)
+  // instead of stranding it until the next boot.
+  const isBoot = opts.isBoot ?? false;
+  const staleRunningMs = isBoot ? 30 * 60_000 : 6 * 3600_000;
   const now = new Date();
   const todayStart = new Date(now);
   todayStart.setHours(0, 0, 0, 0);
@@ -186,8 +232,10 @@ export async function runCatchUp() {
     if (await ranToday(job.name, todayStart)) continue;
     // The ATOMIC gate (go-live council): trace rows are best-effort telemetry;
     // the claim row is the law. If the live cron owns today, we lose the claim
-    // and skip — the double-briefing window is closed.
-    if (!(await claimDailyRun(job.name))) continue;
+    // and skip — the double-briefing window is closed. Boot reclaims a stale-
+    // "running" orphan fast (30m); the interval sweep only after a long hung-job
+    // lease (6h) so it never double-runs a legitimately long job.
+    if (!(await claimDailyRun(job.name, undefined, { staleRunningMs }))) continue;
 
     console.log(`[catchup] ${job.name} was due ${hour}:${String(minute).padStart(2, "0")} and never ran — firing now`);
     try {
@@ -203,9 +251,16 @@ export async function runCatchUp() {
   return { fired };
 }
 
-/** Boot hook — waits for DB/bridges to settle, then sweeps once. */
-export function startCatchUp(delayMs = 45_000) {
+/** Boot hook — waits for DB/bridges to settle, sweeps once, then keeps sweeping
+ *  HOURLY (6.1). Boot-only recovery meant a job that failed at 07:00 waited for
+ *  the next RESTART to retry; hourly, a now-"failed" run is reclaimed within the
+ *  hour. Each sweep only fires jobs that are due, un-run, and claimable, so the
+ *  interval is cheap and idempotent. */
+export function startCatchUp(delayMs = 45_000, everyMs = 60 * 60 * 1000) {
+  const sweep = (isBoot: boolean) =>
+    runCatchUp({ isBoot }).catch((err) => console.warn("[catchup] sweep failed:", err?.message ?? err));
   setTimeout(() => {
-    runCatchUp().catch((err) => console.warn("[catchup] sweep failed:", err?.message ?? err));
+    sweep(true); // boot sweep: recovers stale-"running" orphans from a crash
+    setInterval(() => sweep(false), everyMs); // interval sweep: never touches a live "running" row
   }, delayMs);
 }

@@ -14,6 +14,7 @@
 import { prisma } from "../../core/db/prisma.ts";
 import { gmailAuth, listInbox, readMessage, draftReply, type InboxItem } from "../../gmail/engine.ts";
 import { runLLM } from "../../llm/runLLM.ts";
+import { engineUnavailableText } from "../../llm/nonAnswer.ts";
 import { executeAction } from "../executor.ts";
 
 const ACTION_CLASS = "inbox.triage_draft";
@@ -26,6 +27,72 @@ const NO_REPLY_RE = /no-?reply|noreply|notifications?@|mailer-daemon|newsletter|
 export function needsReply(item: InboxItem): boolean {
   if (NO_REPLY_RE.test(item.from)) return false;
   if (!/@/.test(item.from)) return false;
+  return true;
+}
+
+/**
+ * LEAD REPLY DETECTION (attribution). An inbound on a thread we drafted outreach
+ * on — or from a known lead's address — means the lead replied. Flip it to
+ * "conversing", credit the angle's reply counter, log the touch, and surface the
+ * warm signal. Guarded on "contacted" status so it fires ONCE per reply, not on
+ * every daily run. Best-effort throughout: matching a reply must never break the
+ * triage pass that also has to draft replies to everyone else.
+ */
+export async function matchInboundReplyToLead(item: InboxItem): Promise<boolean> {
+  const from = (item.from ?? "").toLowerCase();
+  const emailMatch = from.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i)?.[0];
+  // No thread and no parseable address → nothing safe to match on. Never run an
+  // empty OR (it would match an arbitrary contacted lead).
+  if (!item.threadId && !emailMatch) return false;
+
+  const lead = await prisma.lead.findFirst({
+    where: {
+      status: "contacted",
+      OR: [
+        ...(item.threadId ? [{ outreachThreadId: item.threadId }] : []),
+        ...(emailMatch ? [{ email: { equals: emailMatch, mode: "insensitive" as const } }] : []),
+      ],
+    },
+    select: { id: true, name: true, angleId: true, source: true, refCode: true, trackLinkId: true },
+  });
+  if (!lead) return false;
+
+  await prisma.lead.update({
+    where: { id: lead.id },
+    data: {
+      status: "conversing",
+      lastContactAt: new Date(),
+      nextAction: "They replied — keep the conversation going",
+      nextActionAt: new Date(),
+    },
+  });
+  // The results loop reads angle.replies as derived truth.
+  if (lead.angleId) {
+    await prisma.marketingAngle
+      .update({ where: { id: lead.angleId }, data: { replies: { increment: 1 } } })
+      .catch(() => {});
+  }
+  const { recordAttribution } = await import("../../crm/trackLinks.ts");
+  await recordAttribution({
+    kind: "reply",
+    channel: lead.source,
+    angleId: lead.angleId,
+    refCode: lead.refCode,
+    trackLinkId: lead.trackLinkId,
+    leadId: lead.id,
+  });
+  const { surfaceSignal } = await import("../../core/bridge.ts");
+  await surfaceSignal({
+    kind: "opportunity",
+    domain: "business",
+    sourceType: "lead_reply",
+    sourceId: `reply:${lead.id}`,
+    severity: "attention",
+    title: `${lead.name} replied`,
+    body:
+      `${lead.name} replied to your outreach — they're warm right now. Keep it moving today. ` +
+      `Say "draft a reply to ${lead.name}" and I'll write it into your Gmail drafts (you send).`,
+  }).catch(() => {});
   return true;
 }
 
@@ -79,6 +146,32 @@ export async function runInboxTriage(opts: { max?: number } = {}): Promise<Inbox
   result.scanned = inbox.length;
 
   for (const item of inbox) {
+    // A Venmo/Zelle/PayPal payment notification SURFACES FOR CONFIRM instead of
+    // getting a drafted reply. It does NOT auto-record (council M3): an email From
+    // is spoofable, so a parsed notification is a claim Cole taps to accept, not a
+    // verified receipt. Stripe/Twilio (cryptographically verified) still self-record.
+    try {
+      const { parsePaymentEmail, surfacePaymentEmailForConfirm } = await import("../../crm/selfRecord.ts");
+      const parsed = parsePaymentEmail({ from: item.from, subject: item.subject, body: item.snippet });
+      if (parsed) {
+        await surfacePaymentEmailForConfirm({
+          amountCents: parsed.amountCents,
+          payerName: parsed.payerName,
+          method: parsed.method,
+          externalRef: `email:${item.id}`,
+        });
+        continue; // handled — not a reply to draft
+      }
+    } catch (err) {
+      console.warn("[inboxTriage] payment-email parse failed (non-fatal):", (err as any)?.message ?? err);
+    }
+
+    // Detect a lead's reply first — independent of whether we draft a reply to
+    // it. A warm lead going quiet is exactly what this is meant to catch.
+    await matchInboundReplyToLead(item).catch((err) =>
+      console.warn("[inboxTriage] lead-reply match failed (non-fatal):", (err as any)?.message ?? err)
+    );
+
     if (!needsReply(item)) continue;
 
     const dedupKey = `triage:${item.id}`;
@@ -109,6 +202,21 @@ export async function runInboxTriage(opts: { max?: number } = {}): Promise<Inbox
               `From: ${defuseDirectives(full.from)}\nSubject: ${defuseDirectives(full.subject)}\n\n${defuseDirectives(full.body.slice(0, 4000))}`,
           });
           const replyBody = (draft.text ?? "").trim();
+
+          // HARD RULE 3 — never file error text as content. This path had no
+          // guard, which was survivable only because no key was funded and the
+          // job never ran. With a live key it is the highest-consequence gap in
+          // the repo: a rate-limit, a 529, or a "Missing ANTHROPIC_API_KEY"
+          // becomes the body of a Gmail draft addressed to a real person under
+          // Cole's name, and the Bridge card presents it as a reply to confirm.
+          // Refusing here loses one draft; not refusing loses a prospect.
+          if (!replyBody || replyBody.length < 12 || engineUnavailableText(replyBody)) {
+            throw new Error(
+              `No usable draft for "${item.subject}" — the model returned an error or empty text. ` +
+                `Skipped rather than filing it as a reply.`
+            );
+          }
+
           return {
             title: `Reply drafted — ${item.subject}`,
             // Honest button (Outsider's spec): say what Confirm actually DOES.

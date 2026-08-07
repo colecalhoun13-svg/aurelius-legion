@@ -133,33 +133,39 @@ model LogEntry {
 // ═══════════════════════════════════════════════════════════════════
 
 model ReasoningCacheEntry {
-  id                 String   @id @default(cuid())
-  operatorId         String
-  operator           Operator @relation(fields: [operatorId], references: [id])
+  id         String   @id @default(cuid())
+  operatorId String
+  operator   Operator @relation(fields: [operatorId], references: [id])
 
   // Modularity primitive: operator + domain as separate axes
-  domain             String   @default("training_session")
+  domain String @default("training_session")
 
   // Identity / scope — generalized for cross-operator use
-  entityKey          String   // athlete name, lead ID, post ID, etc.
-  externalScopeId    String   // sheet ID, CRM ID, post ID — was sheetId
-  subContext         String?  // "Day 1", "Q4_2026", "instagram_reels" — was dayTab
+  entityKey       String // athlete name, lead ID, post ID, etc.
+  externalScopeId String // sheet ID, CRM ID, post ID — was sheetId
+  subContext      String? // "Day 1", "Q4_2026", "instagram_reels" — was dayTab
 
   // The situation, tagged at write time using the operator's knowledge module
   situationSignature Json
 
   // What Aurelius concluded for this situation
-  reasoningSummary   String
+  reasoningSummary String
 
   // Provenance + usage
-  sourceMemoryIds    String[]
-  usageCount         Int      @default(0)
+  sourceMemoryIds String[]
+  usageCount      Int      @default(0)
+
+  // Set when Cole corrects an answer this entry SERVED (a reuse that was wrong).
+  // The scoreboard un-counts a corrected reuse from the independence numerator:
+  // a bad reuse must not lower llmDependenceRate the way a good one does, or the
+  // metric rewards confident wrongness.
+  correctedAt DateTime?
 
   // Re-tagging support (populated in future; v1 leaves empty)
-  previousTags       Json[]   @default([])
+  previousTags Json[] @default([])
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([operatorId, domain, entityKey])
   @@index([operatorId, entityKey, externalScopeId])
@@ -167,33 +173,33 @@ model ReasoningCacheEntry {
 }
 
 model CompiledPattern {
-  id                 String   @id @default(cuid())
-  operatorId         String
-  operator           Operator @relation(fields: [operatorId], references: [id])
+  id         String   @id @default(cuid())
+  operatorId String
+  operator   Operator @relation(fields: [operatorId], references: [id])
 
   // Modularity primitive (matches ReasoningCacheEntry)
-  domain             String
+  domain String
 
   // Scope — null entityKey = cross-entity (e.g., cross-athlete)
-  entityKey          String?
-  externalScopeId    String?
+  entityKey       String?
+  externalScopeId String?
 
   // Pattern shape
-  patternType        String   // "factual" | "heuristic" | "structuralMatch"
-  patternSignature   Json
-  conditions         Json?
+  patternType      String // "factual" | "heuristic" | "structuralMatch"
+  patternSignature Json
+  conditions       Json?
 
   // Lifecycle status
   // auto_factual          — facts that compiled automatically (N=2)
   // proposed_heuristic    — heuristic noticed but unconfirmed (N=3)
   // confirmed_heuristic   — Cole confirmed; usable as soft rule
   // discarded             — Cole denied, kept as observation only
-  status             String   @default("proposed_heuristic")
+  status String @default("proposed_heuristic")
 
   // Evidence trail
-  evidence           String[]
-  supportCount       Int      @default(0)
-  confidenceScore    Float    @default(0)
+  evidence        String[]
+  supportCount    Int      @default(0)
+  confidenceScore Float    @default(0)
 
   // Trust counters (outcome loop) — monotone, machine-readable, non-saturating.
   // These gate the short-circuit; the confidence float is only a floor veto.
@@ -204,8 +210,8 @@ model CompiledPattern {
   ratifiedCount           Int @default(0)
   correctionsSinceConfirm Int @default(0)
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([operatorId, domain, entityKey])
   @@index([operatorId, status])
@@ -385,8 +391,19 @@ model BridgeSignal {
   title      String
   body       String // markdown
   actions    Json? // [{ label, action, payload }]
-  status     String    @default("pending") // "pending" | "surfaced" | "acknowledged" | "acting" (transient confirm claim) | "acted" | "dismissed" | "expired"
+  // "pending" | "surfaced" = AWAITING A DECISION (these drive the badge)
+  // "noted"     = a receipt: work happened, nothing for Cole to rule on
+  // "acknowledged" | "acting" (transient confirm claim) | "acted" | "dismissed" | "expired"
+  // The default is "pending" and most writers never set it, which is how 460
+  // receipts came to look like 460 outstanding decisions. surfaceSignal()
+  // derives the right one (core/bridge.ts::needsDecision) — prefer it over a
+  // raw create for exactly this reason.
+  status     String    @default("pending")
   surfacedAt DateTime?
+  // When a push (Telegram) was actually DELIVERED (6.5). Persisted so a dropped
+  // push is queryable — a critical ask that filed but never reached the phone is
+  // the silent failure this makes visible, instead of a lost console line.
+  pushedAt   DateTime?
   expiresAt  DateTime?
   createdAt  DateTime  @default(now())
 
@@ -645,41 +662,42 @@ model VectorEmbedding {
 // ═══════════════════════════════════════════════════════════════════
 
 model KnowledgeEntry {
-  id          String   @id @default(cuid())
-  operatorId  String
-  operator    Operator @relation(fields: [operatorId], references: [id])
+  id         String   @id @default(cuid())
+  operatorId String
+  operator   Operator @relation(fields: [operatorId], references: [id])
 
   // Scope — namespacing within an operator's knowledge
   // e.g., scope="rep_bands", key="strength" → value={lower:4, upper:5, intent:"strength"}
-  scope       String   // top-level category: "rep_bands", "intensity_zones", etc.
-  key         String   // identifier within scope: "strength", "hypertrophy", etc.
-  value       Json     // the actual knowledge payload (structured)
+  scope String // top-level category: "rep_bands", "intensity_zones", etc.
+  key   String // identifier within scope: "strength", "hypertrophy", etc.
+  value Json // the actual knowledge payload (structured)
 
   // Provenance — why does this value exist?
   // sourceType: "founding_default" | "cole_conversation" | "research_ingestion" | "manual"
   // sourceId: opaque reference (memory id, research result id, conversation turn id)
   // rationale: short human-readable explanation
-  sourceType  String
-  sourceId    String?
-  rationale   String?
+  sourceType String
+  sourceId   String?
+  rationale  String?
 
   // Audit + lifecycle
-  createdBy   String   // "system" for seeded defaults, "cole" for confirmed updates, etc.
-  updatedBy   String?
-  version     Int      @default(1)  // increments on update
-  active      Boolean  @default(true) // soft-disable without deletion
+  createdBy String // "system" for seeded defaults, "cole" for confirmed updates, etc.
+  updatedBy String?
+  version   Int     @default(1) // increments on update
+  active    Boolean @default(true) // soft-disable without deletion
 
   // History trail — previous values preserved for audit
   // Each prior version stored as { value, sourceType, sourceId, rationale, version, replacedAt }
-  history     Json[]   @default([])
+  history Json[] @default([])
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([operatorId, scope, key])
   @@index([operatorId, scope])
   @@index([operatorId, active])
 }
+
 // Atomic once-per-day claim for scheduled jobs (go-live council). The catch-up
 // dedup used to rest on best-effort trace telemetry — a redeploy straddling a
 // cron minute could double-fire the briefing, or a killed run could count as
@@ -688,10 +706,591 @@ model KnowledgeEntry {
 model JobRun {
   id        String   @id @default(cuid())
   jobName   String
-  day       String   // local YYYY-MM-DD (process TZ)
+  day       String // local YYYY-MM-DD (process TZ)
   status    String   @default("running") // running | done | failed
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([jobName, day])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// THE CLIENT ENGINE — Cole's remote coaching business, end to end.
+//
+// Scope note (2026-08-05): this models the REMOTE business Cole owns. He is
+// employed at the gym, so the athletes he coaches in person belong to his
+// employer and never appear here. Putting them in would be modelling someone
+// else's book as if it were his.
+//
+// The pipeline is Lead → Client → Engagement → { Session, Invoice → Payment }.
+// Two deliberate splits:
+//
+//   • INVOICE vs PAYMENT — owed vs received. Cole asked for both, and they
+//     are genuinely different questions: "who hasn't paid me" cannot be
+//     answered by a ledger of what arrived. An Invoice can be partially paid
+//     by several Payments, so this is one-to-many, not a status flag.
+//   • ENGAGEMENT carries the money, not Client. Cole sells three shapes at
+//     once (monthly retainer, fixed 8–12 week block, one-off program) and a
+//     single athlete can move between them or hold more than one. Collapsing
+//     price onto Client would have forced one shape to win.
+//
+// Money is INTEGER CENTS everywhere. Never Float — binary floating point
+// cannot represent 0.10, and a revenue total that drifts is worse than none.
+// ═══════════════════════════════════════════════════════════════════
+
+// Someone who might become a client. Lives here from first contact until they
+// convert or go cold — Cole has zero inbound today, so most leads will start
+// as a name he typed in himself off the warm list.
+model Lead {
+  id       String  @id @default(cuid())
+  name     String
+  email    String?
+  phone    String?
+  // Athlete context — the lead may BE the athlete or be their parent.
+  sport    String?
+  gradYear Int?
+  location String? // remote coaching crosses time zones; "Austin TX" is enough
+
+  // Where they came from. Cole's honest answer today is "nowhere" — this
+  // exists so the first ten tell him which channel is actually worth building.
+  source     String  @default("manual") // "manual" | "referral" | "instagram" | "email" | "word_of_mouth" | "website" | "other"
+  referredBy String? // free text: who sent them. The highest-converting source is also the easiest to forget to thank.
+
+  status     String  @default("new") // "new" | "contacted" | "conversing" | "proposed" | "won" | "lost" | "dormant"
+  lostReason String? // why it died — the only way a pipeline teaches anything
+
+  // The follow-up spine. A lead with no nextAction is how a warm list goes cold.
+  nextAction    String?
+  nextActionAt  DateTime?
+  lastContactAt DateTime?
+
+  notes String?
+
+  convertedClientId String?   @unique
+  convertedClient   Client?   @relation(fields: [convertedClientId], references: [id])
+  convertedAt       DateTime?
+
+  // WHICH ANGLE BROUGHT THEM. The whole attribution chain: angle → lead →
+  // client → payment. Without it Cole never learns which of his marketing
+  // actually earns, and keeps guessing — the exact thing he built this for.
+  angleId String?
+  angle   MarketingAngle? @relation(fields: [angleId], references: [id])
+
+  // WHICH TRACKED LINK brought them, when they arrived through one. refCode is
+  // the raw code carried on the URL (kept even if the TrackLink row is later
+  // deleted); trackLink is the resolved row. This is the emit side the old
+  // 8-char draft-id prefix never had — a real identity, click-counted.
+  refCode     String?
+  trackLinkId String?
+  trackLink   TrackLink? @relation(fields: [trackLinkId], references: [id])
+
+  // The Gmail thread of the outreach draft sent to this lead, persisted so an
+  // inbound reply on the same thread can flip the lead to "conversing" and
+  // credit the angle. Without it, a reply is invisible to the pipeline.
+  outreachThreadId String?
+
+  attributionEvents AttributionEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, nextActionAt])
+  @@index([source])
+  @@index([outreachThreadId])
+}
+
+// A converted athlete. Distinct from Lead so a lost lead can't quietly linger
+// in the roster and inflate the only numbers that matter.
+model Client {
+  id    String  @id @default(cuid())
+  name  String
+  email String?
+  phone String?
+
+  sport    String?
+  position String?
+  gradYear Int?
+  timezone String? // remote delivery: a 6am check-in is not 6am for both of you
+
+  // The buyer is frequently NOT the athlete. Cole coaches high-school athletes;
+  // parents typically pay and are typically the ones who need answering.
+  parentName  String?
+  parentEmail String?
+  parentPhone String?
+  isMinor     Boolean @default(false) // gates sharing results publicly — consent for a minor is the parent's to give
+
+  status      String    @default("active") // "active" | "paused" | "ended"
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+  endedReason String?
+
+  notes String?
+
+  // Retention cadence (Wave 4, dormant until there's a client). When set, the
+  // retention sweep drafts a check-in once lastCheckInAt + checkInEveryDays is
+  // due — so a paying athlete is never quietly neglected into a churn.
+  checkInEveryDays Int?
+  lastCheckInAt    DateTime?
+
+  lead           Lead?
+  engagements    Engagement[]
+  sessions       Session[]
+  invoices       Invoice[]
+  payments       Payment[]
+  metrics        Metric[]
+  referralsGiven Referral[]   @relation("ReferrerClient")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+// The commercial relationship — WHAT the client bought and on what terms.
+// One client may hold several over time (a block, then monthly), or more than
+// one at once (monthly coaching plus a one-off program).
+model Engagement {
+  id       String @id @default(cuid())
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  // Cole's three shapes, and the reason this table exists:
+  //   "monthly" — recurring until cancelled; nextBillingAt drives the renewal.
+  //   "block"   — fixed 8–12 weeks; endsAt is a real date and IS the re-sign
+  //               conversation, which is the highest-value thing to be reminded of.
+  //   "program" — one-off sale, no ongoing obligation; endsAt stays null.
+  shape String
+  title String // "Off-season speed block", "Monthly remote coaching"
+
+  priceCents Int // per month for "monthly"; total for "block" and "program"
+  currency   String @default("usd")
+
+  startsAt      DateTime  @default(now())
+  endsAt        DateTime? // set for "block"; null for open-ended monthly and one-off programs
+  nextBillingAt DateTime? // "monthly" only — when the next invoice is due to be raised
+  autoRenew     Boolean   @default(false)
+
+  status String  @default("active") // "active" | "completed" | "cancelled" | "pending"
+  notes  String?
+
+  sessions Session[]
+  invoices Invoice[]
+  payments Payment[]
+
+  // WHAT WAS SOLD. Nullable because engagements predate the Offer table and
+  // because Cole can always sell something bespoke — but when it IS set, the
+  // attribution chain closes: angle → lead → offer → engagement → payment.
+  offerId String?
+  offer   Offer?  @relation(fields: [offerId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId, status])
+  @@index([status, endsAt])
+  @@index([status, nextBillingAt])
+}
+
+// A PIECE OF CONTENT THAT SURVIVES THE TAB CLOSING.
+//
+// `content.draft` was declared as an action class with nothing that executed
+// it, and the marketing engine's draftAsset returned a string that vanished
+// the moment the panel closed. So Cole could generate copy endlessly and keep
+// none of it — the funnel ran angle → asset → /dev/null.
+//
+// This is the queue between "written" and "published". Cole edits the body in
+// place (the first draft is Aurelius's; the published one should be his), and
+// publishing stays OUTWARD: `content.publish`, staged on the Bridge, his tap.
+model ContentDraft {
+  id      String  @id @default(cuid())
+  channel String  @default("instagram") // "instagram" | "email" | "landing" | "dm" | ...
+  format  String? // the marketing format it came from, when it came from one
+  title   String? // subject line for email; internal handle otherwise
+  body    String
+
+  // WHERE IT CAME FROM. An asset written off a researched angle and one
+  // improvised from a topic are not the same thing, and the difference has to
+  // survive into the queue or the grounding contract dies at the panel edge.
+  angleId   String?
+  angle     MarketingAngle? @relation(fields: [angleId], references: [id])
+  grounding String          @default("none")
+
+  // "draft"     — written, not reviewed
+  // "ready"     — Cole has read/edited it and would send it
+  // "staged"    — an outward publish proposal is pending his confirm
+  // "published" — it actually went out
+  // "discarded" — killed, kept so the same idea isn't re-proposed forever
+  status String @default("draft")
+
+  imageUrl       String? // Instagram needs a PUBLIC url — Meta fetches it itself
+  scheduledFor   DateTime?
+  bridgeSignalId String? // the staged publish proposal, when there is one
+  publishedAt    DateTime?
+  permalink      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+}
+
+// THE THING EVERYTHING POINTS AT.
+//
+// Marketing angles, outreach drafts and landing copy were all writing about
+// an offer that existed only as prose inside a KnowledgeProposal — which
+// meant every asset re-improvised the promise and the price. An offer with
+// no durable row is an offer Cole cannot sell twice the same way.
+//
+// Price is integer cents, like the rest of the money layer. Nullable, because
+// an unpriced draft is a real state and rendering a guessed price as fact is
+// exactly the failure this repo keeps having.
+model Offer {
+  id       String @id @default(cuid())
+  name     String
+  audience String // the exact person it is for
+  promise  String // the outcome in the buyer's language
+
+  // Cole's three billing shapes — same vocabulary as Engagement.shape, so a
+  // sale can be raised straight off the offer without translation.
+  shape String // "monthly" | "block" | "program"
+
+  format      String? // what happens week to week
+  proof       String? // how results get demonstrated
+  edge        String? // the one line no competing coach can copy
+  assumptions String? // what had to be guessed — kept, never quietly dropped
+
+  priceCents    Int?
+  currency      String @default("usd")
+  durationWeeks Int? // "block" mainly; null for open-ended monthly
+
+  // "draft"   — proposed, not sellable, never injected as the live offer
+  // "active"  — what marketing and outreach point at. Cole's hand only.
+  // "retired" — kept for attribution; never surfaced as current.
+  status String @default("draft")
+
+  // Same provenance contract as MarketingAngle: an offer built from model
+  // priors must say so rather than borrow the authority of research.
+  grounding String @default("none")
+  sources   Json?
+
+  engagements Engagement[]
+  trackLinks  TrackLink[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  activatedAt DateTime?
+  retiredAt   DateTime?
+
+  @@index([status])
+}
+
+// A coaching touchpoint. Deliberately delivery-agnostic: Cole runs on Google
+// Sheets and text today and wants Aurelius to become the delivery platform
+// later, so this records THAT something happened, not how it was delivered.
+model Session {
+  id           String      @id @default(cuid())
+  clientId     String
+  client       Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  engagementId String?
+  engagement   Engagement? @relation(fields: [engagementId], references: [id])
+
+  kind        String    @default("check_in") // "check_in" | "call" | "video_review" | "test" | "session"
+  scheduledAt DateTime?
+  completedAt DateTime?
+  durationMin Int?
+  notes       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId, scheduledAt])
+  @@index([completedAt])
+}
+
+// WHAT IS OWED. Separate from Payment on purpose — see the header note.
+model Invoice {
+  id           String      @id @default(cuid())
+  clientId     String
+  client       Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  engagementId String?
+  engagement   Engagement? @relation(fields: [engagementId], references: [id])
+
+  amountCents Int
+  currency    String  @default("usd")
+  description String?
+
+  issuedAt DateTime  @default(now())
+  dueAt    DateTime?
+  paidAt   DateTime? // set when payments cover the full amount
+
+  // "overdue" is NOT stored — it is dueAt < now on an unpaid invoice. A stored
+  // flag would need a cron to stay honest and would be wrong between runs.
+  status String @default("draft") // "draft" | "sent" | "partial" | "paid" | "void"
+
+  externalRef String? // Stripe/PayPal id if invoicing ever moves off Cole's hands
+
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId, status])
+  @@index([status, dueAt])
+}
+
+// WHAT ACTUALLY ARRIVED. May be linked to an Invoice (normal) or stand alone
+// (Cole gets handed cash — recording it beats pretending it didn't happen).
+model Payment {
+  id           String      @id @default(cuid())
+  clientId     String
+  client       Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  invoiceId    String?
+  invoice      Invoice?    @relation(fields: [invoiceId], references: [id])
+  engagementId String?
+  engagement   Engagement? @relation(fields: [engagementId], references: [id])
+
+  amountCents Int
+  currency    String   @default("usd")
+  receivedAt  DateTime @default(now())
+  method      String   @default("other") // "cash" | "venmo" | "zelle" | "stripe" | "paypal" | "bank" | "other"
+  externalRef String?
+  note        String?
+
+  // WHO recorded it — the provenance that makes "money arrived on its own" a
+  // true claim. "cole" is his hand; "stripe_webhook" / "email_parse" / "twilio"
+  // are self-recordings (Wave 5). This is the honest half of automated money:
+  // Aurelius can log a payment it saw, and say exactly how it saw it.
+  recordedBy String @default("cole")
+
+  createdAt DateTime @default(now())
+
+  // THE MONEY IDEMPOTENCY GUARD (council R2). App-level find-then-insert is a
+  // TOCTOU race: Stripe delivers a payment's three events concurrently, and two
+  // handlers can both pass the "already recorded?" check before either commits,
+  // double-counting the same dollar. The DB constraint is the only real guard.
+  // Postgres treats NULLs as distinct, so cash/manual payments with no
+  // externalRef are unaffected; only two rows with the SAME externalRef collide,
+  // which is exactly the duplicate we must reject. recordSelfPayment catches the
+  // resulting P2002 and treats it as "already recorded".
+  @@unique([externalRef])
+  @@index([clientId, receivedAt])
+  @@index([invoiceId])
+  @@index([receivedAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// THE MARKETING ENGINE — evidence, not guesses.
+//
+// Cole's stated reason for building Aurelius: marketing is what he lacks
+// most, so he cannot tell a good marketing guess from a bad one. That makes
+// a fluent LLM the WORST possible shape for this feature — a confident
+// improvisation he has no way to audit.
+//
+// So an angle is a HYPOTHESIS with its evidence attached, and it is judged
+// by what actually happens. Generic research gives the first bet; Cole's own
+// results overwrite it. That second loop is the point: in six months, what
+// happened to HIS market is worth more than every research pass combined.
+// ═══════════════════════════════════════════════════════════════════
+
+model MarketingAngle {
+  id         String @id @default(cuid())
+  title      String // short handle: "The parent's real fear"
+  hypothesis String // what this claims will resonate, and with whom
+  audience   String // who it speaks to — parent, athlete, referring coach
+
+  // PROVENANCE. Without this the whole feature is a guess in a nice voice.
+  // "external" = real sources retrieved · "internal" = the corpus/his own
+  // results · "none" = model priors, and it must SAY so out loud.
+  grounding String  @default("none")
+  sources   Json? // [{ title, url, source }] — what it was actually built on
+  rationale String? // why this should work, in terms of the evidence above
+
+  status String @default("proposed") // "proposed" | "active" | "retired"
+
+  // THE RESULTS LOOP. Derived truth beats researched truth the moment it
+  // exists. Counters are incremented by recordOutcome, never guessed.
+  timesUsed   Int @default(0)
+  replies     Int @default(0)
+  conversions Int @default(0)
+
+  leads  Lead[]
+  drafts ContentDraft[]
+
+  trackLinks        TrackLink[]
+  attributionEvents AttributionEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// THE ATTRIBUTION SPINE — which marketing actually earned.
+//
+// Before this, attribution was a single scalar (Lead.angleId) set best-effort
+// from an 8-char draft-id prefix. You could see a lead's final angle, never
+// HOW it arrived or WHICH link carried it. These three models are the emit +
+// record side: a real trackable link, an event log of every touch, and a
+// stamp on each thing published so insights join back to what produced them.
+//
+// Deliberately NOT a "MoneyEvent" table: the schema already separates Invoice
+// (owed) from Payment (received), and "earned" is the sum of Payment — money
+// that actually arrived. A parallel money-state row would duplicate that and
+// re-introduce the stored-state dishonesty the Invoice/Payment split avoids.
+// So earned lives as a code invariant over Payment (crm/ledger.ts), and the
+// "paid" AttributionEvent credits that money to the touch that produced it.
+// ═══════════════════════════════════════════════════════════════════
+
+// A minted, click-counted link. `/l/:code` redirects to the public intake
+// (/start?ref=code) and counts the click. Every published post, every warm-list
+// message, every offer-probe variant can carry its own — so the first ten leads
+// tell Cole which channel and which angle actually work.
+model TrackLink {
+  id          String  @id @default(cuid())
+  code        String  @unique // short, URL-safe; the whole identity of the link
+  destination String  @default("/start") // where /l/:code sends them, ref appended
+  channel     String  @default("other") // "instagram" | "email" | "warm_list" | "offer_probe" | "website" | "other"
+  label       String? // human note: "IG bio link — squat reel"
+
+  angleId    String?
+  angle      MarketingAngle? @relation(fields: [angleId], references: [id])
+  offerId    String?
+  offer      Offer?          @relation(fields: [offerId], references: [id])
+  // Soft ref (no FK) to the OutwardArtifact that minted it, if any — kept soft
+  // so deleting an artifact never cascades a live link out of existence.
+  artifactId String?
+
+  clickCount Int @default(0)
+
+  leads  Lead[]
+  events AttributionEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([channel])
+}
+
+// One row per attributable touch in a lead's journey. `kind` is the step:
+//   "click"     — the tracked link was opened (often before any lead exists)
+//   "intake"    — a public form submission created/matched a lead
+//   "inbound"   — an unsolicited inbound (email/DM) landed
+//   "reply"     — a lead replied to outreach (credits the angle)
+//   "converted" — a lead became a client
+//   "paid"      — money arrived, credited to this touch (amountCents set)
+// leadId is null for an anonymous click; clientId/paymentId are soft refs so
+// the money side never cascades this history away.
+model AttributionEvent {
+  kind    String
+  id      String  @id @default(cuid())
+  channel String  @default("other")
+  refCode String?
+
+  trackLinkId String?
+  trackLink   TrackLink?      @relation(fields: [trackLinkId], references: [id])
+  angleId     String?
+  angle       MarketingAngle? @relation(fields: [angleId], references: [id])
+  leadId      String?
+  lead        Lead?           @relation(fields: [leadId], references: [id])
+
+  clientId    String? // soft ref
+  paymentId   String? // soft ref — set on "paid" events
+  amountCents Int? // only on "paid" — the money this touch is credited
+
+  metadata   Json?
+  occurredAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([kind, occurredAt])
+  @@index([channel])
+  @@index([leadId])
+  @@index([refCode])
+}
+
+// The authorship stamp on something actually published outward. Persists the
+// platform object id (IG media id) that finalizeContentPublish used to drop on
+// the floor, so 72h-later insights can join reach/likes back to the exact post
+// — and through its angleIds, to the ideas that earned them.
+model OutwardArtifact {
+  id          String   @id @default(cuid())
+  draftId     String? // the ContentDraft it came from (soft ref)
+  channel     String   @default("instagram")
+  externalId  String? // IG media / post id — the durable platform object id
+  permalink   String? // public URL of the published post
+  angleIds    String[] // which angles it embodies
+  trackLinkId String? // the ref link minted for it (soft ref)
+
+  // The 72h post-publish read-back (content-outcome loop). insightsReadAt marks
+  // the artifact processed so a daily sweep credits each post's angle exactly
+  // once; reach/engagement are the measured result that reinforces the angle and
+  // becomes the denominator for leads÷reach.
+  insightsReadAt  DateTime?
+  reach           Int?
+  engagementCount Int?
+
+  publishedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([channel, publishedAt])
+  @@index([externalId])
+  @@index([insightsReadAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// RETENTION / REFERRAL (Wave 4) — built now, dormant until client #1.
+// Keeping a client and turning a happy one into the next lead are the
+// cheapest growth there is, but neither can be tested with zero clients.
+// So these ship dormant-honest: the engines run, find nothing to act on,
+// and say so — no fabricated retention theatre over an empty roster.
+// ═══════════════════════════════════════════════════════════════════
+
+// A tracked performance number for a client — the proof engine's raw material
+// and the athlete's own feedback loop. isPR marks a personal best, which is the
+// event that triggers a referral ask (peak) and a proof-content draft.
+model Metric {
+  id         String   @id @default(cuid())
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  sessionId  String? // the session it was logged in, when it came from one
+  label      String // "vertical jump", "squat", "10-yard dash" …
+  value      Float
+  unit       String? // "in", "lbs", "s"
+  isPR       Boolean  @default(false) // a personal best — the peak event
+  achievedAt DateTime @default(now())
+  source     String   @default("coach") // "coach" | "athlete_reported"
+
+  createdAt DateTime @default(now())
+
+  @@index([clientId, label, achievedAt])
+  @@index([isPR, achievedAt])
+}
+
+// A referral in flight. Peak detection (a PR or a re-sign) proposes the ask;
+// Cole sends it (outward, his hand). Capture writes the new lead with a SCOPED
+// referredBy (the actual referrer), and the thank-loop closes it.
+model Referral {
+  id               String @id @default(cuid())
+  referrerClientId String
+  referrerClient   Client @relation("ReferrerClient", fields: [referrerClientId], references: [id], onDelete: Cascade)
+
+  reason String // "pr" | "resign" | "manual" — why now
+  // "proposed"  — peak detected, ask drafted, waiting on Cole
+  // "asked"     — Cole sent the ask
+  // "captured"  — a lead arrived crediting this referrer
+  // "thanked"   — the thank-loop closed
+  // "declined"  — Cole passed on asking
+  status String @default("proposed")
+
+  referredLeadId String? // set on capture (soft ref to the Lead)
+  askDraftedAt   DateTime?
+  askedAt        DateTime?
+  capturedAt     DateTime?
+  thankedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([referrerClientId, status])
+  @@index([status])
 }

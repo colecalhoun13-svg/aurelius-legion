@@ -25,6 +25,7 @@
 
 import { prisma } from "../core/db/prisma.ts";
 import { detectHeuristics } from "./detector.ts";
+import { engineUnavailableText } from "../llm/nonAnswer.ts";
 import type { TaggedSignature, CompiledPatternShape } from "./types.ts";
 
 const MIN_INPUT = 16;
@@ -79,6 +80,11 @@ export async function compileFromChat(args: {
     const input = (args.input ?? "").trim();
     const answer = (args.answer ?? "").trim();
     if (input.length < MIN_INPUT || answer.length < MIN_ANSWER) return;
+    // HARD RULE 3, at the one place it would persist as "understanding": a
+    // keyless/failed answer ("Anthropic engine is not configured…" = 62 chars,
+    // or "Anthropic API error: …" from a verbose 429 body) clears MIN_ANSWER and
+    // would land in Layer 5.4 of every later prompt as a compiled heuristic.
+    if (engineUnavailableText(answer)) return;
     // Answers that ran a TOOL are live/state-dependent (today's tasks, a web
     // result) — the reasoning isn't a stable heuristic, so don't compile them.
     if (/\[TOOL:/i.test(answer)) return;

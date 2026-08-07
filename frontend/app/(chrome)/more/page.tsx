@@ -12,6 +12,7 @@ const GROUPS: Array<{ title: string; items: Array<{ name: string; path: string; 
     title: "Direction",
     items: [
       { name: "Brain", path: "/brain", glyph: "❈", desc: "The shelves, ask-anything, and the syntheses" },
+      { name: "Business", path: "/business", glyph: "◆", desc: "The remote coaching business — leads, clients, and the money" },
       { name: "Aurelius", path: "/aurelius", glyph: "♛", desc: "Missions, the autonomy dial, and traces" },
     ],
   },
