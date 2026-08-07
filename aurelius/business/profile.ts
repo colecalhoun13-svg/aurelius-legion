@@ -68,6 +68,14 @@ export const RETIRED_FACTS: { key: string; reason: string }[] = [
 /** Stated by Cole, 2026-07-31 and 2026-08-05. Every line traceable to an answer. */
 export const CONFIRMED_FACTS: BusinessFact[] = [
   {
+    key: "brand_mantra",
+    value:
+      "The brand is Calhoun Performance and the through-line is 'Move fast, lift heavy, be an athlete.' Strength AND speed AND athleticism — not one without the others. Every hook, angle, and asset ladders back to it. The gen-pop wedge is 'train like an athlete, not a gym-goer.'",
+    note:
+      "Confirmed by Cole (CALHOUN_PERFORMANCE_BRAND.md). This is the positioning, not decoration — the 'aesthetics vs athletics' dichotomy IS the mantra. Every business/content answer should reason from it; never write generic youth-performance copy when this is the actual brand line.",
+    revision: 1,
+  },
+  {
     key: "who_i_serve",
     value:
       "Athletes across all sports plus general population, ages 5–99. The specialty and the strongest work is high-school through college athletes.",

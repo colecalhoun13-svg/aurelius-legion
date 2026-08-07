@@ -1654,6 +1654,20 @@ scheduleNamed("marketing_pass", "0 16 * * 0", "weekly marketing pass", async () 
     console.error("[marketing] weekly pass failed:", err);
   }
 });
+// Content-outcome read-back at 09:00 daily — reads insights on posts that went
+// out ~72h ago, credits their angle, and records reach so leads-per-reach is
+// real. Dormant-honest without an Instagram connection.
+scheduleNamed("content_outcome", "0 9 * * *", "content outcome read-back", async () => {
+  try {
+    await runTraced("schedule", "content_outcome", async () => {
+      const { runContentOutcomeSweep } = await import("./content/outcomeLoop.ts");
+      const out = await runContentOutcomeSweep();
+      console.log(`[content] outcome sweep: ${out.ran ? `read ${out.processed}, reinforced ${out.reinforced}` : `skipped (${out.reason})`}`);
+    });
+  } catch (err) {
+    console.error("[content] outcome sweep failed:", err);
+  }
+});
 // Nightly debrief at 21:30 — wraps the deterministic pulse (gap math) in voice.
 scheduleNamed("nightly_debrief", "30 21 * * *", "nightly debrief", async () => {
   try {
@@ -1869,6 +1883,18 @@ import("./business/positioning.ts")
     if (changes.length) console.log(`[business] profile reconciled — ${changes.join(" · ")}`);
   })
   .catch((err) => console.warn("[business] profile reconcile failed (non-fatal):", err?.message ?? err));
+
+// The brand voice → persona.* Living Knowledge, same idempotent reconcile. So
+// drafts speak Calhoun ("move fast, lift heavy, be an athlete") from boot, not
+// a generic coach voice. Non-fatal by construction.
+import("./business/brand.ts")
+  .then(async ({ seedBrandVoice }) => {
+    const { written, revised } = await seedBrandVoice();
+    if (written.length || revised.length) {
+      console.log(`[brand] voice reconciled — ${[written.length ? `${written.length} new` : "", revised.length ? `revised ${revised.join(", ")}` : ""].filter(Boolean).join(" · ")}`);
+    }
+  })
+  .catch((err) => console.warn("[brand] voice reconcile failed (non-fatal):", err?.message ?? err));
 
 const PORT = Number(process.env.PORT) || 3001;
 // Dead-man heartbeat: a 5-min proof-of-life ping to an external check

@@ -37,6 +37,7 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
     missions,
     llmCalls,
     cacheReuses,
+    correctedReuses,
     earnedThisWeekAgg,
     earnedAllTimeAgg,
     leadsThisWeek,
@@ -65,9 +66,14 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
     }),
     prisma.logEntry.count({ where: { type: "llm_call", createdAt: window } }),
     // Compiled entries REUSED this week (created earlier, touched now) —
-    // the numerator of independence.
+    // the numerator of independence. A reuse Cole later CORRECTED is excluded:
+    // a wrong reuse must not read as independence (3.6). The corrected count is
+    // surfaced separately so a metric falling while corrections climb is visible.
     prisma.reasoningCacheEntry.count({
-      where: { updatedAt: window, createdAt: { lt: weekStart } },
+      where: { updatedAt: window, createdAt: { lt: weekStart }, correctedAt: null },
+    }),
+    prisma.reasoningCacheEntry.count({
+      where: { updatedAt: window, createdAt: { lt: weekStart }, correctedAt: { not: null } },
     }),
     // MONEY. Earned = payments that arrived (real), split this-week vs all-time.
     // Leads created is the pipeline motion — deliberately a DIFFERENT number, so
@@ -117,6 +123,14 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
     llmDependenceRate:
       llmCalls + cacheReuses > 0
         ? Math.round((llmCalls / (llmCalls + cacheReuses)) * 100)
+        : null,
+    // Of reuses served this week, the share Cole later corrected. The honesty
+    // check on independence: a falling dependence rate ALONGSIDE a rising
+    // correction rate is compiled understanding getting confidently wrong, not
+    // getting better. Integer percent, null until there are reuses to judge.
+    reuseCorrectionRate:
+      cacheReuses + correctedReuses > 0
+        ? Math.round((correctedReuses / (cacheReuses + correctedReuses)) * 100)
         : null,
   };
 

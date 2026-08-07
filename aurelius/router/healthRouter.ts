@@ -36,8 +36,11 @@ router.get("/health/integrations", async (_req: Request, res: Response) => {
   try {
     const { registerAllTools } = await import("../tools/registerTools.ts");
     const { getIntegrations } = await import("../tools/integrationStatus.ts");
+    const { connectorFreshnessReport } = await import("../core/connectorFreshness.ts");
     registerAllTools(); // idempotent — the registry de-dupes
-    res.json({ integrations: await getIntegrations() });
+    // Freshness sits beside health: a live token over a poller that stopped
+    // reading is the silent failure token-health alone can't see.
+    res.json({ integrations: await getIntegrations(), freshness: await connectorFreshnessReport() });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? "integration status failed" });
   }

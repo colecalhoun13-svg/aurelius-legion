@@ -287,6 +287,7 @@ export async function draftAsset(angleId: string, format: MarketingFormat): Prom
     input:
       `${await businessContextBlock()}\n\n` +
       `${await offerContextBlock()}\n\n` +
+      `${(await import("./brand.ts")).brandVoiceBlock()}\n\n` +
       `═══ THE ANGLE YOU ARE WRITING FROM ═══\n` +
       `${angle.title}\nAudience: ${angle.audience}\nHypothesis: ${angle.hypothesis}\nRests on: ${angle.rationale ?? "—"}\n\n` +
       `Write: ${shape[format]}\n\n` +

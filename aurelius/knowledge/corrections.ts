@@ -88,6 +88,13 @@ export async function recordCorrection(input: CorrectionInput) {
     } catch (err) {
       console.warn("[corrections] outcome decay failed (correction still recorded):", err);
     }
+    // If the corrected output was a REUSED cached answer, un-count that reuse:
+    // a reuse that turned out wrong must not lower llmDependenceRate the way a
+    // right one does, or the independence metric rewards confident wrongness.
+    // updateMany so it's a silent no-op when the target isn't a cache entry.
+    await prisma.reasoningCacheEntry
+      .updateMany({ where: { id: input.targetId, correctedAt: null }, data: { correctedAt: new Date() } })
+      .catch(() => {});
   }
 
   const row = await prisma.correction.create({

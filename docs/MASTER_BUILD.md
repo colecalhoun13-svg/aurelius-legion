@@ -50,12 +50,12 @@ fails closed on every acquisition door.
 
 ## WAVE 3 — The loops (compounding)
 
-- [ ] 3.1 Content outcome→pattern — register missing `content.draft` finalizer; 72h post-publish insights read → reinforce/decay the angle pattern.
-- [ ] 3.2 Warm-list follow-up engine — daily sweep drafts overdue follow-ups, angle-tagged, gated send.
-- [ ] 3.3 Freshness gate — connector read staleness guard; loops refuse+notify rather than act stale.
-- [ ] 3.4 IG insights→attribution wiring — poller matches permalink→media insights; reach becomes leads÷reach.
-- [ ] 3.5 Brand ingest — dichotomy template + mantra + voice from `CALHOUN_PERFORMANCE_BRAND.md` into persona/knowledge so drafts speak Calhoun. `[CFG research key for external grounding]`
-- [ ] 3.6 llmDependenceRate correctness coupling — corrected reuse un-counts; Sunday shadow-eval; annotate correctionRate.
+- [x] 3.1 Content outcome→pattern — register missing `content.draft` finalizer; 72h post-publish insights read → reinforce/decay the angle pattern.
+- [x] 3.2 Warm-list follow-up engine — daily sweep drafts overdue follow-ups, angle-tagged, gated send.
+- [x] 3.3 Freshness gate — connector read staleness guard; loops refuse+notify rather than act stale.
+- [x] 3.4 IG insights→attribution wiring — poller matches permalink→media insights; reach becomes leads÷reach.
+- [x] 3.5 Brand ingest — dichotomy template + mantra + voice from `CALHOUN_PERFORMANCE_BRAND.md` into persona/knowledge so drafts speak Calhoun. `[CFG research key for external grounding]`
+- [x] 3.6 llmDependenceRate correctness coupling — corrected reuse un-counts; Sunday shadow-eval; annotate correctionRate.
 
 ## WAVE 4 — Retention / referral (built now, dormant until client #1)
 

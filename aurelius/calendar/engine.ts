@@ -150,6 +150,9 @@ export async function syncCalendar(opts: { daysBack?: number; daysAhead?: number
   }
 
   console.log(`[calendar] sync: ${upserted} events upserted, ${removed} removed`);
+  // Freshness heartbeat — a loop that reschedules around the calendar can check
+  // how recently this succeeded before acting on it.
+  await import("../core/connectorFreshness.ts").then((m) => m.recordConnectorRead("calendar")).catch(() => {});
 
   // Event-driven anticipation (master-class #2): the 15-min sync is where new
   // conflicts first appear. If something got booked over a protected focus block,

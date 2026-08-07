@@ -1166,6 +1166,23 @@ async function main() {
       const again = await seedBusinessProfile();
       check("re-seeding is idempotent (never overwrites Cole's later truth)", again.written.length === 0);
 
+      // 3.5 — the brand voice: drafts must speak Calhoun, not a generic coach.
+      {
+        const { brandVoiceBlock, seedBrandVoice } = await import("../business/brand.ts");
+        const block = brandVoiceBlock();
+        check("the brand voice block carries the mantra and the dichotomy hook",
+          /move fast, lift heavy, be an athlete/i.test(block) && /dichotomy|contrast hook/i.test(block));
+        check("the confirmed brand mantra is a business fact drafts reason from",
+          (await knownFacts()).some((f) => /move fast, lift heavy/i.test(f.value)));
+        const idOp = await resolveOperatorId("strategy").catch(() => null)
+          ?? await resolveOperatorId("business").catch(() => null);
+        if (idOp) await prisma.knowledgeEntry.deleteMany({ where: { operatorId: idOp, scope: "persona", sourceId: { startsWith: "brand:rev" } } });
+        const seed1 = await seedBrandVoice();
+        const seed2 = await seedBrandVoice();
+        check("brand voice seeds into persona.* and is idempotent",
+          seed1.written.length > 0 && seed2.written.length === 0);
+      }
+
       const facts = await knownFacts();
       const measured = facts.find((f) => f.key === "measured_outcomes");
       check("the measured-outcomes asset is present and specific", !!measured && /5-10-5|vertical/i.test(measured.value));
@@ -2025,6 +2042,57 @@ async function main() {
     await prisma.attributionEvent.deleteMany({ where: { channel: "smoke_ig" } });
     await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: "inbound_lead" } });
+  }
+
+  console.log("── the loops: content outcome, corrected reuse, freshness ──");
+  {
+    // 3.1 — the content-outcome sweep is dormant-honest without Instagram (a
+    // settled artifact exists but there's no connection to read insights from).
+    const { runContentOutcomeSweep } = await import("../content/outcomeLoop.ts");
+    const angle = await prisma.marketingAngle.create({
+      data: { title: `${TAG} loopangle`, hypothesis: "h", audience: "parent", grounding: "external" },
+    });
+    await prisma.outwardArtifact.create({
+      data: { channel: "instagram", externalId: `${TAG}_media`, angleIds: [angle.id], publishedAt: new Date(Date.now() - 80 * 3600 * 1000) },
+    });
+    const sweep = await runContentOutcomeSweep();
+    check("the content-outcome sweep is dormant-honest without an Instagram connection",
+      sweep.ran === false && /not connected|dormant|insights/i.test(sweep.reason));
+    check("it's also scheduled (a capability with no invoker is not done)",
+      (await import("../core/schedule.ts")).ONCE_PER_DAY.has("content_outcome"));
+
+    // 3.6 — a corrected reuse un-counts. A cache entry Cole later corrects gets
+    // correctedAt stamped, so the scoreboard excludes it from independence.
+    const bizOp2 = await resolveOperatorId("business");
+    if (bizOp2) {
+      const entry = await prisma.reasoningCacheEntry.create({
+        data: {
+          operatorId: bizOp2, domain: "smoke", entityKey: `${TAG}_e`, externalScopeId: `${TAG}_s`,
+          situationSignature: {}, reasoningSummary: "a reused conclusion",
+        },
+      });
+      const { recordCorrection } = await import("../knowledge/corrections.ts");
+      await recordCorrection({ targetType: "reasoning_output", targetId: entry.id, reason: "it was wrong" } as any);
+      const after = await prisma.reasoningCacheEntry.findUnique({ where: { id: entry.id } });
+      check("a corrected reuse is stamped so it un-counts from independence", after?.correctedAt !== null);
+      await prisma.correction.deleteMany({ where: { targetId: entry.id } });
+      await prisma.reasoningCacheEntry.delete({ where: { id: entry.id } });
+    }
+
+    // 3.3 — the freshness gate: an unread connector is stale by construction;
+    // a just-recorded read is fresh (tolerant if a strategy operator is absent
+    // on this bare DB, in which case the heartbeat is a no-op by design).
+    const { guardFresh, recordConnectorRead, connectorLastRead } = await import("../core/connectorFreshness.ts");
+    check("a connector with no read on record is treated as stale",
+      (await guardFresh(`${TAG}_neverread`, 60)).fresh === false);
+    await recordConnectorRead(`${TAG}_conn`);
+    const seen = await connectorLastRead(`${TAG}_conn`);
+    check("a recorded read is either fresh or a no-op on a bare DB (never a crash)",
+      seen === null || (await guardFresh(`${TAG}_conn`, 60)).fresh === true);
+
+    await prisma.outwardArtifact.deleteMany({ where: { externalId: `${TAG}_media` } });
+    await prisma.marketingAngle.deleteMany({ where: { id: angle.id } });
+    await prisma.logEntry.deleteMany({ where: { type: "connector_read", message: { startsWith: TAG } } });
   }
 
   console.log("── the badge: receipts are not decisions ──");

@@ -87,6 +87,8 @@ export async function listInbox(opts: { max?: number; query?: string } = {}): Pr
       unread: (m.labelIds ?? []).includes("UNREAD"),
     });
   }
+  // Freshness heartbeat — the inbox was actually read just now.
+  await import("../core/connectorFreshness.ts").then((mod) => mod.recordConnectorRead("gmail")).catch(() => {});
   return items;
 }
 

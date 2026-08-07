@@ -125,9 +125,11 @@ export async function draftOutreach(leadId: string): Promise<{
 
   const { businessContextBlock } = await import("../business/positioning.ts");
   const { offerContextBlock } = await import("../business/offers.ts");
+  const { brandVoiceBlock } = await import("../business/brand.ts");
   // The message must describe the offer Cole actually sells — or, when none is
-  // live, say nothing about packages or price rather than improvising one.
-  const context = `${await businessContextBlock()}\n\n${await offerContextBlock()}`;
+  // live, say nothing about packages or price rather than improvising one. The
+  // voice block keeps a 1:1 message in Cole's cadence, not a generic coach's.
+  const context = `${await businessContextBlock()}\n\n${await offerContextBlock()}\n\n${brandVoiceBlock()}`;
 
   const priorTouches = await prisma.bridgeSignal.count({
     where: { sourceType: "outreach_draft", sourceId: { startsWith: `outreach:${lead.id}` } },

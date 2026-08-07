@@ -155,6 +155,12 @@ model ReasoningCacheEntry {
   sourceMemoryIds String[]
   usageCount      Int      @default(0)
 
+  // Set when Cole corrects an answer this entry SERVED (a reuse that was wrong).
+  // The scoreboard un-counts a corrected reuse from the independence numerator:
+  // a bad reuse must not lower llmDependenceRate the way a good one does, or the
+  // metric rewards confident wrongness.
+  correctedAt DateTime?
+
   // Re-tagging support (populated in future; v1 leaves empty)
   previousTags Json[] @default([])
 
@@ -1194,9 +1200,18 @@ model OutwardArtifact {
   angleIds    String[] // which angles it embodies
   trackLinkId String? // the ref link minted for it (soft ref)
 
+  // The 72h post-publish read-back (content-outcome loop). insightsReadAt marks
+  // the artifact processed so a daily sweep credits each post's angle exactly
+  // once; reach/engagement are the measured result that reinforces the angle and
+  // becomes the denominator for leads÷reach.
+  insightsReadAt  DateTime?
+  reach           Int?
+  engagementCount Int?
+
   publishedAt DateTime @default(now())
   createdAt   DateTime @default(now())
 
   @@index([channel, publishedAt])
   @@index([externalId])
+  @@index([insightsReadAt])
 }
