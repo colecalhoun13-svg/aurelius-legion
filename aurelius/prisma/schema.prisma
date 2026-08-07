@@ -1064,6 +1064,15 @@ model Payment {
 
   createdAt DateTime @default(now())
 
+  // THE MONEY IDEMPOTENCY GUARD (council R2). App-level find-then-insert is a
+  // TOCTOU race: Stripe delivers a payment's three events concurrently, and two
+  // handlers can both pass the "already recorded?" check before either commits,
+  // double-counting the same dollar. The DB constraint is the only real guard.
+  // Postgres treats NULLs as distinct, so cash/manual payments with no
+  // externalRef are unaffected; only two rows with the SAME externalRef collide,
+  // which is exactly the duplicate we must reject. recordSelfPayment catches the
+  // resulting P2002 and treats it as "already recorded".
+  @@unique([externalRef])
   @@index([clientId, receivedAt])
   @@index([invoiceId])
   @@index([receivedAt])

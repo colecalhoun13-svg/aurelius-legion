@@ -59,22 +59,23 @@ export function localDayKey(): string {
 /** True = you own today's run. Availability beats dedup: if the claim STORE
  *  is unreachable (cold Neon at boot), run unclaimed rather than skip.
  *
- *  `reclaimStaleRunning` (default true) governs whether a claim stuck "running"
- *  past the 30-min lease can be taken over. It MUST be false for the hourly
- *  interval catch-up sweep (council M2): in a live, healthy process a row still
- *  "running" is a job genuinely in flight — a curriculum ingest or weekend
- *  synthesis can legitimately run past 30 minutes — and taking it over runs it a
- *  SECOND time, concurrently. Only a BOOT sweep (or the live scheduler, which
- *  fires a given daily job at most once/day) should reclaim a stale-running row,
- *  because there it can only be an orphan left by a crashed process. A "failed"
- *  row is always reclaimable — that's the transient-error retry, and it's bounded
- *  by the day key. "done" is deliberately never reclaimable. */
+ *  `staleRunningMs` is the lease past which a claim stuck "running" can be taken
+ *  over. It differs by caller (council M2): a BOOT sweep and the live scheduler
+ *  use a short 30-min lease (a row that stale can only be a crashed process's
+ *  orphan — the live cron fires a given daily job at most once/day). The hourly
+ *  INTERVAL sweep uses a LONG lease (6h): in a live, healthy process a row still
+ *  "running" is usually a job genuinely in flight — a curriculum ingest or
+ *  weekend synthesis can legitimately run past 30 minutes — so a short lease
+ *  would double-run it. A long lease still RECOVERS a genuinely hung job the same
+ *  day (nothing legitimate runs 6h) instead of stranding it until the next boot.
+ *  Pass 0 to never reclaim running. A "failed" row is always reclaimable — that's
+ *  the transient-error retry, bounded by the day key. "done" is never reclaimable. */
 export async function claimDailyRun(
   jobName: string,
   day = localDayKey(),
-  opts: { reclaimStaleRunning?: boolean } = {}
+  opts: { staleRunningMs?: number } = {}
 ): Promise<boolean> {
-  const reclaimStaleRunning = opts.reclaimStaleRunning ?? true;
+  const staleRunningMs = opts.staleRunningMs ?? 30 * 60_000;
   const { prisma, withDb } = await import("./db/prisma.ts");
   try {
     await withDb(() => prisma.jobRun.create({ data: { jobName, day } }));
@@ -84,16 +85,14 @@ export async function claimDailyRun(
       console.warn(`[schedule] claim store unreachable for ${jobName} — running unclaimed:`, err?.message ?? err);
       return true;
     }
-    // Someone owns it. What's reclaimable depends on the caller:
-    //   "failed"                    — always retryable (transient-error recovery,
-    //                                 bounded by the day key; never a hot loop).
-    //   "running" past the 30-min lease — a dead process's orphan, reclaimable
-    //                                 ONLY when reclaimStaleRunning (boot/live);
-    //                                 the hourly interval sweep must leave it be.
-    //   "done"                      — never (a completed job must not re-fire).
+    // Someone owns it. What's reclaimable:
+    //   "failed"                       — always retryable (transient-error recovery).
+    //   "running" past staleRunningMs  — an orphan (crash) or a genuinely hung job;
+    //                                    the lease length is the caller's safety knob.
+    //   "done"                         — never (a completed job must not re-fire).
     const reclaimable: any[] = [{ status: "failed" }];
-    if (reclaimStaleRunning) {
-      reclaimable.push({ status: "running", updatedAt: { lt: new Date(Date.now() - 30 * 60_000) } });
+    if (staleRunningMs > 0) {
+      reclaimable.push({ status: "running", updatedAt: { lt: new Date(Date.now() - staleRunningMs) } });
     }
     try {
       const takeover = await prisma.jobRun.updateMany({

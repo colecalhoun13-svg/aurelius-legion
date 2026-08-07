@@ -413,8 +413,22 @@ export async function captureInboundLead(input: {
   const channel = attr.channel
     ?? ((LEAD_SOURCES as readonly string[]).includes(input.source ?? "") ? input.source! : "website");
 
-  // Don't create a duplicate when someone submits the form twice.
-  const existing = email ? await prisma.lead.findFirst({ where: { email }, select: { id: true } }) : null;
+  // Don't create a duplicate when someone submits the form twice. Email is the
+  // strong key; without it, fall back to phone, then to same-name-within-6h —
+  // otherwise a contact-less POST mints a fresh lead EVERY time, an abuse
+  // amplifier (unlimited leads + unlimited phone pushes) the council flagged.
+  const phoneDigits = (clean(input.phone, 40) ?? "").replace(/[^0-9]/g, "");
+  let existing = email ? await prisma.lead.findFirst({ where: { email }, select: { id: true } }) : null;
+  if (!existing && phoneDigits.length >= 7) {
+    existing = await prisma.lead.findFirst({ where: { phone: { contains: phoneDigits.slice(-10) } }, select: { id: true } });
+  }
+  if (!existing && !email && phoneDigits.length < 7) {
+    const since = new Date(Date.now() - 6 * 3600_000);
+    existing = await prisma.lead.findFirst({
+      where: { name: { equals: name, mode: "insensitive" }, createdAt: { gte: since } },
+      select: { id: true },
+    });
+  }
   if (existing) {
     await prisma.lead.update({
       where: { id: existing.id },
@@ -480,8 +494,23 @@ export async function captureInboundLead(input: {
   });
 
   // An inbound lead is the rarest event in this business. It is a decision,
-  // it is time-critical, and it should reach the phone immediately.
+  // it is time-critical, and it should reach the phone immediately — the FIRST
+  // few in a day. But a flood (abuse, or a genuinely viral day) must not mute the
+  // channel every outward confirm rides on (council R2), so past a daily cap the
+  // lead still files to the Bridge (visible, badge-counted) but doesn't buzz.
+  const INBOUND_PUSH_CAP = 5;
   try {
+    let quiet = false;
+    try {
+      const dayStart = new Date();
+      dayStart.setHours(0, 0, 0, 0);
+      const pushedToday = await prisma.bridgeSignal.count({
+        where: { sourceType: "inbound_lead", pushedAt: { not: null, gte: dayStart } },
+      });
+      quiet = pushedToday >= INBOUND_PUSH_CAP;
+    } catch {
+      /* counting failed — default to the loud path; a real lead is worth the buzz */
+    }
     const { surfaceSignal } = await import("../core/bridge.ts");
     await surfaceSignal({
       kind: "opportunity",
@@ -489,6 +518,7 @@ export async function captureInboundLead(input: {
       sourceType: "inbound_lead",
       sourceId: `lead:${lead.id}`,
       severity: "attention",
+      quiet,
       title: `New inbound lead — ${lead.name}`,
       body:
         `${lead.name}${lead.email ? ` (${lead.email})` : ""} reached out${lead.sport ? ` about ${lead.sport}` : ""}.\n\n` +

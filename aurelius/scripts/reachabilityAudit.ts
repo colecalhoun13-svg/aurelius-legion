@@ -225,6 +225,13 @@ export function auditReachability(): Finding[] {
   // never be created and the finalizer was unreachable — passed tsc, passed
   // smoke, dead in prod. Every outward class WITH a finalizer needs ≥1
   // executeAction({actionClass:"X"}) call site in non-test code.
+  //
+  // CEILING (council R2): this proves a stager STRING exists, not that the stager
+  // is itself reachable. That upper level is covered by composition — a stager
+  // lives in a tool adapter (rule 2 checks it's registered) or an API route
+  // (rule 5 checks it's called) — not by this rule alone. Comments are stripped
+  // so a commented-out `actionClass:"x"` can't masquerade as a live stager.
+  const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
   const outwardKeys = new Set<string>();
   for (const chunk of arrBody.split(/(?=\bkey:\s*")/)) {
     const key = chunk.match(/key:\s*"([a-z][a-z._]*)"/)?.[1];
@@ -233,7 +240,7 @@ export function auditReachability(): Finding[] {
   const stagedClasses = new Set<string>();
   for (const [path, src] of beSrc) {
     if (path.endsWith("smokeSuite.ts")) continue; // a test call site is not a prod invoker
-    for (const m of src.matchAll(/actionClass:\s*"([a-z][a-z._]*)"/g)) stagedClasses.add(m[1]!);
+    for (const m of stripComments(src).matchAll(/actionClass:\s*"([a-z][a-z._]*)"/g)) stagedClasses.add(m[1]!);
   }
   for (const key of outwardKeys) {
     if (registeredFinalizers.has(key) && !stagedClasses.has(key)) {
@@ -247,18 +254,27 @@ export function auditReachability(): Finding[] {
 
   // ── 12. Bridge-signal action buttons with no dispatcher ────────────
   // A LABELED action on a BridgeSignal renders as a tap on the Decisions/Home
-  // deck — but the deck only ever dispatches three verbs (confirm_action →
-  // confirm, undo_action → undo, dismiss → ack). The retention engine shipped
-  // four buttons (draft_referral/proof/checkin/resign) nothing dispatched: dead
-  // taps that looked like features. Any labeled action verb outside the wired
-  // set is a dead button. (The label-less `{action:"executed"}` receipt marker
-  // is not a button and is intentionally not matched.)
-  const DISPATCHED_ACTIONS = new Set(["confirm_action", "undo_action", "dismiss", "acknowledge"]);
+  // deck — but the deck only ever dispatches confirm_action → confirm and
+  // undo_action → undo (plus dismiss/acknowledge, and `executed`, a handled
+  // receipt marker the UI reads to render the done state). The retention engine
+  // shipped four buttons (draft_referral/proof/checkin/resign) nothing
+  // dispatched: dead taps that looked like features. Any labeled action verb
+  // outside the wired set is a dead button.
+  //
+  // WINDOW-BASED (council R2): the earlier version required label and action to
+  // be comma-ADJACENT, so a reordered object `{ action:"x", payload:{…}, label:"Y" }`
+  // slipped through. Now, for each `action:"verb"` we scan a small surrounding
+  // window for a label — order- and intervening-field-independent, so a routine
+  // field reorder can't smuggle a dead verb past the check.
+  const DISPATCHED_ACTIONS = new Set(["confirm_action", "undo_action", "dismiss", "acknowledge", "executed"]);
   for (const [path, src] of beSrc) {
     if (path.endsWith("reachabilityAudit.ts")) continue; // this file names the verbs
     const verbs = new Set<string>();
-    for (const m of src.matchAll(/label:\s*"[^"]*",\s*action:\s*"([a-z_]+)"/g)) verbs.add(m[1]!);
-    for (const m of src.matchAll(/action:\s*"([a-z_]+)",\s*label:\s*"/g)) verbs.add(m[1]!);
+    for (const m of src.matchAll(/\baction:\s*"([a-z_]+)"/g)) {
+      const i = m.index ?? 0;
+      const window = src.slice(Math.max(0, i - 200), i + 200);
+      if (/\blabel:\s*"/.test(window)) verbs.add(m[1]!); // a label nearby = a rendered button
+    }
     for (const verb of verbs) {
       if (!DISPATCHED_ACTIONS.has(verb)) {
         add(

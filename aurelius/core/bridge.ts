@@ -25,6 +25,11 @@ export type SurfaceSignalInput = {
   actions?: any;
   status?: string;
   dueAt?: Date | string | null; // when the underlying thing happens (feeds urgency)
+  // Force the row to file WITHOUT a phone push even if it would be salient. Used
+  // by callers that self-limit their own push volume (e.g. inbound-lead flood
+  // capping, council R2) so a burst still lands on the Bridge — visible, badge-
+  // counted — without muting the channel every outward confirm depends on.
+  quiet?: boolean;
 };
 
 /**
@@ -80,7 +85,7 @@ export function needsDecision(input: {
 }
 
 export async function surfaceSignal(input: SurfaceSignalInput): Promise<{ id: string; pushed: boolean }> {
-  const { dueAt, ...data } = input;
+  const { dueAt, quiet, ...data } = input;
   const severity = data.severity ?? "info";
   // An explicit status always wins; otherwise derive it, so a new writer that
   // forgets the field cannot silently inflate the badge (which is exactly how
@@ -136,8 +141,16 @@ export async function surfaceSignal(input: SurfaceSignalInput): Promise<{ id: st
       // actionless refresh (e.g. a plain freshness re-notice) can't wipe a live
       // confirm button off the open row.
       const nextActions = data.actions !== undefined ? data.actions : (existing.actions ?? undefined);
+      // ESCALATE STATUS ON COLLAPSE (council R2). The dedup window includes
+      // "noted" rows, and needsDecision keys on `actions` independently of kind —
+      // so a quiet receipt filed first (no actions → noted) and a later same-key
+      // surface carrying a confirm_action would collapse together, injecting a
+      // real ask onto a row still marked "noted" — invisible to AWAITING_DECISION
+      // (the badge, Decisions, the scoreboard). Escalate noted→pending when the
+      // incoming signal is a decision; never downgrade a pending/surfaced ask.
+      const nextStatus = existing.status === "noted" && (status === "pending" || status === "surfaced") ? status : existing.status;
       await prisma.bridgeSignal
-        .update({ where: { id: existing.id }, data: { title: data.title, body: data.body, severity, actions: nextActions } })
+        .update({ where: { id: existing.id }, data: { title: data.title, body: data.body, severity, actions: nextActions, status: nextStatus } })
         .catch(() => {});
 
       // Re-push ONCE if this collapse is genuinely salient and the open row was
@@ -147,7 +160,7 @@ export async function surfaceSignal(input: SurfaceSignalInput): Promise<{ id: st
       // standing condition (an expired token re-noticed every poll) still can't
       // buzz more than once.
       let pushed = false;
-      if (!existing.pushedAt && shouldPushNow({ kind: data.kind, severity, domain: data.domain, dueAt })) {
+      if (!quiet && !existing.pushedAt && shouldPushNow({ kind: data.kind, severity, domain: data.domain, dueAt })) {
         try {
           const hasAsk = Array.isArray(nextActions) && (nextActions as any[]).some((a) => a?.action === "confirm_action");
           const bot = await import("../telegram/bot.ts");
@@ -179,7 +192,7 @@ export async function surfaceSignal(input: SurfaceSignalInput): Promise<{ id: st
   });
 
   let pushed = false;
-  if (shouldPushNow({ kind: signal.kind, severity: signal.severity, domain: signal.domain, dueAt })) {
+  if (!quiet && shouldPushNow({ kind: signal.kind, severity: signal.severity, domain: signal.domain, dueAt })) {
     try {
       // A signal carrying a Confirm button is an ASK — push it with its buttons
       // (pushBridgeAsk) so Cole can act from his thumb; a plain notice pushes as

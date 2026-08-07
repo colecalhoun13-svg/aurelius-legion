@@ -52,15 +52,28 @@ export async function handleStripeEvent(event: any): Promise<{ recorded: boolean
   const type = event?.type;
   if (!PAID_EVENTS.has(type)) return { recorded: false, reason: `ignored event: ${type}` };
   const obj = event?.data?.object ?? {};
+  // SUBSCRIPTION GUARD (council R2). A SUBSCRIPTION checkout.session.completed
+  // carries `payment_intent: null` — it populates `subscription`/`invoice`
+  // instead — so keying on `obj.id` (the session id) would record the monthly
+  // signup under a key that does NOT match the payment_intent.succeeded +
+  // charge.succeeded events fired for the same first invoice (those key on the
+  // PI id). Result: the first month counted twice. Skip the PI-less session; the
+  // payment_intent.succeeded event records that payment keyed on the PI, and
+  // every renewal arrives as its own invoice/PI event too. A one-time
+  // (mode=payment) session DOES carry a payment_intent and still records here.
+  if (type === "checkout.session.completed" && !obj.payment_intent) {
+    return { recorded: false, reason: "subscription/PI-less session — the payment_intent event records it" };
+  }
   const amountCents = obj.amount_received ?? obj.amount_total ?? obj.amount ?? 0;
   const email = obj.customer_details?.email ?? obj.receipt_email ?? obj.billing_details?.email ?? null;
-  // IDEMPOTENCY KEY = the payment_intent, NOT obj.id. One checkout emits all
-  // three PAID_EVENTS, each with a DIFFERENT obj.id (the session id, the
+  // IDEMPOTENCY KEY = the payment_intent, NOT obj.id. One one-time checkout emits
+  // all three PAID_EVENTS, each with a DIFFERENT obj.id (the session id, the
   // payment-intent id, the charge id) — keying on obj.id records the same $50
-  // three times. Every one of the three carries the same payment_intent
-  // (payment_intent.succeeded IS it; the session and charge both reference it),
-  // so keying there collapses the trio to one Payment. obj.id is the last-ditch
-  // fallback only when a payment_intent is genuinely absent (rare/legacy).
+  // three times. All three carry the same payment_intent (payment_intent.succeeded
+  // IS it; the session and charge both reference it), so keying there collapses
+  // the trio to one Payment. The DB unique index on externalRef is the real guard
+  // against a concurrent-delivery race (recordSelfPayment catches P2002); obj.id
+  // is the last-ditch fallback only when a payment_intent is genuinely absent.
   const externalRef = obj.payment_intent ?? obj.id ?? event?.id ?? null;
   if (!amountCents || amountCents <= 0) return { recorded: false, reason: "event carried no amount" };
   return recordSelfPayment({ amountCents, email, method: "stripe", externalRef, recordedBy: "stripe_webhook" });
@@ -169,30 +182,50 @@ export async function recordSelfPayment(input: {
     const dup = await prisma.payment.findFirst({ where: { externalRef: input.externalRef }, select: { id: true } });
     if (dup) return { recorded: false, reason: "already recorded (idempotent)" };
   }
-  const client = await matchClient({ email: input.email, phone: input.phone, name: input.payerName });
+  // NAME-ONLY MATCH IS NOT SAFE ON AN AUTO-RECORD PATH (council R2). Two clients
+  // named "Mike Johnson" + a Stripe receipt with no email → money booked against
+  // the wrong athlete, silently, with no confirm. So self-recording matches on
+  // VERIFIED identifiers only (email/phone); a name-only hit files an unmatched
+  // notice for Cole to attach by hand rather than guessing.
+  const client = await matchClient({ email: input.email, phone: input.phone }, { allowName: false });
   if (!client) {
     await surfaceUnmatchedPayment(input);
-    return { recorded: false, reason: "no matching client — filed an unmatched-payment notice" };
+    return { recorded: false, reason: "no verified-identifier match — filed an unmatched-payment notice" };
   }
   const { recordPayment } = await import("./service.ts");
-  await recordPayment({
-    clientId: client.id,
-    amount: input.amountCents / 100,
-    method: input.method,
-    externalRef: input.externalRef ?? undefined,
-    recordedBy: input.recordedBy,
-    note: input.payerName ? `Self-recorded via ${input.method} (${input.payerName})` : `Self-recorded via ${input.method}`,
-  });
+  try {
+    await recordPayment({
+      clientId: client.id,
+      amount: input.amountCents / 100,
+      method: input.method,
+      externalRef: input.externalRef ?? undefined,
+      recordedBy: input.recordedBy,
+      note: input.payerName ? `Self-recorded via ${input.method} (${input.payerName})` : `Self-recorded via ${input.method}`,
+    });
+  } catch (err: any) {
+    // The DB unique index on externalRef is the REAL idempotency guard — the
+    // findFirst above is only a fast-path, and two concurrent webhook deliveries
+    // of the same payment can both pass it before either commits. A P2002 here
+    // means another delivery won the race: the payment is on the books exactly
+    // once, which is success, not failure (council R2 TOCTOU fix).
+    if (err?.code === "P2002") return { recorded: false, reason: "already recorded (idempotent — unique constraint)" };
+    throw err;
+  }
   return { recorded: true, reason: `recorded ${input.method} payment for ${client.name}` };
 }
 
-async function matchClient(by: { email?: string | null; phone?: string | null; name?: string | null }) {
+async function matchClient(
+  by: { email?: string | null; phone?: string | null; name?: string | null },
+  opts: { allowName?: boolean } = {}
+) {
   const email = by.email?.trim().toLowerCase();
   const phone = by.phone?.replace(/[^0-9]/g, "");
   const or: any[] = [];
   if (email) or.push({ email: { equals: email, mode: "insensitive" } }, { parentEmail: { equals: email, mode: "insensitive" } });
   if (phone && phone.length >= 7) or.push({ phone: { contains: phone.slice(-10) } }, { parentPhone: { contains: phone.slice(-10) } });
-  if (by.name?.trim()) or.push({ name: { equals: by.name.trim(), mode: "insensitive" } });
+  // Name is a fuzzy identifier — only used when a caller explicitly opts in (never
+  // on an auto-record path). Two athletes can share a name; money must not guess.
+  if (opts.allowName && by.name?.trim()) or.push({ name: { equals: by.name.trim(), mode: "insensitive" } });
   if (or.length === 0) return null;
   return prisma.client.findFirst({ where: { status: { not: "ended" }, OR: or }, select: { id: true, name: true } });
 }

@@ -118,6 +118,12 @@ process, so it works from any host with no inbound config.
      visit from any device shows one password field (/unlock); enter the
      secret once and that device stays open for a year. NON-OPTIONAL.
    - `DATABASE_URL` — same Neon URL (the app's API routes read the DB directly)
+   - `TRUST_PROXY=1` — Railway puts exactly one edge in front of each service, so
+     set this to `1` on **BOTH** services (same value here and on the backend).
+     Without it the public write surfaces (`/intake`, `/start`, `/standard`)
+     can't tell one visitor from another — every request looks like Railway's
+     proxy, so their per-IP flood limiter collapses the whole internet into one
+     bucket. It's one variable, read by both processes; keep them equal.
    - `AURELIUS_API_KEY` — same value as the backend (unlocks the chat proxy)
    - `BACKEND_ORIGIN` — the backend's **private** URL from Railway's service
      panel (e.g. `http://aurelius-backend.railway.internal:3001`) so chat

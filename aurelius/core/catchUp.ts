@@ -194,12 +194,16 @@ async function ranToday(name: string, todayStart: Date): Promise<boolean> {
 }
 
 export async function runCatchUp(opts: { isBoot?: boolean } = {}) {
-  // A stale "running" row means two different things depending on WHO is asking.
-  // At boot it can only be an orphan a crashed process left behind — reclaim it.
-  // During the hourly interval sweep in a live, healthy process it is far more
-  // likely a job genuinely still in flight (a long synthesis/ingest), so the
-  // interval sweep must NOT take it over — that would double-run it (council M2).
+  // A stale "running" row means different things depending on WHO is asking, so
+  // boot and interval use different leases (council M2). At boot a stale-running
+  // row can only be an orphan a crashed process left behind — reclaim it after a
+  // short 30-min lease. During the hourly interval sweep in a live, healthy
+  // process a "running" row is usually a job genuinely in flight (a long
+  // synthesis/ingest), so a short lease would double-run it — but a LONG 6h lease
+  // still recovers a genuinely HUNG job the same day (nothing legitimate runs 6h)
+  // instead of stranding it until the next boot.
   const isBoot = opts.isBoot ?? false;
+  const staleRunningMs = isBoot ? 30 * 60_000 : 6 * 3600_000;
   const now = new Date();
   const todayStart = new Date(now);
   todayStart.setHours(0, 0, 0, 0);
@@ -228,9 +232,10 @@ export async function runCatchUp(opts: { isBoot?: boolean } = {}) {
     if (await ranToday(job.name, todayStart)) continue;
     // The ATOMIC gate (go-live council): trace rows are best-effort telemetry;
     // the claim row is the law. If the live cron owns today, we lose the claim
-    // and skip — the double-briefing window is closed. Only the boot sweep may
-    // reclaim a stale-"running" orphan; the interval sweep leaves live jobs alone.
-    if (!(await claimDailyRun(job.name, undefined, { reclaimStaleRunning: isBoot }))) continue;
+    // and skip — the double-briefing window is closed. Boot reclaims a stale-
+    // "running" orphan fast (30m); the interval sweep only after a long hung-job
+    // lease (6h) so it never double-runs a legitimately long job.
+    if (!(await claimDailyRun(job.name, undefined, { staleRunningMs }))) continue;
 
     console.log(`[catchup] ${job.name} was due ${hour}:${String(minute).padStart(2, "0")} and never ran — firing now`);
     try {

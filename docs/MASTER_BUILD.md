@@ -11,8 +11,12 @@ Every wave ends with the gate: `smokeSuite` + `tsc` both sides + prod `next
 build` + `reachabilityAudit`, and updates the Cole checklist (§ at bottom).
 
 The rule for the whole build (CLAUDE.md): outward actions (send/publish/spend)
-ALWAYS stop for Cole's confirm; nothing auto-sends; the gym-boundary guard
-fails closed on every acquisition door.
+ALWAYS stop for Cole's confirm; nothing auto-sends. The gym boundary (Cole's
+employer's athletes are off-limits) is enforced by the drafting prompts and the
+business facts in `profile.ts`, plus Cole controlling who enters the warm list —
+it is NOT a code-level filter that mechanically rejects a gym athlete at intake
+(there is no gym roster to check against). Honest scope, not a fail-closed guard:
+if that boundary ever needs to be mechanical, it has to be built.
 
 ---
 

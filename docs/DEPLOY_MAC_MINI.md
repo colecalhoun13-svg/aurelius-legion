@@ -503,7 +503,12 @@ Everything else — every API key, `AURELIUS_API_KEY`, `AURELIUS_TZ`,
 If you ever put the Mini behind a public hostname (Cloudflare Tunnel, a domain
 pointed at Tailscale Funnel), set `AURELIUS_PUBLIC_URL` to that origin. The
 doctor uses it to decide whether a loopback redirect URI is correct or broken,
-and to print auth links you can actually tap from your phone.
+and to print auth links you can actually tap from your phone. **Also set
+`TRUST_PROXY` to the number of proxy hops in front** (a Cloudflare Tunnel is
+`1`) so the public write surfaces (`/intake`, `/start`, `/standard`) rate-limit
+per real visitor instead of bucketing every request under the tunnel's IP. Leave
+it unset (`0`) while the Mini is reachable only over Tailscale with no proxy —
+there the socket address is already the real client.
 
 **4. Turn Railway off *after* the soak, not before.** Run both for a few days
 with Railway's scheduled jobs stopped (or its service paused) so only one
