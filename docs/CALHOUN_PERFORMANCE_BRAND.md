@@ -54,9 +54,63 @@ plus Cole's business context, and Cole overwrites it; the visual identity is loc
   numbers are the proof.
 - **Sold as (from profile):** monthly retainer · 8–12 week block · one-off program.
 
-*Still Cole-supplied when he's ready: the exact promise wording, the longer vision, a voice
-sample (a caption/post he's proud of) for the compiled layer to learn his cadence, and the
+*Still Cole-supplied when he's ready: the exact promise wording, the longer vision, and the
 offer's price.*
+
+---
+
+## Voice — CONFIRMED (from Cole's own reel, a post he likes)
+
+**Sample caption, verbatim (this is the target cadence):**
+
+> AESTHETICS VS. ATHLETICS
+> Ones For Show... 💪
+> Ones For Go... 🥇
+> You can build both—but not by accident.
+> Aesthetic training and athletic training aren't the same. And chasing both with the wrong
+> plan? That's how you stay stuck.
+> Follow along as I unpack the difference so you can stop spinning your wheels.
+> What's your current focus—looks or performance? Drop it Below 👇
+> Use code CAL10 @breathefire_apparel for 10% off
+
+**His stated thesis for it:** training like a bodybuilder when you're an athlete won't get you
+where you want to go — you need the speed, coordination, timing, rhythm, all of it, *with* the
+power to do it. (This IS the mantra: aesthetics-vs-athletics = "move fast, lift heavy, be an
+athlete.")
+
+**Voice characteristics — draft in these:**
+- Short, punchy lines; fragments for rhythm; ellipses and em-dashes for pace. Never long
+  academic paragraphs.
+- **Dichotomy / contrast hook** (X vs Y — show vs go, looks vs performance) that names a
+  mistake the reader is making.
+- Confident, teaching-but-challenging: "that's how you stay stuck," "stop spinning your wheels."
+  Not soft, not hype, not guru.
+- Ends on an **engagement question CTA** ("What's your focus—looks or performance? Drop it below").
+- Selective, purposeful emoji (💪🥇👇) — never spam.
+- Title-Case For Emphasis on key phrases.
+
+**The content template Cole already runs — the content engine should learn and replicate it:**
+`dichotomy hook → name the mistake the audience is making → promise the unpack/payoff →
+engagement question → (optional partner code)`.
+
+## Live assets the demand engine can use (not a placeholder — these exist)
+
+- **Apparel partnership: `@breathefire_apparel`, code `CAL10`** for 10% off — a real cross-
+  promo / affiliate relationship already running in his captions. A borrowed-audience channel
+  and a partnership template the demand engine should exploit and replicate (find more
+  non-competing partners the same way).
+- **An active Instagram presence** posting this style of educational-dichotomy content — the
+  organic content loop has real material to learn from, not a cold start.
+
+## North-star / aspirational benchmark (Cole-supplied)
+
+- **Opus Athletics** — Cole names this as the brand he wants to strive toward. Treat it as a
+  MODEL TO STUDY, not to copy: once Aurelius has web/research access, the marketer and analyst
+  should reverse-engineer what makes it work — its positioning, content formats and hooks,
+  offer structure, funnel, and how it built an audience — and adapt the transferable mechanics
+  to Calhoun Performance's brand and mantra. It is a reference for "what good looks like at
+  scale," not a template to imitate. (Aurelius cannot study it from the current sandbox — web
+  egress is blocked here; this is a live task for the deployed system with a research key.)
 
 ## Brand assets Aurelius should ingest (the ask on Cole)
 
