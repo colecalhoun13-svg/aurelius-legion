@@ -146,14 +146,14 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
     }
     if (noticeIds.length > 0) {
       const r = await prisma.bridgeSignal.updateMany({
-        where: { id: { in: noticeIds }, status: { in: ["pending", "surfaced"] } },
+        where: { id: { in: noticeIds }, status: { in: ["pending", "surfaced", "noted"] } },
         data: { status: "expired" },
       });
       result.noticesExpired = r.count;
     }
     if (decisionIds.length > 0) {
       const r = await prisma.bridgeSignal.updateMany({
-        where: { id: { in: decisionIds }, status: { in: ["pending", "surfaced"] } },
+        where: { id: { in: decisionIds }, status: { in: ["pending", "surfaced", "noted"] } },
         data: { status: "expired" },
       });
       result.decisionsExpired = r.count;

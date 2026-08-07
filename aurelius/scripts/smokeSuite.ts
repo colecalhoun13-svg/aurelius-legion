@@ -1421,15 +1421,15 @@ async function main() {
       // tier is KEYLESS — it runs on an Anthropic-only key. So a run returns
       // grounding "external" with real URLs, and Cole's PRICE renders in gold as
       // "research-backed", sourced from paper abstracts about adolescent athletes.
-      const academicOnly = [
-        { url: "https://pubmed.ncbi.nlm.nih.gov/123", source: "openSources", title: "Adolescent athlete adaptation" },
-        { url: "https://arxiv.org/abs/456", source: "openSources", title: "A paper" },
+      const academicOnly: any[] = [
+        { url: "https://pubmed.ncbi.nlm.nih.gov/123", source: "openSources", title: "Adolescent athlete adaptation", snippet: "", confidence: 0.5 },
+        { url: "https://arxiv.org/abs/456", source: "openSources", title: "A paper", snippet: "", confidence: 0.5 },
       ];
       check("papers are not evidence about a market", marketSourceCount(academicOnly) === 0);
       check("so a keyless academic run is a guess, not research-backed",
         groundingFromResearch("external", marketSourceCount(academicOnly), false) === "none");
       check("live web results DO count as market evidence",
-        marketSourceCount([...academicOnly, { url: "https://x.com/a", source: "web", title: "t" }]) === 1);
+        marketSourceCount([...academicOnly, { url: "https://x.com/a", source: "web", title: "t", snippet: "", confidence: 0.5 }]) === 1);
       check("and then it is honestly external",
         groundingFromResearch("external", 1, false) === "external");
       // The label promised "(listed below)" over a page that listed nothing.

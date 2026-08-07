@@ -31,6 +31,7 @@
 import { prisma } from "../core/db/prisma.ts";
 import { runLLM } from "../llm/runLLM.ts";
 import { engineUnavailableText } from "../llm/nonAnswer.ts";
+import type { ResearchResult } from "../research/researchTypes.ts";
 
 export const MARKETING_FORMATS = ["email", "instagram_post", "instagram_carousel", "dm", "landing_section"] as const;
 export type MarketingFormat = (typeof MARKETING_FORMATS)[number];
@@ -93,9 +94,12 @@ export function groundingFromResearch(
  * web tier counts. When it is absent — which is the default today — the honest
  * answer is that this is a guess, and the system says so.
  */
-export function marketSourceCount(rawResults: any[] | undefined): number {
+export function marketSourceCount(rawResults: ResearchResult[] | undefined): number {
+  // "serpapi", not "serp" — the emitted ResearchSource value. The old literal
+  // silently discarded every real market source (one grep hit repo-wide, this
+  // filter). Typed as ResearchResult[] so tsc rejects a stray literal next time.
   return (rawResults ?? []).filter(
-    (r: any) => r?.url && (r.source === "web" || r.source === "serp")
+    (r) => r?.url && (r.source === "web" || r.source === "serpapi")
   ).length;
 }
 

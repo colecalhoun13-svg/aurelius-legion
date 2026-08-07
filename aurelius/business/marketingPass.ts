@@ -46,7 +46,7 @@ export async function runMarketingPass(): Promise<MarketingPassResult> {
   const offer = await offerReadiness();
   if (!offer.hasActive) {
     await surfaceSignal({
-      kind: "recommendation",
+      kind: "opportunity",
       domain: "business",
       sourceType: "marketing_pass",
       // Deduped by source id: this is a standing condition, not weekly news.
@@ -108,7 +108,9 @@ export async function runMarketingPass(): Promise<MarketingPassResult> {
   if (!kept.ok) return { ran: false, reason: kept.error ?? "not_kept" };
 
   await surfaceSignal({
-    kind: "recommendation",
+    // A receipt of background work, not a decision — files "noted", stays off
+    // the needs-you bell. ("recommendation" was a one-off kind nothing reads.)
+    kind: "background_result",
     domain: "content",
     sourceType: "marketing_pass",
     sourceId: `marketing:draft:${kept.id}`,

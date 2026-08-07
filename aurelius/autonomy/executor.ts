@@ -89,7 +89,7 @@ export async function executeAction(args: {
             title: prepared.title,
             body:
               prepared.body +
-              `\n\n_Done on its own under grant \`${args.actionClass}\`.${undoable ? " Tap Undo (or say “undo that”) and I'll reverse it." : " Reversible — tell me if this was wrong."}_`,
+              `\n\n_Done on its own under grant \`${args.actionClass}\`.${undoable ? " Tap Undo (or say “undo that”) and I'll reverse it." : " I can't automatically undo this one — tell me if it was wrong and I'll help fix it by hand."}_`,
             actions,
           },
         })

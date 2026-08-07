@@ -105,6 +105,15 @@ const JOBS: CatchUpJob[] = [
     },
   },
   {
+    name: "marketing_pass",
+    hour: 16,
+    sundayOnly: true,
+    // The only invoker of the whole marketing lane. Without this catch-up row a
+    // Mini asleep Sunday afternoon loses the weekly pass — and the "no offer /
+    // nothing to write toward" nudge — silently for a week.
+    run: async () => (await import("../business/marketingPass.ts")).runMarketingPass().then(() => undefined),
+  },
+  {
     name: "persona_observer",
     hour: 17,
     sundayOnly: true,

@@ -144,9 +144,11 @@ export async function generateMorningBriefing(dateStr?: string) {
     // Still-open only: "pending" or "surfaced". A signal Cole already acted
     // on or dismissed isn't waiting on him, and counting it would inflate
     // the number every morning until it expired.
-    const open = { createdAt: { gte: since }, status: { in: ["pending", "surfaced"] } };
+    const openStatus = { status: { in: ["pending", "surfaced"] } };
+    // The inbox line KEEPS the 12h window — "drafted overnight" is a genuine
+    // time claim about what last night's 05:30 triage produced.
     const drafts = await prisma.bridgeSignal.count({
-      where: { sourceType: "inbox_triage", ...open },
+      where: { sourceType: "inbox_triage", createdAt: { gte: since }, ...openStatus },
     });
     if (drafts > 0) {
       lines.push(`Inbox: ${drafts} repl${drafts === 1 ? "y" : "ies"} drafted overnight, waiting on you (nothing sent).`);
@@ -160,10 +162,11 @@ export async function generateMorningBriefing(dateStr?: string) {
     // batching decision assumed away.
     // "Carries a Confirm button" is the real definition of a gated ask, and
     // it lives in a Json column — so filter it in code rather than contorting
-    // the query. The row count here is small by construction (still-open
-    // signals from the last 12h).
+    // the query. NO 12h window here: an open ask is waiting on Cole regardless
+    // of age — hiding it for being old is the exact failure the counter fixes
+    // (an outward publish confirm he ignored for 13h must still be named).
     const openSignals = await prisma.bridgeSignal.findMany({
-      where: { sourceType: { not: "inbox_triage" }, ...open },
+      where: { sourceType: { not: "inbox_triage" }, ...openStatus },
       select: { actions: true },
     });
     const gated = openSignals.filter((s) =>
