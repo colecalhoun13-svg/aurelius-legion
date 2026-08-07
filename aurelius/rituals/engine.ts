@@ -141,14 +141,39 @@ export async function generateMorningBriefing(dateStr?: string) {
   // it left waiting — a draft nobody knows about is a draft nobody reviews.
   try {
     const since = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    // Still-open only: "pending" or "surfaced". A signal Cole already acted
+    // on or dismissed isn't waiting on him, and counting it would inflate
+    // the number every morning until it expired.
+    const open = { createdAt: { gte: since }, status: { in: ["pending", "surfaced"] } };
     const drafts = await prisma.bridgeSignal.count({
-      // Still-open only: "pending" or "surfaced". A signal Cole already acted
-      // on or dismissed isn't waiting on him, and counting it would inflate
-      // the number every morning until it expired.
-      where: { sourceType: "inbox_triage", createdAt: { gte: since }, status: { in: ["pending", "surfaced"] } },
+      where: { sourceType: "inbox_triage", ...open },
     });
     if (drafts > 0) {
       lines.push(`Inbox: ${drafts} repl${drafts === 1 ? "y" : "ies"} drafted overnight, waiting on you (nothing sent).`);
+    }
+
+    // EVERY OTHER GATED ASK. The executor's batching comment justified staying
+    // silent by saying low-salience asks "wait for the 07:00 briefing, which
+    // already counts what's waiting". Nothing counted them — this line only
+    // ever matched inbox_triage. So an inward ask that didn't push also never
+    // got mentioned, and waited forever. That is the whole failure the
+    // batching decision assumed away.
+    // "Carries a Confirm button" is the real definition of a gated ask, and
+    // it lives in a Json column — so filter it in code rather than contorting
+    // the query. The row count here is small by construction (still-open
+    // signals from the last 12h).
+    const openSignals = await prisma.bridgeSignal.findMany({
+      where: { sourceType: { not: "inbox_triage" }, ...open },
+      select: { actions: true },
+    });
+    const gated = openSignals.filter((s) =>
+      Array.isArray(s.actions) && (s.actions as any[]).some((a) => a?.action === "confirm_action")
+    ).length;
+    if (gated > 0) {
+      lines.push(
+        `${gated} thing${gated === 1 ? "" : "s"} waiting on your confirm — nothing has been sent, ` +
+          `published, or spent.`
+      );
     }
   } catch {
     // the inbox line is a bonus, never a briefing blocker

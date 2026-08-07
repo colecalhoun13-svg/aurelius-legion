@@ -38,6 +38,41 @@ export type MarketingFormat = (typeof MARKETING_FORMATS)[number];
 /** How much to trust a claim, in one word, printed wherever the claim is. */
 export type Grounding = "external" | "internal" | "none";
 
+/**
+ * PURE — translate a research run's own verdict into the label Cole sees.
+ *
+ * This exists because the translation was written twice, character-identically,
+ * in this file and in offers.ts, and was wrong in both:
+ *
+ *     grounding = res?.grounding === "external" ? "external" : "internal"
+ *
+ * `runResearch` returns ONLY "external" | "model-only" (research/researchTypes.ts:59).
+ * There is no "internal" in its vocabulary. So a pure model prior — every run on
+ * an Anthropic-only key, with no TAVILY_API_KEY or GEMINI_API_KEY for web search —
+ * came back labelled "internal", which prints as "Grounded in your own corpus and
+ * prior results" and renders on the Business page in gold as "from your own data".
+ *
+ * That is the most trustworthy label available, applied to the least grounded case,
+ * in the one file whose entire stated purpose is that Cole cannot audit marketing
+ * advice and so must be told how much to trust it. It inverted the guarantee.
+ *
+ * The rule now: "internal" means COLE'S OWN RESULTS and nothing else. A model
+ * prior is "none" and says so. An "external" run that retrieved zero source URLs
+ * is also "none" — a claim of external grounding you cannot show a link for is
+ * not evidence, it is a citation to nowhere.
+ */
+export function groundingFromResearch(
+  researchVerdict: string | undefined,
+  sourceCount: number,
+  hasOwnResults: boolean
+): Grounding {
+  if (researchVerdict === "external" && sourceCount > 0) return "external";
+  // Cole's own performance data is genuinely internal evidence — but only when
+  // it exists. With zero sends it must not stand in for research.
+  if (hasOwnResults) return "internal";
+  return "none";
+}
+
 function groundingNote(g: Grounding, sourceCount: number): string {
   if (g === "external") return `Grounded in ${sourceCount} retrieved source${sourceCount === 1 ? "" : "s"} (listed below).`;
   if (g === "internal") return "Grounded in your own corpus and prior results — not external research.";
@@ -94,17 +129,18 @@ export async function proposeAngles(opts: { count?: number; audience?: string } 
     const body = [res?.synthesis, ...(res?.insights ?? [])].filter(Boolean).join("\n\n");
     if (body && !engineUnavailableText(body)) {
       researchText = body.slice(0, 5000);
-      grounding = res?.grounding === "external" ? "external" : "internal";
       sources = (res?.rawResults ?? [])
         .filter((r: any) => r.source !== "llm" && r.url)
         .slice(0, 6)
         .map((r: any) => ({ title: r.title, url: r.url, source: r.source }));
-      if (sources.length === 0 && grounding === "external") grounding = "internal";
+      grounding = groundingFromResearch(res?.grounding, sources.length, !!priorEvidence);
     }
   } catch {
     /* research down — proceed, and SAY it's a guess */
   }
-  if (priorEvidence && grounding === "none") grounding = "internal";
+  // Research never ran (threw, or returned engine-error text) — his own results
+  // are then the only evidence there is, and only if he actually has some.
+  if (grounding === "none" && priorEvidence) grounding = "internal";
 
   const res = await runLLM({
     taskType: "chat",

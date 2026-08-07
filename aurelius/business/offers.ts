@@ -29,7 +29,10 @@
 import { prisma } from "../core/db/prisma.ts";
 import { runLLM } from "../llm/runLLM.ts";
 import { engineUnavailableText } from "../llm/nonAnswer.ts";
-import type { Grounding } from "./marketing.ts";
+// IMPORTED, not re-derived. This translation was written twice, character-
+// identically, and was wrong in both places — the council found it in both
+// files as one defect. One function means the next edit can't fix half of it.
+import { groundingFromResearch, type Grounding } from "./marketing.ts";
 
 /** Same vocabulary as Engagement.shape, so a sale needs no translation. */
 export const OFFER_SHAPES = ["monthly", "block", "program"] as const;
@@ -124,12 +127,14 @@ export async function draftOffer(opts: { shape?: OfferShape } = {}): Promise<{
     const body = [res?.synthesis, ...(res?.insights ?? [])].filter(Boolean).join("\n\n");
     if (body && !engineUnavailableText(body)) {
       researchText = body.slice(0, 5000);
-      grounding = res?.grounding === "external" ? "external" : "internal";
       sources = (res?.rawResults ?? [])
         .filter((r: any) => r.source !== "llm" && r.url)
         .slice(0, 6)
         .map((r: any) => ({ title: r.title, url: r.url, source: r.source }));
-      if (sources.length === 0 && grounding === "external") grounding = "internal";
+      // An offer has no "own results" to fall back on — there are no prior
+      // offers to have performed. So it is external-with-sources, or it is a
+      // guess and says so. This is the price Cole would quote a parent.
+      grounding = groundingFromResearch(res?.grounding, sources.length, false);
     }
   } catch {
     /* research down — draft anyway, labelled as a guess */

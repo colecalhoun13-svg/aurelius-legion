@@ -1402,6 +1402,68 @@ async function main() {
     const { parseAngles, recordOutcome, anglePerformance, proposeAngles, draftAsset, MARKETING_FORMATS } =
       await import("../business/marketing.ts");
 
+    // ── THE FUNDED-KEY BRANCH, which no cold audit could reach ──
+    //
+    // The second council's one unanimous finding: both consumers re-mapped the
+    // research engine's "model-only" verdict to "internal", which prints as
+    // "Grounded in your own corpus and prior results" and renders as "from your
+    // own data". On an Anthropic-only key — no TAVILY_API_KEY, no GEMINI_API_KEY,
+    // so no web search — that is EVERY angle and EVERY offer price.
+    //
+    // This is the branch that only exists once Cole funds a key, which is exactly
+    // why it shipped: with no key at all, research throws and the honest "none"
+    // label was the only one anyone ever saw.
+    {
+      const { groundingFromResearch } = await import("../business/marketing.ts");
+      check("a model prior is NEVER labelled as Cole's own data",
+        groundingFromResearch("model-only", 0, false) === "none");
+      check("and stays a guess even when research returned prose",
+        groundingFromResearch("model-only", 3, false) === "none");
+      check("real external research with real sources is external",
+        groundingFromResearch("external", 4, false) === "external");
+      check("an 'external' run with ZERO source links is a citation to nowhere, not evidence",
+        groundingFromResearch("external", 0, false) === "none");
+      check("only Cole's actual results earn the 'internal' label",
+        groundingFromResearch("model-only", 0, true) === "internal");
+      // The research engine's vocabulary is the contract. If it ever grows a
+      // third value, this assertion is what makes someone come back here.
+      const fs = await import("node:fs");
+      const read = (p: string) => fs.readFileSync(new URL(p, import.meta.url), "utf8");
+      check("the research engine still emits exactly the two verdicts this maps from",
+        /grounding:\s*"external"\s*\|\s*"model-only"/.test(read("../research/researchTypes.ts")));
+      // Neither consumer may re-derive it. The defect WAS two identical copies,
+      // so a fix applied to one file only is the failure mode to guard against.
+      // Strip comments first: the fix documents the old line verbatim so the
+      // next reader knows what was wrong, and a naive scan matches the warning
+      // rather than the code. (Same trap as the offer-aim guard.)
+      const codeOnly = (src: string) =>
+        src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/^\s*\*.*$/gm, "");
+      check("neither consumer hand-rolls the mapping any more",
+        !/=== "external" \? "external" : "internal"/.test(
+          codeOnly(read("../business/marketing.ts")) + codeOnly(read("../business/offers.ts"))
+        ));
+    }
+
+    // ── THE MUTED BRIDGE ──
+    //
+    // Every gated ask filed at severity "attention" + kind "background_result":
+    // 0.7×0.65 + 0.4×0.35 = 0.595, under the 0.72 push threshold. No gated ask
+    // could reach Cole's phone — including outward publish confirms, which are
+    // non-grantable BECAUSE they exist to ask him. An ask he can't hear isn't one.
+    {
+      const { shouldPushNow } = await import("../core/salience.ts");
+      check("an OUTWARD confirm now clears the push threshold",
+        shouldPushNow({ kind: "background_result", severity: "critical", domain: "content", dueAt: null }) === true);
+      check("an inward ask still batches for the briefing rather than buzzing",
+        shouldPushNow({ kind: "background_result", severity: "attention", domain: "business", dueAt: null }) === false);
+      // The regression that made this necessary: a hardcoded severity.
+      const execSrc = (await import("node:fs")).readFileSync(
+        new URL("../autonomy/executor.ts", import.meta.url), "utf8"
+      ).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      check("severity is derived from the action-class tier, not hardcoded",
+        /severity,/.test(execSrc) && !/severity: "attention"/.test(execSrc));
+    }
+
     // Parsing is pure — testable without a key.
     const parsed = parseAngles(
       "TITLE: The parent's real fear\nAUDIENCE: parent of a varsity athlete\nHYPOTHESIS: they fear injury more than they want a scholarship\nRATIONALE: extrapolated, not researched\n---\n" +
