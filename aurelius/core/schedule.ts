@@ -121,8 +121,14 @@ function withDailyClaim(name: string, handler: () => void | Promise<void>): () =
       await handler();
       await finishDailyRun(name, true, day);
     } catch (err) {
+      // Record the run as FAILED (reclaimable by the hourly catch-up and the
+      // next claim — see claimDailyRun's takeover on "failed"). Deliberately do
+      // NOT re-throw: node-schedule doesn't await the callback, so a rejected
+      // promise here is an unhandledRejection, not a caught failure. runTraced
+      // inside the handler has already paged Cole and written the error trace —
+      // the JobRun status is the retry signal, and that's what we set.
       await finishDailyRun(name, false, day);
-      throw err;
+      console.error(`[schedule] ${name} failed (recorded, retryable):`, (err as any)?.message ?? err);
     }
   };
 }

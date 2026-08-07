@@ -400,6 +400,10 @@ model BridgeSignal {
   // raw create for exactly this reason.
   status     String    @default("pending")
   surfacedAt DateTime?
+  // When a push (Telegram) was actually DELIVERED (6.5). Persisted so a dropped
+  // push is queryable — a critical ask that filed but never reached the phone is
+  // the silent failure this makes visible, instead of a lost console line.
+  pushedAt   DateTime?
   expiresAt  DateTime?
   createdAt  DateTime  @default(now())
 

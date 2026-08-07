@@ -2212,6 +2212,45 @@ async function main() {
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["unmatched_payment", "sms_inbound"] } } });
   }
 
+  console.log("── reliability: self-healing, dedup seam, push delivery ──");
+  {
+    const { executeAction } = await import("../autonomy/executor.ts");
+    const { registerAllActions } = await import("../autonomy/registerActions.ts");
+    registerAllActions();
+
+    // 6.3 — the dedup seam: two gated asks with the SAME sourceId collapse onto
+    // one pending signal (the executor now routes through surfaceSignal).
+    const sid = `${TAG}_gate_dedup`;
+    const prep = async () => ({ title: `${TAG} gated ask`, body: "prepared", payload: {} });
+    await executeAction({ actionClass: "content.publish", sourceType: "smoke_gate", sourceId: sid, prepare: prep });
+    await executeAction({ actionClass: "content.publish", sourceType: "smoke_gate", sourceId: sid, prepare: prep });
+    const gateCount = await prisma.bridgeSignal.count({ where: { sourceType: "smoke_gate", sourceId: sid } });
+    check("a repeated gated ask dedups to one pending signal (the executor→surfaceSignal seam)", gateCount === 1);
+
+    // 6.5 — push delivery is persistable: pushedAt is a real column now.
+    const gated = await prisma.bridgeSignal.findFirst({ where: { sourceType: "smoke_gate", sourceId: sid } });
+    await prisma.bridgeSignal.update({ where: { id: gated!.id }, data: { pushedAt: new Date() } });
+    check("push delivery is persisted (pushedAt), so a dropped push is queryable",
+      (await prisma.bridgeSignal.findUnique({ where: { id: gated!.id } }))?.pushedAt != null);
+
+    // 6.1 — the self-healing claim: a FAILED run is reclaimable, a DONE one is not.
+    const { claimDailyRun, finishDailyRun } = await import("../core/schedule.ts");
+    const jobName = `${TAG}_selfheal`;
+    const day = new Date().toLocaleDateString("en-CA");
+    await prisma.jobRun.deleteMany({ where: { jobName } });
+    await prisma.jobRun.create({ data: { jobName, day, status: "failed" } });
+    check("a failed run is reclaimable (self-healing supervisor retries it)", (await claimDailyRun(jobName, day)) === true);
+    await finishDailyRun(jobName, true, day);
+    check("a done run is terminal (never re-fired the same day)", (await claimDailyRun(jobName, day)) === false);
+
+    // 6.4 — the retry helper exists and is a function (transient backoff wrapper).
+    const { fetchWithRetry } = await import("../engines/engineAdapter.ts");
+    check("engine adapters have a transient-retry/backoff wrapper", typeof fetchWithRetry === "function");
+
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "smoke_gate" } });
+    await prisma.jobRun.deleteMany({ where: { jobName } });
+  }
+
   console.log("── the badge: receipts are not decisions ──");
   {
     const { needsDecision, surfaceSignal, AWAITING_DECISION } = await import("../core/bridge.ts");

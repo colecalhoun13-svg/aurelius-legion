@@ -150,8 +150,19 @@ export async function surfaceSignal(input: SurfaceSignalInput): Promise<{ id: st
   let pushed = false;
   if (shouldPushNow({ kind: signal.kind, severity: signal.severity, domain: signal.domain, dueAt })) {
     try {
-      const { sendToCole } = await import("../telegram/bot.ts");
-      pushed = await sendToCole(`${signal.title}\n\n${signal.body}`.slice(0, 3500));
+      // A signal carrying a Confirm button is an ASK — push it with its buttons
+      // (pushBridgeAsk) so Cole can act from his thumb; a plain notice pushes as
+      // text. This is what lets the executor's gate path route through here
+      // without losing the phone's Confirm/Dismiss (the dedup seam, 6.3).
+      const hasAsk = Array.isArray(signal.actions) && (signal.actions as any[]).some((a) => a?.action === "confirm_action");
+      const bot = await import("../telegram/bot.ts");
+      pushed = hasAsk
+        ? await bot.pushBridgeAsk({ id: signal.id, title: signal.title, body: signal.body, status: signal.status, actions: signal.actions })
+        : await bot.sendToCole(`${signal.title}\n\n${signal.body}`.slice(0, 3500));
+      // Persist delivery (6.5) — a critical ask that filed but never reached the
+      // phone is now queryable (pushedAt null on a should-have-pushed signal),
+      // not a lost console line.
+      if (pushed) await prisma.bridgeSignal.update({ where: { id: signal.id }, data: { pushedAt: new Date() } }).catch(() => {});
     } catch (err) {
       console.warn("[bridge] salient push failed (signal still filed):", (err as any)?.message ?? err);
     }

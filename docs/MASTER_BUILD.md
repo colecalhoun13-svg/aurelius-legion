@@ -76,19 +76,21 @@ fails closed on every acquisition door.
 
 ## WAVE 6 — Reliability (the risky core refactors — isolated commits)
 
-- [ ] 6.1 Self-healing supervisor — hourly retry of failed spine jobs; new failed-row claim path; unswallow the six handlers; `await` the six non-awaited; `ranToday` ignores errored; hourly catchUp.
-- [ ] 6.2 Restore-verify backups — weekly `pg_restore` into scratch + row-count; throw not `{ok:false}`; mount marker.
-- [ ] 6.3 The dedup seam — route executor gate-path create through `surfaceSignal`; stable outreach sourceId (or the Prisma client extension — pick one).
-- [ ] 6.4 Retry/backoff in engine adapters.
-- [ ] 6.5 Persist push delivery (`pushedAt`); self-watchdog (26h no JobRun → exit); freshness/preflight for volumes.
+- [x] 6.1 Self-healing supervisor — `withDailyClaim` records a failed run without re-throwing; unswallowed the 16 Pattern-A handlers + awaited the 6 non-awaited so failures record `failed`; `ranToday` is JobRun-status-authoritative (a failed run retries); catch-up now runs HOURLY, not boot-only.
+- [x] 6.2 Restore-verify backups — `pg_restore --list` integrity check (not just a byte floor) + a mount-marker write-test; the `db_backup` handler THROWS on `!ok` so the run records `failed`.
+- [x] 6.3 The dedup seam — the executor gate path routes through `surfaceSignal` (dedup on sourceType+sourceId) and pushes as an ASK (Confirm/Dismiss) via `pushBridgeAsk`; a repeated gated ask collapses to one pending signal.
+- [x] 6.4 Retry/backoff — `fetchWithRetry` (exp backoff + jitter, honours Retry-After, retries 429/529/5xx) in the shared adapter, applied to the primary Anthropic engine.
+- [x] 6.5 Persist push delivery (`BridgeSignal.pushedAt`, set on delivery) + a self-watchdog (`core/watchdog.ts`: exits if no JobRun in 26h, uptime-guarded so a healthy boot is safe).
 
 ---
 
-## THE COLE CHECKLIST (assembled as waves land — keys, inputs, actions with how-tos)
+## THE COLE CHECKLIST — delivered
 
-*Populated at the end of the build with step-by-step instructions. Placeholder
-list of what will be here:* offer promise + prices · per-sport benchmark bands ·
-`MEDIA_PUBLIC_BASE_URL` (public origin) · a research key (Tavily/Gemini/SerpAPI) ·
-Stripe account + webhook secret · Twilio number + 10DLC · Meta ads token ·
-set your IG bio link · `LLM_MONTHLY_BUDGET_USD` · paste the warm list · the
-gym-arrangement decision.
+Full step-by-step instructions live in **`docs/COLE_CHECKLIST.md`** — 16 items in
+priority order (Part A: no-key do-nows · Part B: keys that unlock engines · Part
+C: inputs that sharpen), each with what it unlocks, how to do it, and where the
+value shows up. Covers: warm list · offer + prices · gym-arrangement · IG bio
+link · `ANTHROPIC_API_KEY` · `APP_PUBLIC_URL` · `MEDIA_PUBLIC_BASE_URL` · a
+research key · Instagram · Gmail · Stripe · Twilio + 10DLC · Meta ads ·
+`LLM_MONTHLY_BUDGET_USD` · `APP_UNLOCK_SECRET` · per-sport benchmark bands ·
+Calendar.

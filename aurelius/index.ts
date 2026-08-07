@@ -1618,40 +1618,28 @@ import("./calendar/engine.ts")
 // Market pulse at 06:30 — crypto/equities/macro digest into the wealth
 // corpus before the day starts. Signals only; Cole makes the calls.
 scheduleNamed("market_pulse", "30 6 * * *", "market pulse", async () => {
-  try {
     await runTraced("schedule", "market_pulse", async () => {
       const { runMarketPulse } = await import("./wealth/engine.ts");
       return runMarketPulse();
     });
-  } catch (err) {
-    console.error("[wealth] market pulse failed:", err);
-  }
 });
 // RSS standing feeds at 06:00 — reading digests into the corpus. Dormant
 // until research.rss_feeds exists in Living Knowledge.
 scheduleNamed("rss_ingest", "0 6 * * *", "RSS ingest", async () => {
-  try {
     await runTraced("schedule", "rss_ingest", async () => {
       const { pollRssOnce } = await import("./corpus/rssIngest.ts");
       return pollRssOnce();
     });
-  } catch (err) {
-    console.error("[rss] poll failed:", err);
-  }
 });
 // Schedule-protection at 06:45 — defend deep-work time before the day fills.
 // Acts on its own if granted (calendar.schedule_protection), else proposes on
 // the Bridge; deduped so it never spams. Runs before the 07:00 briefing so the
 // briefing reflects any holds just placed.
 scheduleNamed("schedule_protection", "45 6 * * *", "schedule protection", async () => {
-  try {
     await runTraced("schedule", "schedule_protection", async () => {
       const { runScheduleProtection } = await import("./autonomy/workflows/scheduleProtection.ts");
       await runScheduleProtection({ days: 5 });
     });
-  } catch (err) {
-    console.error("[scheduleProtection] daily sweep failed:", err);
-  }
 });
 // Inbox triage at 05:30 — before the briefing, so the 07:00 push can say what's
 // waiting. This workflow already existed but was only reachable from Telegram
@@ -1659,187 +1647,137 @@ scheduleNamed("schedule_protection", "45 6 * * *", "schedule protection", async 
 // Cole thought to ask for it, which defeats the point of an overnight pass.
 // Drafts land in Gmail as DRAFTS — nothing is ever sent (outward stays gated).
 scheduleNamed("inbox_triage", "30 5 * * *", "inbox triage", async () => {
-  try {
     await runTraced("schedule", "inbox_triage", async () => {
       const { runInboxTriage } = await import("./autonomy/workflows/inboxTriage.ts");
       await runInboxTriage({});
     });
-  } catch (err) {
-    console.error("[inboxTriage] morning sweep failed:", err);
-  }
 });
 // Morning briefing at 07:00 — the day opens with a push, not a blank page.
 scheduleNamed("morning_briefing", "0 7 * * *", "morning briefing", async () => {
-  try {
     await runTraced("schedule", "morning_briefing", async () => {
       const { briefing } = await generateMorningBriefing();
       await sendToCole(briefing);
     });
-  } catch (err) {
-    console.error("[rituals] morning failed:", err);
-  }
 });
 // Outreach sweep at 07:30 — straight after the briefing, so the day starts
 // with the prospecting already drafted rather than as another intention.
 // Bounded to 3 drafts/run: the constraint is Cole's review capacity, not
 // generation. Inward only — it writes Gmail drafts and never contacts anyone.
 scheduleNamed("outreach_sweep", "30 7 * * *", "outreach sweep", async () => {
-  try {
     await runTraced("schedule", "outreach_sweep", async () => {
       const { runOutreachSweep } = await import("./crm/leadEngine.ts");
       await runOutreachSweep({});
     });
-  } catch (err) {
-    console.error("[leadEngine] outreach sweep failed:", err);
-  }
 });
 // Weekly marketing pass, Sun 16:00 — deliberately BEFORE weekly planning at
 // 18:00, so the week Cole plans can already contain "post this". Bounded to
 // ONE piece per run and refuses entirely when there's a backlog or no live
 // offer: the constraint on this business is his review time, not supply.
 scheduleNamed("marketing_pass", "0 16 * * 0", "weekly marketing pass", async () => {
-  try {
     await runTraced("schedule", "marketing_pass", async () => {
       const { runMarketingPass } = await import("./business/marketingPass.ts");
       const out = await runMarketingPass();
       console.log(`[marketing] weekly pass: ${out.ran ? `drafted a ${out.format}` : `skipped (${out.reason})`}`);
     });
-  } catch (err) {
-    console.error("[marketing] weekly pass failed:", err);
-  }
 });
 // Content-outcome read-back at 09:00 daily — reads insights on posts that went
 // out ~72h ago, credits their angle, and records reach so leads-per-reach is
 // real. Dormant-honest without an Instagram connection.
 scheduleNamed("content_outcome", "0 9 * * *", "content outcome read-back", async () => {
-  try {
     await runTraced("schedule", "content_outcome", async () => {
       const { runContentOutcomeSweep } = await import("./content/outcomeLoop.ts");
       const out = await runContentOutcomeSweep();
       console.log(`[content] outcome sweep: ${out.ran ? `read ${out.processed}, reinforced ${out.reinforced}` : `skipped (${out.reason})`}`);
     });
-  } catch (err) {
-    console.error("[content] outcome sweep failed:", err);
-  }
 });
 // Retention sweep at 08:30 daily — overdue check-ins + renewals coming due.
 // Dormant-honest: with no active clients it finds nothing and says so.
 scheduleNamed("retention_sweep", "30 8 * * *", "retention sweep", async () => {
-  try {
     await runTraced("schedule", "retention_sweep", async () => {
       const { retentionSweep } = await import("./crm/retention.ts");
       const out = await retentionSweep();
       console.log(`[retention] sweep: ${out.ran ? `${out.checkInsDue} check-ins, ${out.renewalsDue} renewals due` : `skipped (${out.reason})`}`);
     });
-  } catch (err) {
-    console.error("[retention] sweep failed:", err);
-  }
 });
 // Nightly debrief at 21:30 — wraps the deterministic pulse (gap math) in voice.
 scheduleNamed("nightly_debrief", "30 21 * * *", "nightly debrief", async () => {
-  try {
     await runTraced("schedule", "nightly_debrief", async () => {
       const { debrief } = await generateNightlyDebrief();
       await sendToCole(debrief);
     });
-  } catch (err) {
-    console.error("[rituals] nightly failed:", err);
-  }
 });
 // Midday check at 13:00 — corrective, and silent when Cole is on pace.
 scheduleNamed("midday_check", "0 13 * * *", "midday check", async () => {
-  try {
     await runTraced("schedule", "midday_check", async () => {
       const { runMiddayCheck } = await import("./planning/tools.ts");
       return runMiddayCheck();
     });
-  } catch (err) {
-    console.error("[planning] midday check failed:", err);
-  }
 });
 // Persona observation — Sunday 17:00: how did Cole actually communicate
 // this week? Calibration proposals land on the bench (propose, never impose).
 scheduleNamed("persona_observer", "0 17 * * 0", "persona observer", async () => {
-  try {
     await runTraced("schedule", "persona_observer", async () => {
       const { observeCommunicationStyle } = await import("./persona/observer.ts");
       return observeCommunicationStyle();
     });
-  } catch (err) {
-    console.error("[persona] observer failed:", err);
-  }
 });
 // Weekly planning session — Sunday 18:00, after the research pass digests.
 scheduleNamed("weekly_planning", "0 18 * * 0", "weekly planning", async () => {
-  try {
     await runTraced("schedule", "weekly_planning", async () => {
       const { planWeekLite } = await import("./planning/tools.ts");
       const { briefing } = await planWeekLite();
       const { sendToCole } = await import("./telegram/bot.ts");
       await sendToCole(briefing);
     });
-  } catch (err) {
-    console.error("[planning] weekly session failed:", err);
-  }
 });
 scheduleNamed("weekend_pulse", "0 9 * * 0", "weekend research pulse", async () => {
-  try {
     await runTraced("schedule", "weekend_pulse", async () => {
       await runWeekendPulse();
       // After the research pass lands, the wiki absorbs the week.
       const { synthesizeAllDomains } = await import("./wiki/engine.ts");
       await synthesizeAllDomains("weekend_pulse");
     });
-  } catch (err) {
-    console.error("[pulse] weekend failed:", err);
-  }
 });
 // Knowledge freshness — Sunday 19:00: stale entries get re-check
 // proposals on the bench (capped, cooldown; propose, never impose).
 scheduleNamed("freshness_sweep", "0 19 * * 0", "freshness sweep", async () => {
-  try {
     await runTraced("schedule", "freshness_sweep", async () => {
       const { runFreshnessSweep } = await import("./knowledge/freshness.ts");
       return runFreshnessSweep();
     });
-  } catch (err) {
-    console.error("[freshness] sweep failed:", err);
-  }
 });
 // Capability gaps — Sunday 19:30: mine the week's tool failures; a
 // capability that keeps failing files ONE deduped "I keep failing you
 // here + the fix" signal. Finding gaps is automatic; closing them is
 // Cole's call (hard rule 1).
 scheduleNamed("capability_gaps", "30 19 * * 0", "capability gap sweep", async () => {
-  try {
     await runTraced("schedule", "capability_gaps", async () => {
       const { sweepCapabilityGaps } = await import("./autonomy/capabilityGaps.ts");
       return sweepCapabilityGaps();
     });
-  } catch (err) {
-    console.error("[gaps] sweep failed:", err);
-  }
 });
 // Weekly scoreboard — Sunday 20:00, one honest snapshot of both lanes.
-scheduleNamed("weekly_scoreboard", "0 20 * * 0", "weekly scoreboard", () => {
-  runTraced("schedule", "weekly_scoreboard", () => computeWeeklySnapshot()).catch((err) =>
-    console.error("[scoreboard] failed:", err)
-  );
+scheduleNamed("weekly_scoreboard", "0 20 * * 0", "weekly scoreboard", async () => {
+  await runTraced("schedule", "weekly_scoreboard", () => computeWeeklySnapshot());
 });
 // Nightly backup — 02:00: pg_dump the whole brain, prune to retention.
 // The one copy of everything Aurelius knows stops being the only copy.
-scheduleNamed("db_backup", "0 2 * * *", "nightly database backup", () => {
-  runTraced("schedule", "db_backup", async () => {
+scheduleNamed("db_backup", "0 2 * * *", "nightly database backup", async () => {
+  await runTraced("schedule", "db_backup", async () => {
     const { runDbBackup } = await import("./core/backup.ts");
-    return runDbBackup();
-  }).catch((err) => console.error("[backup] failed:", err));
+    const r = await runDbBackup();
+    // THROW on failure (6.2) so the JobRun records "failed" and the run is
+    // reclaimable — a swallowed {ok:false} used to mark the backup "done".
+    if (!r.ok) throw new Error(r.error ?? "backup failed");
+    return r;
+  });
 });
 // Queue sweep — nightly 21:15: the pending queue maintains itself. Backlog
 // proposals born keyhole-eligible apply under the grant (receipts + undo),
 // proposals unanswered 30 days expire, stale Bridge notices clear at 14.
 // A queue that only grows is a backlog wearing a badge (Cole's ruling).
-scheduleNamed("queue_sweep", "15 21 * * *", "queue sweep", () => {
-  runTraced("schedule", "queue_sweep", async () => {
+scheduleNamed("queue_sweep", "15 21 * * *", "queue sweep", async () => {
+  await runTraced("schedule", "queue_sweep", async () => {
     const { sweepQueues } = await import("./knowledge/queueSweep.ts");
     const result = await sweepQueues();
     // Budget check rides the nightly sweep rather than owning a cron slot —
@@ -1856,27 +1794,27 @@ scheduleNamed("queue_sweep", "15 21 * * *", "queue sweep", () => {
       console.warn("[spend] budget check failed (non-fatal):", (err as any)?.message ?? err);
     }
     return result;
-  }).catch((err) => console.error("[queueSweep] failed:", err));
+  });
 });
 // Curriculum ingest — Sunday 22:00: Aurelius studies the next unit of each
 // field's canon (strategy → Sun Tzu, Musashi, …; wealth → Buffett, Taleb, …;
 // identity → the Stoics), ingests the synthesis into the second brain, and
 // refreshes each touched field's wiki. Auto-learning the literature so every
 // operator reasons from the best thinking in its domain, not the model default.
-scheduleNamed("curriculum_ingest", "0 22 * * 0", "curriculum ingest", () => {
-  runTraced("schedule", "curriculum_ingest", async () => {
+scheduleNamed("curriculum_ingest", "0 22 * * 0", "curriculum ingest", async () => {
+  await runTraced("schedule", "curriculum_ingest", async () => {
     const { runCurriculumIngest } = await import("./learning/curriculum.ts");
     return runCurriculumIngest();
-  }).catch((err) => console.error("[curriculum] failed:", err));
+  });
 });
 // Decision Curriculum — Sunday 21:00: study COLE's own corrections and propose the
 // decision-heuristics they imply (mined from his reversals, not a book). Runs
 // before the canon curriculum so the week's mined principles are freshest.
-scheduleNamed("decision_curriculum", "0 21 * * 0", "decision curriculum", () => {
-  runTraced("schedule", "decision_curriculum", async () => {
+scheduleNamed("decision_curriculum", "0 21 * * 0", "decision curriculum", async () => {
+  await runTraced("schedule", "decision_curriculum", async () => {
     const { runDecisionCurriculum } = await import("./learning/decisionCurriculum.ts");
     return runDecisionCurriculum();
-  }).catch((err) => console.error("[decisionCurriculum] failed:", err));
+  });
 });
 // Initiative — 08:00 daily, after the briefing: Aurelius scans its own
 // state and proposes missions. Proposed only; Cole launches.
@@ -1887,10 +1825,8 @@ scheduleNamed("decision_curriculum", "0 21 * * 0", "decision curriculum", () => 
 // disabled-set loop does registry.has(name) with no retry).
 import("./autonomy/initiative.ts")
   .then(({ runInitiativePulse }) => {
-    scheduleNamed("initiative_pulse", "0 8 * * *", "initiative pulse", () => {
-      runTraced("schedule", "initiative_pulse", () => runInitiativePulse()).catch((err) =>
-        console.error("[initiative] failed:", err)
-      );
+    scheduleNamed("initiative_pulse", "0 8 * * *", "initiative pulse", async () => {
+      await runTraced("schedule", "initiative_pulse", () => runInitiativePulse());
     });
   })
   .catch((err) => console.error("[initiative] init failed:", err))
@@ -1906,6 +1842,11 @@ import("./autonomy/initiative.ts")
     import("./core/catchUp.ts")
       .then((m) => m.startCatchUp())
       .catch((err) => console.error("[catchup] init failed:", err));
+    // Self-watchdog (6.5): exit a spine that's stopped recording JobRuns so the
+    // supervisor restarts a clean one. Uptime-guarded, so a healthy boot is safe.
+    import("./core/watchdog.ts")
+      .then((m) => m.startWatchdog())
+      .catch((err) => console.error("[watchdog] init failed:", err));
   });
 
 // JSON error handler — MUST be last (after all routes). Without it, a body that

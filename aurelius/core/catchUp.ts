@@ -172,6 +172,16 @@ const JOBS: CatchUpJob[] = [
 
 /** Did this job leave a trace row today (fired = counted, even if it errored — never re-fire a crash loop)? */
 async function ranToday(name: string, todayStart: Date): Promise<boolean> {
+  // The JobRun status is authoritative (self-healing supervisor, 6.1): a run
+  // recorded "failed" has NOT successfully run, so catch-up should retry it
+  // (claimDailyRun reclaims a failed row atomically). Only "done" is terminal.
+  // A trace row alone no longer counts as "ran" — a failed job writes one too,
+  // which is exactly why swallowed failures never retried before.
+  const day = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, process TZ
+  const jr = await prisma.jobRun.findFirst({ where: { jobName: name, day }, select: { status: true } });
+  if (jr) return jr.status === "done";
+  // No claim row (a job outside ONCE_PER_DAY, or a very old run) — fall back to
+  // the trace-row signal so we don't re-fire something that clearly already ran.
   const row = await prisma.logEntry.findFirst({
     where: {
       type: "trace",
@@ -229,9 +239,15 @@ export async function runCatchUp() {
   return { fired };
 }
 
-/** Boot hook — waits for DB/bridges to settle, then sweeps once. */
-export function startCatchUp(delayMs = 45_000) {
+/** Boot hook — waits for DB/bridges to settle, sweeps once, then keeps sweeping
+ *  HOURLY (6.1). Boot-only recovery meant a job that failed at 07:00 waited for
+ *  the next RESTART to retry; hourly, a now-"failed" run is reclaimed within the
+ *  hour. Each sweep only fires jobs that are due, un-run, and claimable, so the
+ *  interval is cheap and idempotent. */
+export function startCatchUp(delayMs = 45_000, everyMs = 60 * 60 * 1000) {
+  const sweep = () => runCatchUp().catch((err) => console.warn("[catchup] sweep failed:", err?.message ?? err));
   setTimeout(() => {
-    runCatchUp().catch((err) => console.warn("[catchup] sweep failed:", err?.message ?? err));
+    sweep();
+    setInterval(sweep, everyMs);
   }, delayMs);
 }

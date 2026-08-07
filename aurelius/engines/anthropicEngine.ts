@@ -5,7 +5,7 @@
  * Respects the model passed in by the router.
  */
 import type { EngineAdapter } from "./engineAdapter.ts";
-import { REQUEST_TIMEOUT_MS } from "./engineAdapter.ts";
+import { REQUEST_TIMEOUT_MS, fetchWithRetry } from "./engineAdapter.ts";
 import { CACHE_BREAK } from "../llm/promptMarkers.ts";
 
 type RunAnthropicInput = {
@@ -68,7 +68,7 @@ async function runAnthropic({
   if (tools?.length) body.tools = tools;
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -76,11 +76,10 @@ async function runAnthropic({
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify(body),
-      // TIMEOUT (deploy triage): failover only fires on a RETURNED error, so a
-      // provider that accepted the socket and then stalled hung routeLLM
-      // forever — a scheduled ritual that never completed and never logged.
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+      // fetchWithRetry (6.4) owns the timeout AND backs off on a transient 429/
+      // 529/5xx before the router fails over to a lesser provider — an overloaded
+      // Anthropic gets a couple of backed-off tries, not an instant demotion.
+    }, { timeoutMs: REQUEST_TIMEOUT_MS });
 
     const json = await res.json();
 

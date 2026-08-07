@@ -138,47 +138,34 @@ export async function executeAction(args: {
   const tier = getActionClass(args.actionClass)?.tier;
   const severity = tier === "outward" ? "critical" : "attention";
 
-  const sig = await prisma.bridgeSignal.create({
-    data: {
-      kind: "background_result",
-      operatorId: args.operatorId ?? null,
-      domain: prepared.domain ?? null,
-      sourceType: args.sourceType ?? "reasoning_output",
-      sourceId: args.sourceId ?? null,
-      severity,
-      status: "pending",
-      title: prepared.title,
-      body: prepared.body + `\n\n_Prepared, not executed — ${gateReason}. Confirm to proceed._`,
-      actions: [
-        {
-          label: "Confirm",
-          action: "confirm_action",
-          payload: { actionClass: args.actionClass, actionPayload: prepared.payload ?? null },
-        },
-        { label: "Dismiss", action: "dismiss", payload: {} },
-      ],
-    },
+  // Route through surfaceSignal (6.3 dedup seam): it dedups on
+  // (sourceType, sourceId) so a repeated gated ask collapses onto the open row
+  // instead of filing a second pending confirm, and it handles the salience-
+  // gated push — as an ASK (Confirm/Dismiss buttons via pushBridgeAsk) because
+  // the signal carries a confirm_action. The manual create+push here bypassed
+  // both. Explicit status "pending": a gated ask always awaits Cole, whatever
+  // needsDecision would infer for an inward (attention-severity) one.
+  const { surfaceSignal } = await import("../core/bridge.ts");
+  const { id } = await surfaceSignal({
+    kind: "background_result",
+    operatorId: args.operatorId ?? null,
+    domain: prepared.domain ?? null,
+    sourceType: args.sourceType ?? "reasoning_output",
+    sourceId: args.sourceId ?? null,
+    severity,
+    status: "pending",
+    title: prepared.title,
+    body: prepared.body + `\n\n_Prepared, not executed — ${gateReason}. Confirm to proceed._`,
+    actions: [
+      {
+        label: "Confirm",
+        action: "confirm_action",
+        payload: { actionClass: args.actionClass, actionPayload: prepared.payload ?? null },
+      },
+      { label: "Dismiss", action: "dismiss", payload: {} },
+    ],
   });
-  // The phone Bridge: an ask reaches Cole's thumb with Confirm/Dismiss buttons
-  // (his directive — the web Bridge alone starves the loop).
-  //
-  // BUT THROUGH SALIENCE, not unconditionally. This used to push every single
-  // gated ask the instant it was prepared. That was invisible while nothing
-  // generated; with a funded key, 05:30 inbox triage prepares up to ten asks in
-  // a burst and Cole's phone buzzed ten times before he woke up. Ten buzzes at
-  // 05:30 is how a bridge gets muted, and a muted bridge loses the outward
-  // confirms too — the ones that actually matter.
-  //
-  // Low-salience asks still file instantly and still show on the Bridge and in
-  // the badge; they simply wait for the 07:00 briefing, which already counts
-  // what's waiting. Nothing is lost, only batched.
-  const { shouldPushNow } = await import("../core/salience.ts");
-  if (shouldPushNow({ kind: sig.kind, severity: sig.severity, domain: sig.domain, dueAt: null })) {
-    import("../telegram/bot.ts")
-      .then((m) => m.pushBridgeAsk({ id: sig.id, title: sig.title, body: sig.body, status: sig.status, actions: sig.actions }))
-      .catch(() => {});
-  }
-  return { finalized: false, reason: gateReason, bridgeSignalId: sig.id };
+  return { finalized: false, reason: gateReason, bridgeSignalId: id };
 }
 
 /**
