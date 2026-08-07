@@ -23,6 +23,7 @@ type Deck = {
   biggestRisk: string;
   plan: { focus: string | null } | null;
   bridge: Signal[];
+  bridgeReceipts?: Signal[];
   overnight: Signal[];
 };
 type Task = { id: string; title: string; status: string; priority: string; domain: string };
@@ -83,6 +84,7 @@ export default function HomePage() {
   const [debrief, setDebrief] = useState<string | null>(null);
   const [debriefOpen, setDebriefOpen] = useState(false);
   const [overnightOpen, setOvernightOpen] = useState(false);
+  const [receiptsOpen, setReceiptsOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [newTask, setNewTask] = useState("");
   // Honest failure (final council): a dead backend must NOT render as a calm
@@ -225,6 +227,7 @@ export default function HomePage() {
   }, [busy, load]);
 
   const bridge = deck?.bridge ?? [];
+  const receipts = deck?.bridgeReceipts ?? [];
   const overnight = deck?.overnight ?? [];
   const seenTasks = new Set<string>();
   const tasks = [...(today?.overdue ?? []), ...(today?.tasks ?? [])].filter((t) => {
@@ -422,6 +425,39 @@ export default function HomePage() {
               <a href="/aurelius?tab=autonomy" className="block text-[11px] text-neutral-600 hover:text-aurelius-gold px-1 pt-1">
                 all autonomous actions →
               </a>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Receipts that landed "pending" but need no ruling — kept OUT of the
+          needs-you strip and off the bell, collapsed to a count of their own. */}
+      {receipts.length > 0 && (
+        <section className="mt-3">
+          <button
+            onClick={() => setReceiptsOpen((o) => !o)}
+            className="text-xs text-neutral-500 hover:text-aurelius-gold px-1"
+          >
+            ℹ {receipts.length} update{receipts.length === 1 ? "" : "s"}, nothing to decide{" "}
+            {receiptsOpen ? "· hide" : "· see"}
+          </button>
+          {receiptsOpen && (
+            <div className="mt-2 space-y-1.5">
+              {receipts.map((s) => (
+                <div key={s.id} className="flex items-start gap-2 text-xs px-1">
+                  <span className="text-neutral-600 mt-px">·</span>
+                  <span className="text-neutral-400 flex-1">
+                    {s.title}
+                    <span className="text-neutral-600"> · {s.kind.replace(/_/g, " ")}</span>
+                  </span>
+                  <button
+                    onClick={() => act({ action: "ackSignal", id: s.id, status: "acknowledged" })}
+                    className="text-neutral-500 hover:text-aurelius-gold shrink-0"
+                  >
+                    got it
+                  </button>
+                </div>
+              ))}
             </div>
           )}
         </section>

@@ -56,6 +56,8 @@ type RecentAction = { id: string; title: string; createdAt: string; actionClass:
 
 export default function BridgePage() {
   const [signals, setSignals] = useState<Signal[] | null>(null);
+  const [receipts, setReceipts] = useState<Signal[]>([]);
+  const [receiptsOpen, setReceiptsOpen] = useState(false);
   const [proposals, setProposals] = useState<Proposal[] | null>(null);
   const [recentActions, setRecentActions] = useState<RecentAction[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -69,7 +71,11 @@ export default function BridgePage() {
         fetch("/api/autonomy/dial"),
       ]);
       if (!deckRes.ok) throw new Error("Aurelius couldn't load the bench right now — try again in a moment.");
-      setSignals((await deckRes.json()).bridge);
+      const deck = await deckRes.json();
+      setSignals(deck.bridge);
+      // Receipts that leaked into "pending" but need no ruling — shown below,
+      // collapsed, so the ruling queue above is only genuine decisions.
+      setReceipts(deck.bridgeReceipts ?? []);
       if (propRes.ok) setProposals((await propRes.json()).proposals);
       // The other half of the trust loop: what it already did on its own,
       // still reversible — visible on the ruling surface, not just Autonomy.
@@ -299,6 +305,37 @@ export default function BridgePage() {
           </li>
         ))}
       </ul>
+
+      {/* Receipts — landed "pending" but carry no ruling. Kept out of the queue
+          above and off the bell; visible here, collapsed, dismissable. */}
+      {receipts.length > 0 && (
+        <section className="space-y-2">
+          <button
+            onClick={() => setReceiptsOpen((o) => !o)}
+            className="aurelius-heading text-sm text-neutral-500 hover:text-aurelius-gold tracking-widest"
+          >
+            {receipts.length} update{receipts.length === 1 ? "" : "s"}, nothing to decide {receiptsOpen ? "· hide" : "· see"}
+          </button>
+          {receiptsOpen && (
+            <ul className="space-y-2">
+              {receipts.map((s) => (
+                <li key={s.id} className="flex items-start gap-3 aurelius-panel-frame border border-aurelius-gold/15 px-4 py-2.5">
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm text-neutral-300">{s.title}</span>
+                    {s.body && <span className="block text-xs text-neutral-500 mt-1 whitespace-pre-line line-clamp-2">{s.body}</span>}
+                  </span>
+                  <button
+                    onClick={() => act(s.id, "acknowledged")}
+                    className="text-xs border border-aurelius-gold/40 rounded-lg px-3 py-1 hover:bg-aurelius-gold/20 text-aurelius-gold shrink-0"
+                  >
+                    Got it
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
     </main>
   );
 }

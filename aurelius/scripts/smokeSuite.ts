@@ -2255,6 +2255,16 @@ async function main() {
   const deck = await getDeck();
   check("deck names a single biggest-risk line", typeof deck.biggestRisk === "string" && deck.biggestRisk.length > 0);
   check("deck inlines the pending-Bridge queue", Array.isArray(deck.bridge));
+  check("deck splits receipts out of the ruling queue", Array.isArray(deck.bridgeReceipts));
+  {
+    // The split is the badge's contract: everything in `bridge` is a genuine
+    // decision, nothing in `bridgeReceipts` is — so a leaked receipt can neither
+    // ring the bell nor clutter the queue.
+    const { needsDecision } = await import("../core/bridge.ts");
+    const dec = (s: any) => needsDecision({ kind: s.kind, severity: s.severity, actions: s.actions });
+    check("every deck decision needs a ruling", deck.bridge.every(dec));
+    check("no deck receipt needs a ruling", (deck.bridgeReceipts ?? []).every((s: any) => !dec(s)));
+  }
   check("deck surfaces the overnight 'while you were away' row", Array.isArray(deck.overnight));
 
   // ── semantic operator routing (master-class #6) ──

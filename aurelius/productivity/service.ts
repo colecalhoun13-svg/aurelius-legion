@@ -12,6 +12,7 @@
 //   with origin="aurelius_proposed" and sit in inbox until Cole triages.
 
 import { prisma } from "../core/db/prisma.ts";
+import { needsDecision } from "../core/bridge.ts";
 import { embedSourceSafe } from "../retrieval/embedPipeline.ts";
 
 // ── Date helpers ─────────────────────────────────────────────────────
@@ -534,6 +535,16 @@ export async function getDeck(dateStr?: string) {
   // Severity-ranked, worst-first (a string orderBy would sort alphabetically).
   const pendingSignals = rankSignals(pendingRaw).slice(0, 12);
 
+  // Split decisions from receipts. surfaceSignal routes them (decision→pending,
+  // receipt→noted), but a direct bridgeSignal.create can leak a receipt into
+  // "pending" — and that receipt would ring the needs-you bell and clutter the
+  // decisions queue. needsDecision is the same predicate the badge uses, so the
+  // deck and the badge can never disagree about what's a ruling.
+  const isDecision = (s: (typeof pendingSignals)[number]) =>
+    needsDecision({ kind: s.kind, severity: s.severity, actions: s.actions });
+  const decisions = pendingSignals.filter(isDecision);
+  const bridgeReceipts = pendingSignals.filter((s) => !isDecision(s));
+
   // Hero metrics — the confrontation row
   const behindProjects = projects.filter(
     (p) => p.daysToTarget !== null && p.daysToTarget < 7 && p.progressPct < 80
@@ -549,7 +560,9 @@ export async function getDeck(dateStr?: string) {
       daysToTarget: p.daysToTarget,
       progressPct: p.progressPct,
     })),
-    attentionSignals: pendingSignals.filter((s) =>
+    // Decisions only — a leaked receipt at "attention" severity shouldn't read
+    // as something Cole must weigh in on.
+    attentionSignals: decisions.filter((s) =>
       ["attention", "critical"].includes(s.severity)
     ).length,
   };
@@ -576,7 +589,8 @@ export async function getDeck(dateStr?: string) {
     goals: today.goals,
     stats: today.stats,
     projects,
-    bridge: pendingSignals,
+    bridge: decisions,
+    bridgeReceipts,
     overnight,
     activity: today.activity,
   };
