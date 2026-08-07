@@ -59,12 +59,12 @@ fails closed on every acquisition door.
 
 ## WAVE 4 — Retention / referral (built now, dormant until client #1)
 
-- [ ] 4.1 Referral engine — `Referral` model, peak detection (PR/re-sign), ask draft, capture w/ scoped `referredBy`, thank-loop. Dormant-honest.
-- [ ] 4.2 Check-in cadence engine — `checkInEveryDays` + `retentionSweep()`.
-- [ ] 4.3 Renewal / re-sign watch — draft 21d out, framed w/ lifetime + PRs.
-- [ ] 4.4 Progress/PR ledger — `Metric{clientId,label,value,unit,isPR,achievedAt}` on `logSession`; the `isPR` event.
-- [ ] 4.5 Proof engine — PR→anonymized case study→`content.draft`→publish (confirm), minor-consent gated.
-- [ ] 4.6 Price confrontation + LTV-weighted channel ranker + churn sentinel. Silent until n≥N.
+- [x] 4.1 Referral engine — `Referral` model, peak detection (PR/re-sign), ask draft, capture w/ scoped `referredBy`, thank-loop. Dormant-honest.
+- [x] 4.2 Check-in cadence engine — `checkInEveryDays` + `retentionSweep()`.
+- [x] 4.3 Renewal / re-sign watch — draft 21d out, framed w/ lifetime + PRs.
+- [x] 4.4 Progress/PR ledger — `Metric{clientId,label,value,unit,isPR,achievedAt}` on `logSession`; the `isPR` event.
+- [x] 4.5 Proof engine — PR→anonymized case study→`content.draft`→publish (confirm), minor-consent gated.
+- [x] 4.6 Price confrontation + LTV-weighted channel ranker + churn sentinel. Silent until n≥N.
 - FE for wave 4: client detail retention view, referral surface, PR log.
 
 ## WAVE 5 — Integrations (config-gated, dormant until keys)

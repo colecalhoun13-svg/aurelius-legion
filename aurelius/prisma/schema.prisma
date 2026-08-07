@@ -822,11 +822,19 @@ model Client {
 
   notes String?
 
-  lead        Lead?
-  engagements Engagement[]
-  sessions    Session[]
-  invoices    Invoice[]
-  payments    Payment[]
+  // Retention cadence (Wave 4, dormant until there's a client). When set, the
+  // retention sweep drafts a check-in once lastCheckInAt + checkInEveryDays is
+  // due — so a paying athlete is never quietly neglected into a churn.
+  checkInEveryDays Int?
+  lastCheckInAt    DateTime?
+
+  lead           Lead?
+  engagements    Engagement[]
+  sessions       Session[]
+  invoices       Invoice[]
+  payments       Payment[]
+  metrics        Metric[]
+  referralsGiven Referral[]   @relation("ReferrerClient")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1214,4 +1222,62 @@ model OutwardArtifact {
   @@index([channel, publishedAt])
   @@index([externalId])
   @@index([insightsReadAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// RETENTION / REFERRAL (Wave 4) — built now, dormant until client #1.
+// Keeping a client and turning a happy one into the next lead are the
+// cheapest growth there is, but neither can be tested with zero clients.
+// So these ship dormant-honest: the engines run, find nothing to act on,
+// and say so — no fabricated retention theatre over an empty roster.
+// ═══════════════════════════════════════════════════════════════════
+
+// A tracked performance number for a client — the proof engine's raw material
+// and the athlete's own feedback loop. isPR marks a personal best, which is the
+// event that triggers a referral ask (peak) and a proof-content draft.
+model Metric {
+  id         String   @id @default(cuid())
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  sessionId  String? // the session it was logged in, when it came from one
+  label      String // "vertical jump", "squat", "10-yard dash" …
+  value      Float
+  unit       String? // "in", "lbs", "s"
+  isPR       Boolean  @default(false) // a personal best — the peak event
+  achievedAt DateTime @default(now())
+  source     String   @default("coach") // "coach" | "athlete_reported"
+
+  createdAt DateTime @default(now())
+
+  @@index([clientId, label, achievedAt])
+  @@index([isPR, achievedAt])
+}
+
+// A referral in flight. Peak detection (a PR or a re-sign) proposes the ask;
+// Cole sends it (outward, his hand). Capture writes the new lead with a SCOPED
+// referredBy (the actual referrer), and the thank-loop closes it.
+model Referral {
+  id               String @id @default(cuid())
+  referrerClientId String
+  referrerClient   Client @relation("ReferrerClient", fields: [referrerClientId], references: [id], onDelete: Cascade)
+
+  reason String // "pr" | "resign" | "manual" — why now
+  // "proposed"  — peak detected, ask drafted, waiting on Cole
+  // "asked"     — Cole sent the ask
+  // "captured"  — a lead arrived crediting this referrer
+  // "thanked"   — the thank-loop closed
+  // "declined"  — Cole passed on asking
+  status String @default("proposed")
+
+  referredLeadId String? // set on capture (soft ref to the Lead)
+  askDraftedAt   DateTime?
+  askedAt        DateTime?
+  capturedAt     DateTime?
+  thankedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([referrerClientId, status])
+  @@index([status])
 }

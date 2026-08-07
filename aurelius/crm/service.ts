@@ -337,10 +337,15 @@ export async function logSession(input: {
   completedAt?: string | Date;
   durationMin?: number;
   notes?: string;
+  /** Performance numbers captured in this session — the PR ledger's raw
+   *  material (Wave 4). A number that beats the client's prior best for that
+   *  label is auto-flagged isPR, which is the peak event a referral ask and a
+   *  proof-content draft key off. */
+  metrics?: Array<{ label: string; value: number; unit?: string; source?: string }>;
 }) {
   const client = await prisma.client.findUnique({ where: { id: input.clientId } });
   if (!client) throw new Error(`No client with id ${input.clientId}.`);
-  return prisma.session.create({
+  const session = await prisma.session.create({
     data: {
       clientId: input.clientId,
       engagementId: input.engagementId ?? null,
@@ -352,6 +357,17 @@ export async function logSession(input: {
       notes: input.notes?.trim() || null,
     },
   });
+  // Logging a session is also when this client was touched — reset the check-in
+  // clock so the retention sweep doesn't re-draft a check-in for someone Cole
+  // just spoke to. Best-effort.
+  await prisma.client.update({ where: { id: input.clientId }, data: { lastCheckInAt: new Date() } }).catch(() => {});
+  if (input.metrics?.length) {
+    const { logMetric } = await import("./retention.ts");
+    for (const m of input.metrics) {
+      await logMetric({ clientId: input.clientId, sessionId: session.id, label: m.label, value: m.value, unit: m.unit, source: m.source }).catch(() => {});
+    }
+  }
+  return session;
 }
 
 // ── money: owed and received ─────────────────────────────────────────

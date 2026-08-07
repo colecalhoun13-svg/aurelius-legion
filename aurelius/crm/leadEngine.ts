@@ -387,6 +387,9 @@ export async function captureInboundLead(input: {
   source?: string;
   /** Short code from the link they came through — see resolveRef. */
   ref?: string;
+  /** Who sent them, when known (a referral). If it matches an active client,
+   *  the referral loop is credited and closed. */
+  referredBy?: string;
 }): Promise<{ ok: boolean; leadId?: string; error?: string }> {
   const { defuseDirectives } = await import("../llm/directiveParser.ts");
   const clean = (s: string | undefined, max: number) =>
@@ -435,16 +438,23 @@ export async function captureInboundLead(input: {
     return { ok: true, leadId: existing.id };
   }
 
+  const referredBy = clean(input.referredBy, 120);
   const lead = await addLead({
     name,
     email,
     phone: clean(input.phone, 40),
     sport: clean(input.sport, 60),
-    source: channel,
+    source: referredBy ? "referral" : channel,
+    referredBy,
     notes: clean(input.message, 2000),
     nextAction: "Reply — they reached out first",
     nextActionAt: new Date(),
   });
+  // Credit the referral loop when the referrer names an active client — the
+  // scoped referredBy (not a relationship label; the 1.5 fix keeps that clean).
+  if (referredBy) {
+    await import("./retention.ts").then((m) => m.creditReferral(lead.id, referredBy)).catch(() => {});
+  }
   // The chain link/angle → lead → client → payment only closes if this hop
   // happens. Best-effort: a tracking write must never cost the lead itself.
   if (attr.angleId || attr.refCode || attr.trackLinkId) {

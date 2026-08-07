@@ -656,6 +656,8 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
     <div className="mt-3 rounded border border-aurelius-gold/20 bg-black/50 p-3 space-y-4">
       {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200">{err}</div>}
 
+      <RetentionSection clientId={clientId} onChange={onChange} />
+
       {detail && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px]">
           <div>
@@ -1337,6 +1339,93 @@ function ContentQueue({ drafts, state, onChange }: { drafts: ContentDraft[]; sta
         </ul>
       )}
     </section>
+  );
+}
+
+// RETENTION — the PR ledger, check-in cadence, referrals, and the inward
+// drafts (proof content, check-in / re-sign / referral message). Dormant-honest:
+// with no PRs it says so; every draft is copy for Cole to review and send.
+type RetentionMetric = { id: string; label: string; value: number; unit: string | null; isPR: boolean; achievedAt: string };
+type RetentionView = {
+  name: string; isMinor: boolean; checkInEveryDays: number | null; nextCheckInAt: string | null;
+  metrics: RetentionMetric[]; prCount: number;
+  referrals: { id: string; reason: string; status: string; createdAt: string }[];
+};
+function RetentionSection({ clientId, onChange }: { clientId: string; onChange: () => void }) {
+  const [view, setView] = useState<RetentionView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [drafted, setDrafted] = useState<{ kind: string; body: string } | null>(null);
+  const [mLabel, setMLabel] = useState("");
+  const [mValue, setMValue] = useState("");
+  const [mUnit, setMUnit] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/crm/retention?clientId=${clientId}`);
+      if (res.ok) setView(await res.json());
+    } catch { /* retention is a bonus panel */ }
+  }, [clientId]);
+  useEffect(() => { load(); }, [load]);
+
+  async function act(body: Record<string, unknown>) {
+    setBusy(true); setErr(null); setDrafted(null);
+    try {
+      const res = await fetch("/api/crm/retention", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, clientId }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error ?? "Failed");
+      if (j.body) setDrafted({ kind: String(body.kind), body: j.body });
+      await load(); onChange();
+    } catch (e: any) { setErr(e?.message ?? String(e)); }
+    finally { setBusy(false); }
+  }
+
+  const field = "bg-black/50 border border-aurelius-gold/30 rounded px-2 py-1.5 text-sm text-aurelius-text placeholder:text-aurelius-text/30";
+  const btn = "px-2.5 py-1 rounded border border-aurelius-gold/50 text-aurelius-gold text-[11px] hover:bg-aurelius-gold/10 disabled:opacity-40";
+
+  return (
+    <div className="rounded border border-aurelius-gold/15 bg-black/30 p-3 space-y-3">
+      <div className="flex items-baseline justify-between">
+        <span className="uppercase tracking-[0.2em] text-aurelius-gold/50 text-[11px]">Retention</span>
+        {view && <span className="text-[11px] text-neutral-500">{view.prCount} PR{view.prCount === 1 ? "" : "s"}{view.nextCheckInAt ? ` · next check-in ${day(view.nextCheckInAt)}` : ""}</span>}
+      </div>
+      {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-[11px] text-red-200">{err}</div>}
+
+      {/* PR ledger */}
+      {view && view.metrics.length > 0 && (
+        <ul className="text-[11px] space-y-0.5">
+          {view.metrics.slice(0, 6).map((m) => (
+            <li key={m.id} className={m.isPR ? "text-aurelius-gold" : "text-neutral-400"}>
+              {m.isPR ? "★ " : ""}{m.label}: {m.value}{m.unit ?? ""} <span className="text-neutral-600">· {day(m.achievedAt)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* Log a number */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <input value={mLabel} onChange={(e) => setMLabel(e.target.value)} placeholder="metric (e.g. vertical)" className={`${field} w-36`} />
+        <input value={mValue} onChange={(e) => setMValue(e.target.value)} placeholder="value" inputMode="decimal" className={`${field} w-20`} />
+        <input value={mUnit} onChange={(e) => setMUnit(e.target.value)} placeholder="unit" className={`${field} w-16`} />
+        <button disabled={busy || !mLabel.trim() || !mValue.trim()} onClick={() => { act({ kind: "metric", label: mLabel, value: Number(mValue), unit: mUnit }); setMLabel(""); setMValue(""); setMUnit(""); }} className={btn}>Log a PR</button>
+      </div>
+
+      {/* Inward drafts */}
+      <div className="flex flex-wrap gap-2">
+        <button disabled={busy} onClick={() => act({ kind: "checkin" })} className={btn}>Draft check-in</button>
+        <button disabled={busy} onClick={() => act({ kind: "resign" })} className={btn}>Draft re-sign</button>
+        <button disabled={busy} onClick={() => act({ kind: "referral" })} className={btn}>Draft referral ask</button>
+        <button disabled={busy} onClick={() => act({ kind: "proof" })} className={btn}>Draft proof post</button>
+      </div>
+      {drafted && (
+        <div className="rounded border border-aurelius-gold/25 bg-black/50 p-2.5">
+          <div className="text-[10px] uppercase tracking-wider text-aurelius-gold/50 mb-1">{drafted.kind} draft — your words, your send</div>
+          <p className="text-xs text-aurelius-text/85 whitespace-pre-line">{drafted.body}</p>
+        </div>
+      )}
+    </div>
   );
 }
 

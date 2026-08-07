@@ -1668,6 +1668,19 @@ scheduleNamed("content_outcome", "0 9 * * *", "content outcome read-back", async
     console.error("[content] outcome sweep failed:", err);
   }
 });
+// Retention sweep at 08:30 daily — overdue check-ins + renewals coming due.
+// Dormant-honest: with no active clients it finds nothing and says so.
+scheduleNamed("retention_sweep", "30 8 * * *", "retention sweep", async () => {
+  try {
+    await runTraced("schedule", "retention_sweep", async () => {
+      const { retentionSweep } = await import("./crm/retention.ts");
+      const out = await retentionSweep();
+      console.log(`[retention] sweep: ${out.ran ? `${out.checkInsDue} check-ins, ${out.renewalsDue} renewals due` : `skipped (${out.reason})`}`);
+    });
+  } catch (err) {
+    console.error("[retention] sweep failed:", err);
+  }
+});
 // Nightly debrief at 21:30 — wraps the deterministic pulse (gap math) in voice.
 scheduleNamed("nightly_debrief", "30 21 * * *", "nightly debrief", async () => {
   try {

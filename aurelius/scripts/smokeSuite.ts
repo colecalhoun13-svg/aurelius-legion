@@ -2095,6 +2095,57 @@ async function main() {
     await prisma.logEntry.deleteMany({ where: { type: "connector_read", message: { startsWith: TAG } } });
   }
 
+  console.log("── retention & referral: dormant until client #1, honest at zero ──");
+  {
+    const { logMetric, retentionSweep, creditReferral, draftProofContent, clientRetentionView } = await import("../crm/retention.ts");
+    const { addClient, captureInboundLead } = {
+      addClient: (await import("../crm/service.ts")).addClient,
+      captureInboundLead: (await import("../crm/leadEngine.ts")).captureInboundLead,
+    };
+
+    const client = await addClient({ name: `${TAG} Retain`, sport: "basketball" });
+    // Give it a tight cadence, and no lastCheckIn, so the sweep sees it overdue.
+    await prisma.client.update({ where: { id: client.id }, data: { checkInEveryDays: 7, lastCheckInAt: new Date(Date.now() - 20 * 86400_000) } });
+
+    // 4.4 — the PR ledger. First value is a baseline; a better one is a PR.
+    const baseline = await logMetric({ clientId: client.id, label: "vertical", value: 24, unit: "in" });
+    check("the first number is a baseline, not a PR", baseline.isPR === false);
+    const pr = await logMetric({ clientId: client.id, label: "vertical", value: 27, unit: "in" });
+    check("a number that beats the prior best is flagged a PR", pr.isPR === true);
+    // Direction: a faster (lower) sprint is a PR; a slower one is not.
+    await logMetric({ clientId: client.id, label: "10-yard dash", value: 1.8, unit: "s" });
+    const faster = await logMetric({ clientId: client.id, label: "10-yard dash", value: 1.7, unit: "s" });
+    check("a faster sprint time is a PR (direction-aware)", faster.isPR === true);
+
+    // 4.1 — a PR proposes a referral (peak detection), once, not per-metric.
+    check("a PR proposes a referral ask (the peak moment)",
+      (await prisma.referral.count({ where: { referrerClientId: client.id, status: "proposed" } })) === 1);
+
+    // 4.2/4.3 — the sweep finds the overdue check-in (and any renewal).
+    const swept = await retentionSweep();
+    check("the retention sweep finds an overdue check-in", swept.ran && swept.checkInsDue >= 1);
+
+    // 4.1 capture — a lead crediting the client closes the referral loop.
+    const referred = await captureInboundLead({ name: `${TAG} Friend`, email: `${TAG}friend@example.com`, referredBy: `${TAG} Retain` });
+    check("a referred lead is captured on the referral channel",
+      (await prisma.lead.findUnique({ where: { id: referred.leadId! } }))?.source === "referral");
+    check("the referral loop is credited when the referrer is a client",
+      (await prisma.referral.count({ where: { referrerClientId: client.id, status: "captured" } })) === 1);
+
+    // 4.5 — proof engine refuses to invent proof with no engine (keyless-honest).
+    const proof = await draftProofContent(client.id);
+    check("the proof engine refuses to invent proof without an engine", proof.ok === false);
+
+    const view = await clientRetentionView(client.id);
+    check("the client retention view carries the PR count and cadence", (view?.prCount ?? 0) >= 2 && view?.checkInEveryDays === 7);
+
+    await prisma.referral.deleteMany({ where: { referrerClientId: client.id } });
+    await prisma.metric.deleteMany({ where: { clientId: client.id } });
+    await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.client.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["pr_peak", "check_in_due", "renewal_due", "referral_captured", "inbound_lead"] } } });
+  }
+
   console.log("── the badge: receipts are not decisions ──");
   {
     const { needsDecision, surfaceSignal, AWAITING_DECISION } = await import("../core/bridge.ts");
