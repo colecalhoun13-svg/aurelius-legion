@@ -48,6 +48,17 @@ export async function executeAction(args: {
   sourceType?: string;
   sourceId?: string;
 }): Promise<ExecuteResult> {
+  // Refuse an undeclared class BEFORE staging any work. An unregistered class
+  // would gate a pending Bridge confirm that nothing can finalize (no registry
+  // entry → confirmAction can't resolve a tier or a finalizer) — a dead button,
+  // exactly the "built is not done" defect hard rule 8 exists to stop. Declare
+  // it in actionClasses.ts and register its finalizer.
+  if (!getActionClass(args.actionClass)) {
+    throw new Error(
+      `[executor] refused: "${args.actionClass}" is not a registered action class — ` +
+        `declare it in actionClasses.ts and register a finalizer before executing it.`
+    );
+  }
   const prepared = await args.prepare();
   const decision = await decideAction(args.actionClass);
   const finalizer = getActionFinalizer(args.actionClass);

@@ -236,6 +236,23 @@ export async function upsertTodayPlan(input: {
   });
 }
 
+// Bridge severity ranked worst-first. The DB column is a plain string, so a
+// Prisma `orderBy: { severity: "desc" }` sorts ALPHABETICALLY — which put
+// "notice" and "info" above "critical" and "attention", surfacing the least
+// urgent signals first on the home screen. Rank explicitly instead.
+const SEVERITY_RANK: Record<string, number> = { critical: 0, attention: 1, notice: 2, info: 3 };
+function severityRank(s: string): number {
+  // Unknown severities sort mid-pack (as "notice") — never above a real critical.
+  return SEVERITY_RANK[s] ?? SEVERITY_RANK.notice!;
+}
+/** Worst-first: severity rank, then newest. The one ordering the deck, the
+ *  Today view and the briefing all share, so they can never disagree. */
+export function rankSignals<T extends { severity: string; createdAt: Date }>(signals: T[]): T[] {
+  return [...signals].sort(
+    (a, b) => severityRank(a.severity) - severityRank(b.severity) || b.createdAt.getTime() - a.createdAt.getTime()
+  );
+}
+
 /**
  * Everything the Today view needs in one call.
  */
@@ -267,12 +284,16 @@ export async function getToday(dateStr?: string) {
         where: { startAt: { gte: start, lte: end } },
         orderBy: { startAt: "asc" },
       }),
+      // Rank by severity in JS (see rankSignals) — a string `orderBy` sorts
+      // alphabetically. Fetch a bounded superset newest-first, then rank+slice,
+      // so a critical never falls off the top-10 to an alphabetical accident.
       prisma.bridgeSignal.findMany({
         where: { status: { in: ["pending", "surfaced"] } },
-        orderBy: [{ severity: "desc" }, { createdAt: "desc" }],
-        take: 10,
+        orderBy: [{ createdAt: "desc" }],
+        take: 60,
       }),
     ]);
+  const bridgeRanked = rankSignals(bridge).slice(0, 10);
 
   // Merge status="today" tasks with tasks scheduled for today, de-duped.
   const seen = new Set<string>();
@@ -302,7 +323,7 @@ export async function getToday(dateStr?: string) {
     doneToday,
     habits,
     calendarEvents: events,
-    bridgeSignals: bridge,
+    bridgeSignals: bridgeRanked,
     stats,
     goals,
     activity,
@@ -489,13 +510,13 @@ export async function listProjectsWithProgress() {
 export async function getDeck(dateStr?: string) {
   const { start, dstr } = dayRange(dateStr);
 
-  const [today, projects, pendingSignals, overnight, overdueTotal] = await Promise.all([
+  const [today, projects, pendingRaw, overnight, overdueTotal] = await Promise.all([
     getToday(dstr),
     listProjectsWithProgress(),
     prisma.bridgeSignal.findMany({
       where: { status: { in: ["pending", "surfaced"] } },
       orderBy: [{ createdAt: "desc" }],
-      take: 12,
+      take: 60,
     }),
     // What Aurelius finalized on its own overnight (granted inward actions),
     // awaiting Cole's eye — the "here's what I did while you slept" row.
@@ -509,6 +530,9 @@ export async function getDeck(dateStr?: string) {
     // don't measure a capped array. (Mirrors getToday's overdue predicate.)
     prisma.task.count({ where: { dueDate: { lt: start }, status: { notIn: ["done", "abandoned"] } } }),
   ]);
+
+  // Severity-ranked, worst-first (a string orderBy would sort alphabetically).
+  const pendingSignals = rankSignals(pendingRaw).slice(0, 12);
 
   // Hero metrics — the confrontation row
   const behindProjects = projects.filter(
@@ -563,14 +587,14 @@ export async function getDeck(dateStr?: string) {
  * the deck has exactly one thing to call, and so a missing CRM table can never
  * blank the home screen.
  */
-async function businessRiskInputs() {
+async function businessRiskInputs(attentionWindowDays = 14) {
   const [{ pipelineSnapshot, whatNeedsAttention }, { offerReadiness }] = await Promise.all([
     import("../crm/service.ts"),
     import("../business/offers.ts"),
   ]);
   const [snap, attention, offers] = await Promise.all([
     pipelineSnapshot(),
-    whatNeedsAttention(14),
+    whatNeedsAttention(attentionWindowDays),
     offerReadiness(),
   ]);
   return {
@@ -624,6 +648,19 @@ export function riskLineFrom(
   if (business && business.blocksEndingSoon > 0) {
     return `${business.blocksEndingSoon} training block${business.blocksEndingSoon === 1 ? "" : "s"} end${business.blocksEndingSoon === 1 ? "s" : ""} within the week — the re-sign conversation happens now, not after it lapses.`;
   }
+  // NO OFFER — hoisted out of the `empty` branch it used to hide inside. It
+  // fires whether or not the pipeline is empty: a lead with nothing to sell it
+  // is a conversation you can't close, so this outranks stale follow-ups and
+  // the whole task ladder (but not money already earned or a client re-sign).
+  if (business && business.hasActiveOffer === false) {
+    return (
+      `You have no offer defined${business.draftOffers ? ` (${business.draftOffers} drafted, none priced)` : ""} — ` +
+      `so every message you send has nothing to sell. ` +
+      (business.openLeads > 0
+        ? `${business.openLeads} lead${business.openLeads === 1 ? " is" : "s are"} open and can't be closed until there's a price. Define and price one thing today.`
+        : `Define and price one thing today; outreach after that.`)
+    );
+  }
   if (business && business.staleFollowUps > 0) {
     return `${business.staleFollowUps} lead follow-up${business.staleFollowUps === 1 ? " is" : "s are"} past due. A warm lead goes cold in days, and you have no others waiting.`;
   }
@@ -660,13 +697,11 @@ export function riskLineFrom(
     // together used to produce "name one thing that matters today", which is
     // strictly worse advice than naming the thing that actually matters.
     //
-    // With no offer defined, name THAT instead — telling him to go do outreach
-    // when he has nothing to offer sends him into a conversation he can't close.
-    biggestRisk = business.hasActiveOffer === false
-      ? `Your pipeline is empty and you have no offer defined${business.draftOffers ? ` (${business.draftOffers} drafted, none priced)` : ""} — ` +
-        `so every message you send has nothing to sell. Define and price one thing today; outreach after that.`
-      : `Your deck is clear and your pipeline is empty — no clients, no open leads. That's the fire. ` +
-        `Nothing arrives on its own, so today's real work is one outreach, not one task.`;
+    // The no-offer case is handled higher up now, so reaching here means there
+    // IS something to sell — the work is outreach, not offer definition.
+    biggestRisk =
+      `Your deck is clear and your pipeline is empty — no clients, no open leads. That's the fire. ` +
+      `Nothing arrives on its own, so today's real work is one outreach, not one task.`;
   } else if (today.tasks.length === 0 && today.plan?.focus == null) {
     biggestRisk = `No focus set and nothing on the deck — the risk is drift. Name one thing that matters today.`;
   } else if (business && business.activeClients === 0 && business.openLeads > 0) {
@@ -696,23 +731,13 @@ export async function getBiggestRisk(
   // The business is part of the risk picture, not a separate report. Failing
   // to read it must never break the risk line — it degrades to the task-only
   // ladder, which is what it was before.
-  let business: Parameters<typeof riskLineFrom>[3];
-  try {
-    const { pipelineSnapshot, whatNeedsAttention } = await import("../crm/service.ts");
-    const [snap, attention] = await Promise.all([pipelineSnapshot(), whatNeedsAttention(7)]);
-    business = {
-      empty: snap.empty,
-      activeClients: snap.activeClients,
-      openLeads: snap.openLeads,
-      staleFollowUps: attention.followUpsOverdue.length,
-      overdueInvoiceCents: attention.unpaid
-        .filter((i) => i.overdue)
-        .reduce((s, i) => s + i.outstandingCents, 0),
-      blocksEndingSoon: attention.blocksEnding.length,
-    };
-  } catch {
-    /* business layer unavailable — the task ladder still stands */
-  }
+  //
+  // SHARE the deck's inputs (businessRiskInputs), not a hand-rolled subset: the
+  // old inline object omitted `hasActiveOffer`/`draftOffers`, so the no-offer
+  // branch could fire on the home deck but NEVER in the morning briefing — the
+  // most confrontational line diverged by which surface asked. 7-day attention
+  // window (the briefing's horizon), everything else identical.
+  const business = await businessRiskInputs(7).catch(() => undefined);
   return riskLineFrom(today, behind, overdueTotal, business);
 }
 

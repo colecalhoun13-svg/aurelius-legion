@@ -156,6 +156,68 @@ export function auditReachability(): Finding[] {
     }
   }
 
+  // ── 7. Action finalizers wired to an undeclared class ──────────────
+  // The exact gap that shipped pattern.confirm/retire + autonomy.apply_grant:
+  // a finalizer registered for a key ACTION_CLASSES never declares. The executor
+  // can't resolve its tier or grant policy, so it would gate a Bridge confirm
+  // nothing can finalize — a dead button. (executeAction now throws on this at
+  // runtime; this catches it statically, before boot.)
+  const actionClassesSrc = read(join(BACKEND, "autonomy", "actionClasses.ts"));
+  const registerActionsSrc = read(join(BACKEND, "autonomy", "registerActions.ts"));
+  const declaredKeys = new Set(
+    [...actionClassesSrc.matchAll(/key:\s*"([a-z][a-z._]*)"/g)].map((m) => m[1]!)
+  );
+  const registeredKeys = new Set(
+    [...registerActionsSrc.matchAll(/registerAction(?:Finalizer|Inverse)\(\s*"([a-z][a-z._]*)"/g)].map((m) => m[1]!)
+  );
+  for (const k of registeredKeys) {
+    if (!declaredKeys.has(k)) {
+      add("high", "action-class", `finalizer "${k}" is registered but not declared in ACTION_CLASSES — the executor can neither gate nor grant it`);
+    }
+  }
+
+  // ── 8. A grantable keyhole with no finalizer (a grant that does nothing) ──
+  // Grantable = inward, not neverGrant, not domain-locked. If Cole flips it on
+  // and the executor finds no finalizer, the grant is decorative.
+  const arrBody = actionClassesSrc.match(/ACTION_CLASSES[^[]*\[([\s\S]*?)\n\];/)?.[1] ?? "";
+  const registeredFinalizers = new Set(
+    [...registerActionsSrc.matchAll(/registerActionFinalizer\(\s*"([a-z][a-z._]*)"/g)].map((m) => m[1]!)
+  );
+  for (const chunk of arrBody.split(/(?=\bkey:\s*")/)) {
+    const key = chunk.match(/key:\s*"([a-z][a-z._]*)"/)?.[1];
+    if (!key) continue;
+    const grantable =
+      /tier:\s*"inward"/.test(chunk) && !/neverGrant:/.test(chunk) && !/domain:\s*"(?:training|health)"/.test(chunk);
+    if (grantable && !registeredFinalizers.has(key)) {
+      add("high", "action-class", `grantable class "${key}" has no registered finalizer — granting it would finalize nothing`);
+    }
+  }
+
+  // ── 9. Grantable keyholes need a control, not just a policy ─────────
+  // Grants are made from exactly one place: the autonomy dial. If it stops
+  // deriving from listGrantableClasses (or is deleted), a grantable keyhole has
+  // no switch — a capability Cole can never turn on. (grantable→site.)
+  const dialRoute = join(FRONTEND, "app", "api", "autonomy", "dial", "route.ts");
+  if (!existsSync(dialRoute) || !read(dialRoute).includes("listGrantableClasses")) {
+    add("high", "autonomy-dial", `the autonomy dial (${relative(ROOT, dialRoute)}) is missing or no longer derives from listGrantableClasses — grantable keyholes would have no control`);
+  }
+
+  // ── 10. Research-source literals that don't exist in the vocab ─────
+  // The "serp" bug: marketSourceCount compared .source to "serp", a value the
+  // emitter never writes ("serpapi"), so it silently discarded every real
+  // market source. The param is typed now (tsc guards new literals), and the
+  // vocab is declared here so a stray comparison literal is caught even when it
+  // sits behind an `any`. (vocab literals + the `any`-boundary they hide in.)
+  const unionBody = read(join(BACKEND, "research", "researchTypes.ts")).match(/ResearchSource\s*=([\s\S]*?);/)?.[1] ?? "";
+  const validSources = new Set([...unionBody.matchAll(/"([a-z]+)"/g)].map((m) => m[1]!));
+  for (const path of walk(join(BACKEND, "business"), [".ts"])) {
+    for (const m of read(path).matchAll(/\.source\s*[=!]==\s*"([a-zA-Z_]+)"/g)) {
+      if (!validSources.has(m[1]!)) {
+        add("medium", "vocab", `${basename(path)} compares .source to "${m[1]}", not a ResearchSource — the filter silently matches nothing`);
+      }
+    }
+  }
+
   return findings;
 }
 
