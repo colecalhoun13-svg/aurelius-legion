@@ -18,6 +18,11 @@ const PUBLIC_PATHS = [
   // nothing, and is rate-limited per IP. Nothing else here is exempt.
   /^\/start$/,
   /^\/api\/start$/,
+  // THE STANDARD — the public assessment funnel (a lead magnet). Same contract
+  // as /start: computes a static benchmark and, only when an email is given,
+  // creates a Lead. Reads nothing, returns no id, rate-limited per IP.
+  /^\/standard$/,
+  /^\/api\/standard$/,
   /^\/manifest\.webmanifest$/,
   /^\/icons\//,
   /^\/favicon/,

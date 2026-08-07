@@ -47,6 +47,10 @@ export async function GET() {
           followThrough: m.followThrough ?? null,
           tasksDone: m.tasksDone ?? 0,
           habitCompletions: m.habitCompletions ?? 0,
+          // Money — earned is real (arrived); leads is motion. Kept distinct.
+          earnedThisWeekCents: m.earnedThisWeekCents ?? 0,
+          earnedAllTimeCents: m.earnedAllTimeCents ?? 0,
+          leadsThisWeek: m.leadsThisWeek ?? 0,
           llmDependenceRate: m.llmDependenceRate ?? null,
           corpusDocsAdded: m.corpusDocsAdded ?? 0,
           // The learning metrics (final council): computed every Sunday and

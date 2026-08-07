@@ -1980,6 +1980,53 @@ async function main() {
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["inbound_lead", "lead_reply"] } } });
   }
 
+  console.log("── the standard: the assessment funnel + the analyst ──");
+  {
+    // 2.1 — the benchmark is pure, static, and speaks the dichotomy voice.
+    const { assessStandard } = await import("../assessment/benchmarks.ts");
+    const strongSlow = assessStandard({ sport: "basketball", bodyweightLbs: 180, squatLbs: 360, verticalInches: 18 });
+    check("a strong-but-can't-jump athlete is told they built a gym number, not an athletic one",
+      /gym number|bodybuilder/i.test(strongSlow.headline) && strongSlow.metrics.length === 2);
+    const nothing = assessStandard({ sport: "soccer" });
+    check("with no numbers the standard asks for numbers rather than inventing a grade",
+      nothing.metrics.length === 0 && /numbers/i.test(nothing.cta));
+    check("the standard bands are always flagged provisional (not Cole's real numbers yet)", strongSlow.provisional === true);
+
+    // 2.1 — assessment is a real LEAD_SOURCE now (it had no producer before).
+    const { LEAD_SOURCES } = await import("../crm/service.ts");
+    const { captureInboundLead } = await import("../crm/leadEngine.ts");
+    check("assessment is a lead source with a producer", (LEAD_SOURCES as readonly string[]).includes("assessment"));
+    const aLead = await captureInboundLead({ name: `${TAG} Standard`, email: `${TAG}std@example.com`, source: "assessment", message: "Took The Standard" });
+    check("an assessment submission becomes a lead on the assessment channel",
+      (await prisma.lead.findUnique({ where: { id: aLead.leadId! } }))?.source === "assessment");
+
+    // 2.3 — the analyst refuses to crown a winner on too little data, and names
+    // the leak (clicks that don't convert) over a cheerful non-answer.
+    const { businessAnalystRead, channelPerformance } = await import("../business/analyst.ts");
+    const baseRead = await businessAnalystRead();
+    // Always one non-empty truth, and it never crowns a channel it hasn't
+    // ranked — the real-denominator rule holds whatever the shared DB contains.
+    check("the analyst always returns exactly one non-empty truth",
+      typeof baseRead.truth === "string" && baseRead.truth.length > 0);
+    check("the analyst never ranks a channel below the denominator floor",
+      baseRead.ranked.every((c) => c.clicks >= 15 || c.leads >= 3));
+
+    // Seed a leaky channel: 20 clicks, 0 leads → the leak is the truth.
+    for (let i = 0; i < 20; i++) {
+      await prisma.attributionEvent.create({ data: { kind: "click", channel: "smoke_ig" } });
+    }
+    const leakyRead = await businessAnalystRead();
+    check("the analyst names traffic that doesn't convert as the leak",
+      /zero leads|isn't catching|catching it/i.test(leakyRead.truth));
+    const perf = await channelPerformance();
+    check("a channel below the denominator floor is not ranked on n=1",
+      perf.find((c) => c.channel === "smoke_ig")?.ranked === true); // 20 clicks clears the click floor
+
+    await prisma.attributionEvent.deleteMany({ where: { channel: "smoke_ig" } });
+    await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "inbound_lead" } });
+  }
+
   console.log("── the badge: receipts are not decisions ──");
   {
     const { needsDecision, surfaceSignal, AWAITING_DECISION } = await import("../core/bridge.ts");

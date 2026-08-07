@@ -42,11 +42,11 @@ fails closed on every acquisition door.
 
 ## WAVE 2 — Lead flow (the cheapest path to the first ten leads)
 
-- [ ] 2.1 **"The Standard" assessment** — public `GET /start` (or `/standard`) page, five numbers → benchmark card in the dichotomy voice → gated POST to `captureInboundLead` w/ ref. Static benchmark table (no model in hot path). Add `assessment`/`website` to LEAD_SOURCES. `[CFG MEDIA_PUBLIC_BASE_URL]` `[Cole: per-sport benchmark bands]`. **FE (public page).**
-- [ ] 2.2 Warm-list flow polish + the `referredBy` fix surfaced; CTA guidance. FE: warm list panel (exists).
-- [ ] 2.3 The confronting analyst read — deterministic ROI ranker, one truth/week on Mon 07:00 briefing; real-denominator rule. FE: shown in briefing + a read on Business page.
-- [ ] 2.4 Money on scoreboard + briefing — reconstructed from ledger+traces; `drafted`≠`paid`; dollars-per-hour-of-confirm hero. FE: scoreboard panel.
-- [ ] 2.5 Channel-spend ledger + Cole's-minutes ledger (the analyst's denominators).
+- [x] 2.1 **"The Standard" assessment** — public `/standard` page (2-phase: numbers→benchmark card in the dichotomy voice→gated capture w/ ref), pure static bands (`assessment/benchmarks.ts`), `/api/standard` + middleware public + `assessment` in LEAD_SOURCES. `[Cole: per-sport benchmark bands]`. **FE (public page).**
+- [x] 2.2 Warm-list flow: the `referredBy` fix (Wave 1.5) is the substance; panel + empty-state CTA guidance exist on the Business page.
+- [x] 2.3 The confronting analyst read (`business/analyst.ts`) — deterministic ranker on real click/lead/earned denominators, one truth/week on the Mon briefing, real-denominator floor. FE: "The read" panel on Business page.
+- [x] 2.4 Money on scoreboard + briefing — earned (arrived) vs leads (motion), drafted≠paid, distinct on the scoreboard panel + Business ledger card. (Hero framed as earned-vs-motion, not fabricated confirm-hours.)
+- [~] 2.5 Denominators: clicks + leads are the real ones the analyst uses; channel-spend wired as $0-ready for Wave 5 paid ads. Cole's-minutes precise tracker deferred (no honest data source yet — not built speculatively).
 
 ## WAVE 3 — The loops (compounding)
 

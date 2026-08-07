@@ -37,6 +37,9 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
     missions,
     llmCalls,
     cacheReuses,
+    earnedThisWeekAgg,
+    earnedAllTimeAgg,
+    leadsThisWeek,
   ] = await Promise.all([
     prisma.task.count({ where: { status: "done", completedAt: window } }),
     prisma.task.count({ where: { createdAt: window } }),
@@ -66,6 +69,12 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
     prisma.reasoningCacheEntry.count({
       where: { updatedAt: window, createdAt: { lt: weekStart } },
     }),
+    // MONEY. Earned = payments that arrived (real), split this-week vs all-time.
+    // Leads created is the pipeline motion — deliberately a DIFFERENT number, so
+    // "drafted" (a lead, a pipeline entry) is never read as "paid" (money in).
+    prisma.payment.aggregate({ where: { receivedAt: window }, _sum: { amountCents: true } }),
+    prisma.payment.aggregate({ _sum: { amountCents: true } }),
+    prisma.lead.count({ where: { createdAt: window } }),
   ]);
 
   // Freshness plane — how much of Living Knowledge is past its half-life.
@@ -96,6 +105,11 @@ export async function computeWeeklySnapshot(weekStartStr?: string) {
     // Trust loop — corrections are signal, not failure
     corrections,
     staleKnowledge,
+    // Money — earned is real (arrived), leads is motion. Kept distinct so the
+    // scoreboard can never let a busy pipeline read as a paid one.
+    earnedThisWeekCents: earnedThisWeekAgg._sum.amountCents ?? 0,
+    earnedAllTimeCents: earnedAllTimeAgg._sum.amountCents ?? 0,
+    leadsThisWeek,
     // The DoD metric: share of reasoning that still needed the base LLM.
     // Falls as compiled understanding takes over. null until there's data.
     llmCalls,

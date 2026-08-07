@@ -90,6 +90,12 @@ type TrackLink = {
   _count: { leads: number; events: number };
 };
 
+type ChannelStat = {
+  channel: string; clicks: number; leads: number; replies: number;
+  earnedCents: number; conversionPct: number | null; ranked: boolean;
+};
+type Analyst = { truth: string; ranked: ChannelStat[]; tooEarly: ChannelStat[]; hasData: boolean };
+
 const STAGES = ["new", "contacted", "conversing", "proposed"] as const;
 const SOURCES = ["manual", "referral", "instagram", "email", "word_of_mouth", "website", "other"] as const;
 
@@ -101,7 +107,7 @@ export default function BusinessPage() {
     pipeline: Snapshot; attention: Attention; clients: Client[]; leads: Lead[];
     marketing?: Marketing; offers?: Offer[]; offerState?: OfferState;
     drafts?: ContentDraft[]; contentState?: ContentState;
-    ledger?: MoneyLedger; probe?: Probe; trackLinks?: TrackLink[];
+    ledger?: MoneyLedger; probe?: Probe; trackLinks?: TrackLink[]; analyst?: Analyst;
   } | null>(null);
   // A failed load must never render as "you have no business" — that reads
   // identically to the real empty state and would be a lie about his data.
@@ -200,7 +206,7 @@ export default function BusinessPage() {
 
   if (!data) return <div className="p-6 text-aurelius-text/50">Loading…</div>;
 
-  const { pipeline: snap, attention, clients, leads, marketing, offers, offerState, drafts, contentState, ledger, probe, trackLinks } = data;
+  const { pipeline: snap, attention, clients, leads, marketing, offers, offerState, drafts, contentState, ledger, probe, trackLinks, analyst } = data;
   const openLeads = leads.filter((l) => !["won", "lost"].includes(l.status));
   const attentionCount =
     attention.blocksEnding.length + attention.renewalsDue.length + attention.followUpsOverdue.length + attention.unpaid.length;
@@ -215,13 +221,46 @@ export default function BusinessPage() {
         {/* The front door, from the inside. /start is public and outside the
             app lock — this is how Cole finds it, checks what a stranger sees,
             and grabs the link to put anywhere. */}
-        <a href="/start" target="_blank" rel="noreferrer" className="text-[11px] text-aurelius-gold/60 hover:text-aurelius-gold mt-1 inline-block">
-          see your front door (/start) — the page prospects land on →
-        </a>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
+          <a href="/start" target="_blank" rel="noreferrer" className="text-[11px] text-aurelius-gold/60 hover:text-aurelius-gold inline-block">
+            your front door (/start) — where prospects land →
+          </a>
+          <a href="/standard" target="_blank" rel="noreferrer" className="text-[11px] text-aurelius-gold/60 hover:text-aurelius-gold inline-block">
+            the assessment (/standard) — the lead magnet →
+          </a>
+        </div>
       </header>
 
       {error && (
         <div className="rounded border border-red-500/40 bg-red-950/20 p-3 text-sm text-red-200">{error}</div>
+      )}
+
+      {/* THE ANALYST — one confronting truth about the funnel. Names the leak
+          before the win; refuses to crown a winner on too little data. */}
+      {analyst && (
+        <section className="rounded border border-aurelius-gold/30 bg-black/40 p-4">
+          <div className="aurelius-heading text-[11px] uppercase tracking-[0.2em] text-aurelius-gold/70 mb-2">The read</div>
+          <p className="text-sm text-aurelius-text/90 leading-relaxed">{analyst.truth}</p>
+          {analyst.ranked.length > 0 && (
+            <ul className="mt-3 text-xs space-y-1">
+              {analyst.ranked.map((c) => (
+                <li key={c.channel} className="flex justify-between gap-3 text-neutral-400">
+                  <span className="text-neutral-300">{c.channel}</span>
+                  <span>
+                    {c.clicks} click{c.clicks === 1 ? "" : "s"} · {c.leads} lead{c.leads === 1 ? "" : "s"}
+                    {c.conversionPct != null ? ` · ${c.conversionPct}% conv` : ""}
+                    {c.earnedCents > 0 ? ` · ${money(c.earnedCents)}` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {analyst.tooEarly.length > 0 && (
+            <p className="mt-2 text-[11px] text-neutral-600">
+              Too early to rank: {analyst.tooEarly.map((c) => c.channel).join(", ")} — not enough data yet.
+            </p>
+          )}
+        </section>
       )}
 
       {/* ── The honest headline ──────────────────────────────────── */}

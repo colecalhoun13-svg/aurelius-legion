@@ -20,7 +20,12 @@ type Week = {
   patternsActive: number | null;
   corrections: number | null;
   staleKnowledge: number | null;
+  earnedThisWeekCents: number;
+  earnedAllTimeCents: number;
+  leadsThisWeek: number;
 };
+
+const money = (cents: number) => `$${(cents / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 type Habit = { id: string; name: string; streak: number; doneToday: boolean };
 type Goal = { id: string; name: string; horizon: string; progressPct: number; measure: any; targetDate?: string | null; createdAt?: string };
 type Feed = {
@@ -105,6 +110,33 @@ export default function ScoreboardPanel() {
           <div className="text-[11px] uppercase tracking-widest text-neutral-500 mt-1.5">handled alone · 7d</div>
         </div>
       </div>
+
+      {/* Money — earned is real (arrived); leads is motion. Shown only once
+          there's something to show, and never conflated: a busy pipeline is
+          not a paid one. Rendered when any money has ever arrived OR a lead
+          moved this week. */}
+      {(latest && (latest.earnedAllTimeCents > 0 || latest.leadsThisWeek > 0)) && (
+        <section className="aurelius-panel-frame p-5">
+          <div className="flex items-baseline justify-between mb-3">
+            <h2 className="aurelius-heading text-lg">Money</h2>
+            <span className="text-[11px] text-neutral-500">earned is what arrived · leads is motion, not money</span>
+          </div>
+          <div className="grid grid-cols-3 gap-4 text-center">
+            <div>
+              <div className="text-2xl text-emerald-300/90 font-semibold">{money(latest.earnedThisWeekCents)}</div>
+              <div className="text-[11px] uppercase tracking-widest text-neutral-500 mt-1">earned · this week</div>
+            </div>
+            <div>
+              <div className="text-2xl text-emerald-300/90 font-semibold">{money(latest.earnedAllTimeCents)}</div>
+              <div className="text-[11px] uppercase tracking-widest text-neutral-500 mt-1">earned · all-time</div>
+            </div>
+            <div>
+              <div className="text-2xl text-aurelius-gold font-semibold">{latest.leadsThisWeek}</div>
+              <div className="text-[11px] uppercase tracking-widest text-neutral-500 mt-1">leads · this week</div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Follow-through across weeks */}
       <section className="aurelius-panel-frame p-5">

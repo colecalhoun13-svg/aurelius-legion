@@ -45,7 +45,7 @@ export function fromCents(cents: number, currency = "usd"): string {
 // query that filters on it — the pipeline would just look emptier.
 
 export const LEAD_STATUSES = ["new", "contacted", "conversing", "proposed", "won", "lost", "dormant"] as const;
-export const LEAD_SOURCES = ["manual", "referral", "instagram", "email", "word_of_mouth", "website", "other"] as const;
+export const LEAD_SOURCES = ["manual", "referral", "instagram", "email", "word_of_mouth", "website", "assessment", "other"] as const;
 export const CLIENT_STATUSES = ["active", "paused", "ended"] as const;
 export const ENGAGEMENT_SHAPES = ["monthly", "block", "program"] as const;
 export const ENGAGEMENT_STATUSES = ["active", "completed", "cancelled", "pending"] as const;

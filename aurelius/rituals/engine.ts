@@ -201,6 +201,20 @@ export async function generateMorningBriefing(dateStr?: string) {
   } catch {
     // business layer unavailable — the rest of the briefing stands
   }
+  // THE ANALYST — one confronting truth about the funnel, once a week (Monday).
+  // Not a daily number (Cole would tune it out), and it names the leak before
+  // the win. Deterministic, built on real click/lead/earned denominators.
+  try {
+    const isMonday = new Date(`${today.date}T12:00:00`).getDay() === 1;
+    if (isMonday) {
+      const { businessAnalystRead } = await import("../business/analyst.ts");
+      const read = await businessAnalystRead();
+      lines.push("This week's read:");
+      lines.push(`  ▸ ${read.truth}`);
+    }
+  } catch {
+    // the analyst is a bonus line, never a briefing blocker
+  }
   // Earned-trust nudge (council PR4): when Cole has confirmed a class 3×
   // with no undos, the briefing offers the grant — once per cooldown window,
   // max two lines, never a recurring nag. The switch stays his hand.
