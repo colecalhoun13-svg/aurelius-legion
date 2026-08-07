@@ -18,18 +18,18 @@ fails closed on every acquisition door.
 
 ## WAVE 0 — Foundation truth (the base everything stacks on)
 
-- [ ] 0.1 Bridge severity sort — rank map, not string desc (`productivity/service.ts:271`). FE: deck/decisions order.
-- [ ] 0.2 Badge counts decisions only (`api/nav/badges/route.ts`) + deck rank/collapse/split decisions vs receipts (`getDeck`, `home` + `SignalsBench`). **FE.**
-- [ ] 0.3 Expire `noted` — both `updateMany` filters (`queueSweep.ts`) — SHIP WITH any schema default change (binding).
-- [ ] 0.4 Receipt reversibility truth — read inverse registry (`executor.ts:91`).
-- [ ] 0.5 `recommendation`→`opportunity` kind (`marketingPass.ts`) + `marketing_pass`→`catchUp` JOBS.
-- [ ] 0.6 `"serp"`→`"serpapi"` + retype param (`marketing.ts:96`).
-- [ ] 0.7 `chatCompiler` guard — import `engineUnavailableText`, raise floor (`chatCompiler.ts:31`).
-- [ ] 0.8 Risk line: hoist `hasActiveOffer`, reorder, shared inputs on the phone path (`productivity/service.ts`).
-- [ ] 0.9 Delete the 12h window from the gated-ask count (`rituals/engine.ts:143`).
-- [ ] 0.10 `/business` on mobile — `more` GROUPS + `MobileTabBar` also-list. **FE.**
-- [ ] 0.11 Complete `ACTION_CLASSES` (declare pattern.*/autonomy.apply_grant), throw on unregistered, delete dead `systems.sop_draft`. FE: autonomy dial.
-- [ ] 0.12 reachabilityAudit new rules (grantable→site, finalizer→class, vocab literals, `any` at vocab boundary) as smoke failures.
+- [x] 0.1 Bridge severity sort — rank map, not string desc (`productivity/service.ts:271`). FE: deck/decisions order.
+- [x] 0.2 Badge counts decisions only (`api/nav/badges/route.ts`) + deck rank/collapse/split decisions vs receipts (`getDeck`, `home` + `SignalsBench`). **FE.**
+- [x] 0.3 Expire `noted` — both `updateMany` filters (`queueSweep.ts`) — SHIP WITH any schema default change (binding).
+- [x] 0.4 Receipt reversibility truth — read inverse registry (`executor.ts:91`).
+- [x] 0.5 `recommendation`→`opportunity` kind (`marketingPass.ts`) + `marketing_pass`→`catchUp` JOBS.
+- [x] 0.6 `"serp"`→`"serpapi"` + retype param (`marketing.ts:96`).
+- [x] 0.7 `chatCompiler` guard — import `engineUnavailableText`, raise floor (`chatCompiler.ts:31`).
+- [x] 0.8 Risk line: hoist `hasActiveOffer`, reorder, shared inputs on the phone path (`productivity/service.ts`).
+- [x] 0.9 Delete the 12h window from the gated-ask count (`rituals/engine.ts:143`).
+- [x] 0.10 `/business` on mobile — `more` GROUPS + `MobileTabBar` also-list. **FE.**
+- [x] 0.11 Complete `ACTION_CLASSES` (declare pattern.*/autonomy.apply_grant), throw on unregistered, delete dead `systems.sop_draft`. FE: autonomy dial.
+- [x] 0.12 reachabilityAudit new rules (grantable→site, finalizer→class, vocab literals, `any` at vocab boundary) as smoke failures.
 
 ## WAVE 1 — The shared spine (root of Jarvis + Demand)
 
