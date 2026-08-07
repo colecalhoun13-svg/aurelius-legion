@@ -93,24 +93,25 @@ athlete.")
 `dichotomy hook → name the mistake the audience is making → promise the unpack/payoff →
 engagement question → (optional partner code)`.
 
-## Live assets the demand engine can use (not a placeholder — these exist)
+## Assets and the honest state (corrected by Cole)
 
-- **Apparel partnership: `@breathefire_apparel`, code `CAL10`** for 10% off — a real cross-
-  promo / affiliate relationship already running in his captions. A borrowed-audience channel
-  and a partnership template the demand engine should exploit and replicate (find more
-  non-competing partners the same way).
-- **An active Instagram presence** posting this style of educational-dichotomy content — the
-  organic content loop has real material to learn from, not a cold start.
+- **An active Instagram presence** posting educational-dichotomy content (the "aesthetics vs
+  athletics" format above) — this is real and the organic content loop has his own proven
+  material to learn from. NOT a cold start.
+- **Partnerships: NONE current — actively seeking the next one.** BreatheFire (`@breathefire_
+  apparel`, code `CAL10`) was a PRIOR collab and is NOT live right now. So a brand partnership
+  is a **TARGET the demand engine must find and land**, not an existing channel to lean on. The
+  BreatheFire arrangement is useful only as a *template* for the kind of non-competing partner
+  (apparel/gear/complementary service) to pursue. Do not design any item that assumes a partner
+  audience Cole does not currently have.
+- **The warm list** — his people, the reliable zero-cost channel.
 
-## North-star / aspirational benchmark (Cole-supplied)
+## Content-look reference (Cole-supplied) — NOT a business model to copy
 
-- **Opus Athletics** — Cole names this as the brand he wants to strive toward. Treat it as a
-  MODEL TO STUDY, not to copy: once Aurelius has web/research access, the marketer and analyst
-  should reverse-engineer what makes it work — its positioning, content formats and hooks,
-  offer structure, funnel, and how it built an audience — and adapt the transferable mechanics
-  to Calhoun Performance's brand and mantra. It is a reference for "what good looks like at
-  scale," not a template to imitate. (Aurelius cannot study it from the current sandbox — web
-  egress is blocked here; this is a live task for the deployed system with a research key.)
+- **Opus Athletics** — Cole likes **the LOOK of their content**, the aesthetic and style. Treat
+  it strictly as a **visual/content-style reference** — the feel to aim for in how Calhoun's
+  content looks and reads. It is NOT a business/funnel/offer to reverse-engineer; do not build
+  items around studying their strategy. Aesthetic benchmark only.
 
 ## Brand assets Aurelius should ingest (the ask on Cole)
 
