@@ -122,6 +122,20 @@ export const ACTION_CLASSES: ActionClass[] = [
     description: "Execute a trade or move money.",
     gate: "always Cole's confirm (spend)",
   },
+  {
+    key: "sms.send",
+    operator: "business",
+    tier: "outward",
+    description: "Send an SMS to a lead or client via Twilio.",
+    gate: "always Cole's confirm",
+  },
+  {
+    key: "ads.spend",
+    operator: "business",
+    tier: "outward",
+    description: "Boost a post / spend on paid ads.",
+    gate: "always Cole's confirm (spend)",
+  },
 
   // ── Inward-shaped but NEVER auto-applied (neverGrant) ──────────────
   // Declared so their finalizers resolve (reachability: finalizer→class) and

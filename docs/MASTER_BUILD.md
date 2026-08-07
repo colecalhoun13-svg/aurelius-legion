@@ -69,10 +69,10 @@ fails closed on every acquisition door.
 
 ## WAVE 5 — Integrations (config-gated, dormant until keys)
 
-- [ ] 5.1 Stripe webhook — signature-verified `/webhooks/stripe` → Payment self-record; Venmo/Zelle email-parse fallback. `[CFG STRIPE_WEBHOOK_SECRET]`. FE: connect + unmatched-payment notice.
-- [ ] 5.2 Twilio SMS — inbound webhook self-records against phone identity; outbound confirm-gated. `[CFG Twilio + 10DLC]`. FE: connect + SMS thread.
-- [ ] 5.3 Partnership acquisition outreach — research named partners, draft intro (inward), per-partner ref. `[CFG research key]`. FE: partner pipeline.
-- [ ] 5.4 Measured paid boost — boost only an organically-proven post; live CPL + kill line; spend = confirm. `[CFG Meta ads token]`. FE: boost proposal + spend/ROI dashboard.
+- [x] 5.1 Stripe webhook — signature-verified `/webhooks/stripe` → Payment self-record; Venmo/Zelle email-parse fallback. `[CFG STRIPE_WEBHOOK_SECRET]`. FE: connect + unmatched-payment notice.
+- [x] 5.2 Twilio SMS — inbound webhook self-records against phone identity; outbound confirm-gated. `[CFG Twilio + 10DLC]`. FE: connect + SMS thread.
+- [x] 5.3 Partnership acquisition outreach — research named partners, draft intro (inward), per-partner ref. `[CFG research key]`. FE: partner pipeline.
+- [x] 5.4 Measured paid boost — boost only an organically-proven post; live CPL + kill line; spend = confirm. `[CFG Meta ads token]`. FE: boost proposal + spend/ROI dashboard.
 
 ## WAVE 6 — Reliability (the risky core refactors — isolated commits)
 

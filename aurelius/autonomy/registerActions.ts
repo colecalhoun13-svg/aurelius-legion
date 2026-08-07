@@ -51,6 +51,16 @@ export function registerAllActions(): void {
   // Outward: publishing content. executeAction always GATES this (outward class),
   // so the finalizer only runs on Cole's Bridge confirm.
   registerActionFinalizer("content.publish", finalizeContentPublish);
+  // Outward: send an SMS via Twilio. Gated by construction; runs on confirm only.
+  registerActionFinalizer("sms.send", async (payload: any) => {
+    const { sendSms } = await import("../crm/sms.ts");
+    return sendSms({ to: payload?.to, body: payload?.body });
+  });
+  // Outward: spend on a paid boost. Gated by construction; runs on confirm only.
+  registerActionFinalizer("ads.spend", async (payload: any) => {
+    const { finalizeBoost } = await import("../business/paidBoost.ts");
+    return finalizeBoost(payload);
+  });
   // Inward: run a proposed research mission end-to-end + ingest its report.
   // Granted → the initiative pulse runs its own proposals; else Cole confirms.
   registerActionFinalizer("research.ingest", finalizeResearchIngest);

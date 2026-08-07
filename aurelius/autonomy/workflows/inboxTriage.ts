@@ -145,6 +145,25 @@ export async function runInboxTriage(opts: { max?: number } = {}): Promise<Inbox
   result.scanned = inbox.length;
 
   for (const item of inbox) {
+    // A Venmo/Zelle/PayPal payment notification self-records the money instead
+    // of getting a drafted reply — the honest half of "money logs itself".
+    try {
+      const { parsePaymentEmail, recordSelfPayment } = await import("../../crm/selfRecord.ts");
+      const parsed = parsePaymentEmail({ from: item.from, subject: item.subject, body: item.snippet });
+      if (parsed) {
+        await recordSelfPayment({
+          amountCents: parsed.amountCents,
+          payerName: parsed.payerName,
+          method: parsed.method,
+          externalRef: `email:${item.id}`,
+          recordedBy: "email_parse",
+        });
+        continue; // handled — not a reply to draft
+      }
+    } catch (err) {
+      console.warn("[inboxTriage] payment-email parse failed (non-fatal):", (err as any)?.message ?? err);
+    }
+
     // Detect a lead's reply first — independent of whether we draft a reply to
     // it. A warm lead going quiet is exactly what this is meant to catch.
     await matchInboundReplyToLead(item).catch((err) =>

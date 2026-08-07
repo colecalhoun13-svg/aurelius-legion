@@ -412,6 +412,9 @@ export default function BusinessPage() {
       {/* ── 4. The warm list ─────────────────────────────────────── */}
       <WarmList onChange={load} empty={snap.empty} />
 
+      {/* ── Growth: integrations, partnerships, paid ─────────────── */}
+      <GrowthPanel />
+
       {/* ── Add a lead ───────────────────────────────────────────── */}
       <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4">
         <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80 mb-3">
@@ -1426,6 +1429,92 @@ function RetentionSection({ clientId, onChange }: { clientId: string; onChange: 
         </div>
       )}
     </div>
+  );
+}
+
+// GROWTH — the config-gated engines: payment/SMS connect state, the partnership
+// pipeline, and the paid-boost experiment. Honest about what's not connected.
+type Growth = {
+  integrations: { stripe: boolean; twilio: boolean; paidAds: boolean };
+  boost: { active: boolean; spentCents: number; leads: number; cplCents: number | null; verdict: string };
+  analytics: { ready: boolean; note: string };
+};
+function GrowthPanel() {
+  const [g, setG] = useState<Growth | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [partnerName, setPartnerName] = useState("");
+  const [out, setOut] = useState<{ label: string; text: string; ref?: string } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try { const r = await fetch("/api/crm/growth"); if (r.ok) setG(await r.json()); } catch { /* bonus panel */ }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function act(body: Record<string, unknown>, label: string) {
+    setBusy(true); setErr(null); setOut(null);
+    try {
+      const r = await fetch("/api/crm/growth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error ?? "Failed");
+      if (j.suggestions) setOut({ label, text: j.suggestions });
+      else if (j.body) setOut({ label, text: j.body, ref: j.refUrl });
+      else if (j.reason) setOut({ label, text: j.reason });
+      await load();
+    } catch (e: any) { setErr(e?.message ?? String(e)); }
+    finally { setBusy(false); }
+  }
+
+  const btn = "px-3 py-1.5 rounded border border-aurelius-gold/50 text-aurelius-gold text-xs hover:bg-aurelius-gold/10 disabled:opacity-40";
+  const dot = (on: boolean) => (on ? "text-emerald-400" : "text-neutral-600");
+
+  return (
+    <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4 space-y-4">
+      <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80">Growth engines</h2>
+
+      {/* Connect state — honest about what's dormant */}
+      {g && (
+        <div className="flex flex-wrap gap-4 text-xs">
+          <span className={dot(g.integrations.stripe)}>● Stripe {g.integrations.stripe ? "connected" : "— set STRIPE_WEBHOOK_SECRET"}</span>
+          <span className={dot(g.integrations.twilio)}>● Twilio {g.integrations.twilio ? "connected" : "— set TWILIO_* + 10DLC"}</span>
+          <span className={dot(g.integrations.paidAds)}>● Meta ads {g.integrations.paidAds ? "connected" : "— set META_ADS_TOKEN"}</span>
+        </div>
+      )}
+      <p className="text-[11px] text-neutral-600">
+        Payments self-record once Stripe/Venmo/Zelle land; an unmatched one becomes a notice on Decisions. Inbound texts self-record too — sending stays your tap.
+      </p>
+
+      {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200">{err}</div>}
+
+      {/* Partnership */}
+      <div className="space-y-2">
+        <div className="text-[11px] uppercase tracking-wider text-aurelius-gold/50">Partnerships (find the next one)</div>
+        <div className="flex flex-wrap gap-2 items-center">
+          <button disabled={busy} onClick={() => act({ kind: "research_partners" }, "Partner types to pursue")} className={btn}>Research partners</button>
+          <input value={partnerName} onChange={(e) => setPartnerName(e.target.value)} placeholder="a specific partner…" className="bg-black/50 border border-aurelius-gold/30 rounded px-2 py-1.5 text-sm text-aurelius-text w-44 placeholder:text-aurelius-text/30" />
+          <button disabled={busy || !partnerName.trim()} onClick={() => act({ kind: "partner_intro", name: partnerName }, `Intro to ${partnerName}`)} className={btn}>Draft intro</button>
+        </div>
+      </div>
+
+      {/* Paid boost */}
+      <div className="space-y-2">
+        <div className="text-[11px] uppercase tracking-wider text-aurelius-gold/50">Paid boost (only behind proof)</div>
+        <button disabled={busy} onClick={() => act({ kind: "propose_boost" }, "Boost proposal")} className={btn}>Propose a boost</button>
+        {g?.boost?.active && (
+          <p className={`text-xs ${g.boost.cplCents != null && g.boost.verdict.includes("kill") ? "text-red-300" : "text-neutral-300"}`}>
+            Spent ${(g.boost.spentCents / 100).toFixed(2)} · {g.boost.leads} lead{g.boost.leads === 1 ? "" : "s"} · {g.boost.verdict}
+          </p>
+        )}
+      </div>
+
+      {out && (
+        <div className="rounded border border-aurelius-gold/25 bg-black/50 p-2.5">
+          <div className="text-[10px] uppercase tracking-wider text-aurelius-gold/50 mb-1">{out.label}</div>
+          <p className="text-xs text-aurelius-text/85 whitespace-pre-line">{out.text}</p>
+          {out.ref && <p className="text-[11px] text-aurelius-gold/70 mt-1">Tracked ref: {out.ref}</p>}
+        </div>
+      )}
+    </section>
   );
 }
 

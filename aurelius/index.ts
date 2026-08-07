@@ -100,7 +100,16 @@ process.on("uncaughtException", (err: any) => {
 });
 
 const app = express();
-app.use(express.json({ limit: "25mb" })); // room for base64 photos / short clips attached in chat
+// Capture the raw body alongside the parsed one — webhook signature checks
+// (Stripe) must verify the EXACT bytes, which a re-serialised JSON object can't
+// reproduce. Cheap: it stores a reference to the buffer express already read.
+app.use(express.json({
+  limit: "25mb", // room for base64 photos / short clips attached in chat
+  verify: (req, _res, buf) => { (req as any).rawBody = buf; },
+}));
+// Twilio posts application/x-www-form-urlencoded, not JSON — parse that too so
+// the SMS webhook can read req.body.
+app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 app.use(
   cors({
     // Lockable: set FRONTEND_ORIGIN (comma-separated) to pin CORS to the real
@@ -140,6 +149,10 @@ const API_KEY = process.env.AURELIUS_API_KEY?.trim();
 // matched the old regex — Express doesn't collapse dot-segments pre-route).
 const AUTH_EXEMPT = new Set([
   "/health", "/",
+  // Payment/SMS webhooks — a provider (Stripe, Twilio) has no API key. Each is
+  // verified by SIGNATURE instead (Stripe HMAC, Twilio X-Twilio-Signature), so
+  // an unsigned or forged POST is refused inside the handler, not here.
+  "/webhooks/stripe", "/webhooks/twilio",
   // Public lead intake. A prospect has no API key; a funnel that demands one
   // captures nobody. Narrow by construction (creates a Lead, nothing else),
   // input-sanitised, and rate-limited per IP at the route.
@@ -251,6 +264,47 @@ app.get("/l/:code", async (req: Request, res: Response) => {
     console.warn("[l] click tracking failed (non-fatal):", err?.message ?? err);
   }
   return res.redirect(302, dest);
+});
+
+// STRIPE WEBHOOK — money that records itself. Public but signature-verified:
+// an unsigned POST is refused inside the handler. Dormant (503) without the
+// secret. Idempotent + client-matched inside handleStripeEvent.
+app.post("/webhooks/stripe", async (req: Request, res: Response) => {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!secret) return res.status(503).json({ error: "stripe webhook not configured" });
+  try {
+    const { verifyStripeSignature, handleStripeEvent } = await import("./crm/selfRecord.ts");
+    const raw = (req as any).rawBody as Buffer | undefined;
+    if (!raw || !verifyStripeSignature(raw, req.get("stripe-signature"), secret)) {
+      return res.status(400).json({ error: "invalid signature" });
+    }
+    const out = await handleStripeEvent(req.body);
+    return res.json({ received: true, ...out });
+  } catch (err: any) {
+    console.error("[stripe] webhook failed:", err?.message ?? err);
+    return res.status(500).json({ error: "handler failed" });
+  }
+});
+
+// TWILIO SMS WEBHOOK — an inbound text self-records against the phone identity
+// (a lead's reply, a client's message). Signature-verified; dormant without the
+// auth token. Outbound SMS is a separate outward action (Cole's confirm).
+app.post("/webhooks/twilio", async (req: Request, res: Response) => {
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  if (!token) return res.status(503).send("twilio not configured");
+  try {
+    const { verifyTwilioSignature, handleInboundSms } = await import("./crm/sms.ts");
+    const fullUrl = `${process.env.APP_PUBLIC_URL?.replace(/\/+$/, "") ?? ""}/webhooks/twilio`;
+    if (!verifyTwilioSignature(fullUrl, req.body ?? {}, req.get("x-twilio-signature"), token)) {
+      return res.status(403).send("invalid signature");
+    }
+    await handleInboundSms({ from: String(req.body?.From ?? ""), body: String(req.body?.Body ?? "") });
+    // Twilio expects TwiML (or empty 200) — we never auto-reply (outbound is Cole's).
+    res.set("Content-Type", "text/xml").send("<Response></Response>");
+  } catch (err: any) {
+    console.error("[twilio] webhook failed:", err?.message ?? err);
+    res.status(500).send("handler failed");
+  }
 });
 
 app.get("/", (req: Request, res: Response) => {

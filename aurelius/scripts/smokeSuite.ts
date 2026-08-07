@@ -2146,6 +2146,72 @@ async function main() {
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["pr_peak", "check_in_due", "renewal_due", "referral_captured", "inbound_lead"] } } });
   }
 
+  console.log("── integrations: money & comms self-record, verified ──");
+  {
+    const crypto = await import("node:crypto");
+    // 5.1 — Stripe signature: a valid sig verifies, a forged one is refused.
+    const { verifyStripeSignature, handleStripeEvent, parsePaymentEmail, recordSelfPayment } = await import("../crm/selfRecord.ts");
+    const secret = "whsec_smoketest";
+    const rawBody = JSON.stringify({ id: `${TAG}_evt`, type: "charge.succeeded", data: { object: { id: `${TAG}_ch`, amount: 5000, receipt_email: `${TAG}pay@example.com` } } });
+    const t = Math.floor(Date.now() / 1000);
+    const sig = crypto.createHmac("sha256", secret).update(`${t}.${rawBody}`).digest("hex");
+    check("a valid Stripe signature verifies", verifyStripeSignature(Buffer.from(rawBody), `t=${t},v1=${sig}`, secret) === true);
+    check("a forged Stripe signature is refused", verifyStripeSignature(Buffer.from(rawBody), `t=${t},v1=deadbeef`, secret) === false);
+
+    // A verified charge for a known client self-records with honest provenance.
+    const { addClient } = await import("../crm/service.ts");
+    const payClient = await addClient({ name: `${TAG} Payer`, email: `${TAG}pay@example.com` });
+    const rec = await handleStripeEvent(JSON.parse(rawBody));
+    check("a verified Stripe charge self-records a payment", rec.recorded === true);
+    const pay = await prisma.payment.findFirst({ where: { clientId: payClient.id } });
+    check("the self-recorded payment carries stripe_webhook provenance", pay?.recordedBy === "stripe_webhook" && pay?.amountCents === 5000);
+    // Idempotent — the same event never double-records.
+    const again = await handleStripeEvent(JSON.parse(rawBody));
+    check("the same Stripe event never records twice (idempotent)", again.recorded === false);
+
+    // 5.1 — Venmo/Zelle email parse. A payment notice → parsed; a normal email → null.
+    const venmo = parsePaymentEmail({ from: "venmo@venmo.com", subject: "Jane Doe paid you $40.00", body: "Jane Doe paid you $40.00" });
+    check("a Venmo payment email parses to an amount and payer", venmo?.amountCents === 4000 && /jane/i.test(venmo?.payerName ?? ""));
+    check("a normal email is not mistaken for a payment", parsePaymentEmail({ from: "coach@x.com", subject: "hey", body: "how's it going" }) === null);
+    // An unmatched payment surfaces a notice rather than being dropped or misassigned.
+    const unmatched = await recordSelfPayment({ amountCents: 3000, email: `${TAG}nobody@example.com`, method: "venmo", externalRef: `${TAG}_unmatched`, recordedBy: "email_parse" });
+    check("an unmatched payment files a notice, never a wrong-client record", unmatched.recorded === false && /unmatched|no matching/i.test(unmatched.reason));
+
+    // 5.2 — Twilio signature + inbound self-record against a lead.
+    const { verifyTwilioSignature, handleInboundSms } = await import("../crm/sms.ts");
+    const url = "https://x.test/webhooks/twilio";
+    const params = { From: "+15551234567", Body: "yes I'm in" };
+    const sorted = Object.keys(params).sort();
+    let data = url; for (const k of sorted) data += k + (params as any)[k];
+    const twSig = crypto.createHmac("sha1", "tok").update(Buffer.from(data, "utf8")).digest("base64");
+    check("a valid Twilio signature verifies", verifyTwilioSignature(url, params, twSig, "tok") === true);
+    check("a forged Twilio signature is refused", verifyTwilioSignature(url, params, "wrong", "tok") === false);
+    const smsLead = await prisma.lead.create({ data: { name: `${TAG} Texter`, phone: "+1 (555) 123-4567", status: "contacted", source: "warm_list" } });
+    const sms = await handleInboundSms({ from: "+15551234567", body: "yes I'm in" });
+    check("an inbound text matches the lead by phone and flips it to conversing",
+      sms.matched && (await prisma.lead.findUnique({ where: { id: smsLead.id } }))?.status === "conversing");
+
+    // 5.2/5.4 — outbound SMS and ad spend are OUTWARD, non-grantable.
+    const { checkGrantable } = await import("../autonomy/actionClasses.ts");
+    check("sending an SMS is outward, never grantable", checkGrantable("sms.send").grantable === false);
+    check("spending on ads is outward, never grantable", checkGrantable("ads.spend").grantable === false);
+    const { hasActionFinalizer } = await import("../autonomy/actionRegistry.ts");
+    const { registerAllActions } = await import("../autonomy/registerActions.ts");
+    registerAllActions();
+    check("both outward integrations have real finalizers (not dead confirms)",
+      hasActionFinalizer("sms.send") && hasActionFinalizer("ads.spend"));
+
+    // 5.4 — paid boost refuses to boost an unproven field.
+    const { proposeBoost } = await import("../business/paidBoost.ts");
+    const boost = await proposeBoost();
+    check("paid boost won't amplify without proof (few measured posts)", boost.ok === false && /proven|measured|median/i.test(boost.reason));
+
+    await prisma.payment.deleteMany({ where: { clientId: payClient.id } });
+    await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.client.deleteMany({ where: { name: { startsWith: TAG } } });
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["unmatched_payment", "sms_inbound"] } } });
+  }
+
   console.log("── the badge: receipts are not decisions ──");
   {
     const { needsDecision, surfaceSignal, AWAITING_DECISION } = await import("../core/bridge.ts");
