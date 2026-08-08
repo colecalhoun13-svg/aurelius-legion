@@ -2,8 +2,7 @@
 // AURELIUS OS — NAVIGATION REGISTRY
 // The 2026-08 ELEVATED IMPERIAL ruling (docs/REDESIGN_PLAN.md): ten tabs —
 // Morning · Chat · Decisions · Business · Athletes · Goals · Brain ·
-// Calendar · Machine · Tuning. Athletes ships in a later phase, so it does
-// NOT appear here yet (no dead links, ever). Machine and Tuning point at the
+// Calendar · Machine · Tuning. Machine and Tuning point at the
 // pages that hold their content TODAY (/engines and /aurelius); when the real
 // Machine/Tuning pages land, only the paths change. Nothing is deleted:
 // /tools and /settings stay listed under Setup so every live route keeps a
@@ -45,7 +44,12 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     description: "The remote coaching business — leads, clients, and the money",
     group: "Direction",
   },
-  // athletes: arrives in a later phase — never list a door with no room behind it.
+  athletes: {
+    name: "Athletes",
+    path: "/athletes",
+    description: "Every athlete against the standard — the radar and the ledger of bests",
+    group: "Direction",
+  },
   goals: {
     name: "Goals",
     path: "/goals",
