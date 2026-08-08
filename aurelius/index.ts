@@ -1747,6 +1747,16 @@ scheduleNamed("content_outcome", "0 9 * * *", "content outcome read-back", async
 });
 // Retention sweep at 08:30 daily — overdue check-ins + renewals coming due.
 // Dormant-honest: with no active clients it finds nothing and says so.
+// Monday 06:50 — the training trend sweep: stalls, slides, and off-pace
+// targets, one deduped training-domain signal per athlete, ahead of the 07:00
+// briefing so the week opens knowing who needs eyes.
+scheduleNamed("training_trend_sweep", "50 6 * * 1", "training trend sweep", async () => {
+    await runTraced("schedule", "training_trend_sweep", async () => {
+      const { trainingTrendSweep } = await import("./training/trendSweep.ts");
+      const out = await trainingTrendSweep();
+      console.log(`[training] trend sweep: ${out.ran ? `${out.flagged} athlete(s) flagged` : `skipped (${out.reason})`}`);
+    });
+});
 scheduleNamed("retention_sweep", "30 8 * * *", "retention sweep", async () => {
     await runTraced("schedule", "retention_sweep", async () => {
       const { retentionSweep } = await import("./crm/retention.ts");

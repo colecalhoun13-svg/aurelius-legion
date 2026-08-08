@@ -11,7 +11,11 @@
 // included. The roster sorts (recent · trending · PRs · name) and filters
 // (all · clients · training) client-side. Selecting a row expands the
 // performance view in place (/api/athletes/[id]): per-metric sparkline
-// trends, the radar, and the PR ledger — with a second log form in context.
+// trends with momentum tags (sliding/stalled/streak) and relative strength,
+// targets with server-derived pace, the radar, the PR ledger, session
+// history, a second log form in context, and the program sheet — linked
+// once (found in Drive or pasted), openable or embedded right here, with
+// one-button session feedback (read sheet → reason → write Feedback tab).
 // Promotion (training_only → client) is the ONE door into the business
 // machinery, behind a two-step confirm; there is deliberately no demote.
 //
@@ -63,6 +67,32 @@ type Series = {
   improvementPct: number | null; // signed; POSITIVE always means improved
   prCount: number;
   points: SeriesPoint[];
+  // Momentum (server-computed, same math the Monday trend sweep fires on):
+  stalled: boolean;
+  regressing: boolean;
+  streak: number; // 0 = none, else trailing run of strictly-better entries (≥3)
+  relative: number | null; // value ÷ bodyweight, only for upward weight-unit lifts
+};
+
+type TargetView = {
+  id: string;
+  label: string;
+  unit: string | null;
+  targetValue: number;
+  targetDate: string | null;
+  note: string | null;
+  achievedAt: string | null;
+  pace: "achieved" | "ahead" | "on_pace" | "behind" | "past_due" | "open" | "no_data";
+  latestValue: number | null;
+  remaining: number | null; // distance to target, in the measure's own units
+};
+
+type SessionRow = {
+  id: string;
+  kind: string;
+  happenedAt: string | null;
+  durationMin: number | null;
+  notes: string | null;
 };
 
 type Detail = {
@@ -75,10 +105,13 @@ type Detail = {
   gradYear: number | null;
   isMinor: boolean;
   notes: string | null;
+  sheetUrl: string | null;
   lastLoggedAt: string | null;
   prCount: number;
   series: Series[]; // most-recently-trained first (server-sorted)
   recentPRs: Array<{ label: string; value: number; unit: string | null; achievedAt: string }>;
+  targets: TargetView[];
+  sessions: SessionRow[]; // last 12, newest first
 };
 
 /* ── small helpers ── */
@@ -150,6 +183,58 @@ function TrendChip({ pct }: { pct: number | null }) {
       }}
     >
       {flat ? "0%" : `${pct > 0 ? "▲" : "▼"} ${Math.abs(pct)}%`}
+    </span>
+  );
+}
+
+/* ── momentum tag: at most ONE per trend row — the worst news wins
+      (sliding > stalled > streak). Nothing when nothing's happening. ── */
+function MomentumTag({ s }: { s: Series }) {
+  const tag = s.regressing
+    ? { text: "SLIDING", color: "var(--danger)" }
+    : s.stalled
+      ? { text: "STALLED", color: "var(--attn)" }
+      : s.streak >= 3
+        ? { text: `STREAK ×${s.streak}`, color: "var(--money)" }
+        : null;
+  if (!tag) return null;
+  return (
+    <span style={{ ...DATA_FONT, fontSize: 9.5, letterSpacing: ".18em", color: tag.color, marginLeft: 8 }}>
+      {tag.text}
+    </span>
+  );
+}
+
+/* ── target pace chip: the verdict on a destination. "no numbers yet" is
+      plain ink3 text, not a chip — no data is a fact, not a status. ── */
+const PACE_STYLES: Record<Exclude<TargetView["pace"], "no_data">, { text: string; color: string }> = {
+  achieved: { text: "MET", color: "var(--money)" },
+  ahead: { text: "AHEAD", color: "var(--money)" },
+  on_pace: { text: "ON PACE", color: "var(--gold)" },
+  behind: { text: "BEHIND", color: "var(--attn)" },
+  past_due: { text: "PAST DUE", color: "var(--danger)" },
+  open: { text: "OPEN", color: "var(--ink2)" },
+};
+
+function PaceChip({ pace }: { pace: TargetView["pace"] }) {
+  if (pace === "no_data") {
+    return <span style={{ ...DATA_FONT, fontSize: 11, color: "var(--ink3)", flex: "none" }}>no numbers yet</span>;
+  }
+  const s = PACE_STYLES[pace];
+  return (
+    <span
+      style={{
+        ...DATA_FONT,
+        fontSize: 10.5,
+        letterSpacing: ".16em",
+        color: s.color,
+        border: "1px solid var(--line2)",
+        borderRadius: 2,
+        padding: "1px 6px",
+        flex: "none",
+      }}
+    >
+      {s.text}
     </span>
   );
 }
@@ -614,7 +699,9 @@ function AthleteDetail({ detail, onChanged }: { detail: Detail; onChanged: () =>
           <>
             {visible.map((s) => (
               <div
-                key={s.label.toLowerCase()}
+                // series buckets are (label|unit) — the same lift in two
+                // units is two honest rows, so the key carries both
+                key={`${s.label.toLowerCase()}|${(s.unit ?? "").toLowerCase()}`}
                 className="flex items-center gap-x-4 gap-y-1 flex-wrap"
                 style={{ borderBottom: "1px solid var(--line1)", padding: ".65rem .1rem" }}
               >
@@ -623,9 +710,13 @@ function AthleteDetail({ detail, onChanged }: { detail: Detail; onChanged: () =>
                     {s.label}
                     {s.unit ? <span style={{ color: "var(--ink3)" }}> · {s.unit}</span> : null}
                     {s.prCount > 0 && <span style={{ color: "var(--gold-dim)" }}> ✦{s.prCount}</span>}
+                    <MomentumTag s={s} />
                   </div>
                   <div style={{ ...DATA_FONT, fontSize: 11, color: "var(--ink3)", fontVariantNumeric: "tabular-nums" }}>
                     {s.count} {s.count === 1 ? "entry" : "entries"} · best {fmt(s.best.value, s.unit)}
+                    {s.relative != null && (
+                      <span style={{ color: "var(--ink2)" }}> · {s.relative}× BW</span>
+                    )}
                   </div>
                 </div>
                 {s.count > 1 ? (
@@ -659,6 +750,11 @@ function AthleteDetail({ detail, onChanged }: { detail: Detail; onChanged: () =>
             )}
           </>
         )}
+      </div>
+
+      {/* ── targets — a trend's destination ── */}
+      <div style={{ marginTop: "1.6rem" }}>
+        <TargetsBlock detail={detail} onChanged={onChanged} />
       </div>
 
       {/* ── the instrument ── */}
@@ -698,9 +794,19 @@ function AthleteDetail({ detail, onChanged }: { detail: Detail; onChanged: () =>
         )}
       </div>
 
+      {/* ── session history — logged in chat, shown here ── */}
+      <div style={{ marginTop: "1.6rem" }}>
+        <SessionsBlock name={detail.name} sessions={detail.sessions} />
+      </div>
+
       {/* ── log a metric — the one real write on this view ── */}
       <div style={{ marginTop: "1.6rem" }}>
         <LogMetricForm clientId={detail.id} onLogged={onChanged} />
+      </div>
+
+      {/* ── the program sheet — link it once, open or embed it here ── */}
+      <div style={{ marginTop: "1.6rem" }}>
+        <SheetBlock clientId={detail.id} sheetUrl={detail.sheetUrl} onChanged={onChanged} />
       </div>
 
       {/* ── promotion: the one door into the business — no demote by design ── */}
@@ -710,6 +816,482 @@ function AthleteDetail({ detail, onChanged }: { detail: Detail; onChanged: () =>
         </div>
       )}
     </Panel>
+  );
+}
+
+/* ═════════════════ targets — a trend's destination ═════════════════ */
+
+function TargetsBlock({ detail, onChanged }: { detail: Detail; onChanged: () => Promise<void> }) {
+  const [adding, setAdding] = useState(false);
+  return (
+    <div>
+      <SectionLabel row>Targets</SectionLabel>
+      {detail.targets.length === 0 ? (
+        <p className="au-kicker" style={{ display: "block", marginTop: ".8rem" }}>
+          no targets set — give a trend a destination
+        </p>
+      ) : (
+        detail.targets.map((t) => <TargetRow key={t.id} clientId={detail.id} t={t} onChanged={onChanged} />)
+      )}
+      {!adding ? (
+        <button className="au-undo" style={{ marginTop: ".7rem", marginLeft: 0 }} onClick={() => setAdding(true)}>
+          + set target
+        </button>
+      ) : (
+        <SetTargetForm
+          detail={detail}
+          onDone={async () => {
+            setAdding(false);
+            await onChanged();
+          }}
+          onCancel={() => setAdding(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function TargetRow({ clientId, t, onChanged }: { clientId: string; t: TargetView; onChanged: () => Promise<void> }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const remove = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/athletes/${encodeURIComponent(clientId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "dropTarget", targetId: t.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "Could not remove the target");
+      await onChanged();
+    } catch (e: any) {
+      setErr(e?.message ?? "Could not remove the target");
+      setBusy(false);
+      setConfirming(false);
+    }
+  };
+
+  return (
+    <div
+      className="flex items-center gap-x-3 gap-y-1 flex-wrap"
+      style={{ borderBottom: "1px solid var(--line1)", padding: ".65rem .1rem" }}
+    >
+      <div className="flex-1 min-w-[8rem]">
+        <div style={{ ...DATA_FONT, fontSize: 11.5, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink2)" }}>
+          {t.label}
+          {t.unit ? <span style={{ color: "var(--ink3)" }}> · {t.unit}</span> : null}
+        </div>
+        {t.note && (
+          <div className="au-kicker" style={{ fontSize: 12, display: "block" }}>{t.note}</div>
+        )}
+      </div>
+      {/* the destination: Cinzel numeral, Cormorant unit */}
+      <span style={{ ...SERIF_FONT, fontWeight: 700, fontSize: "1.1rem", color: "var(--ink)", fontVariantNumeric: "tabular-nums", flex: "none" }}>
+        {fmtNum(t.targetValue)}
+        {t.unit ? (
+          <span style={{ ...BODY_FONT, fontWeight: 600, fontSize: ".6em", letterSpacing: ".06em", color: "var(--ink2)", marginLeft: 2 }}>
+            {t.unit}
+          </span>
+        ) : null}
+      </span>
+      {t.targetDate && (
+        <span style={{ ...BODY_FONT, fontStyle: "italic", fontSize: 12.5, color: "var(--ink2)", flex: "none" }}>
+          by {day(t.targetDate)}
+        </span>
+      )}
+      <PaceChip pace={t.pace} />
+      {t.pace === "achieved" && t.achievedAt && (
+        <span style={{ ...DATA_FONT, fontSize: 11, color: "var(--ink3)", flex: "none" }}>{day(t.achievedAt)}</span>
+      )}
+      {t.pace === "open" && t.remaining != null && t.remaining > 0 && (
+        <span style={{ ...DATA_FONT, fontSize: 11, color: "var(--ink3)", fontVariantNumeric: "tabular-nums", flex: "none" }}>
+          {fmt(t.remaining, t.unit)} to go
+        </span>
+      )}
+      <span className="ml-auto flex items-center gap-2 flex-none">
+        {!confirming ? (
+          <button className="au-undo" style={{ marginLeft: 0 }} aria-label={`Remove target ${t.label}`} onClick={() => setConfirming(true)}>
+            ✕
+          </button>
+        ) : (
+          <>
+            <button className="au-undo" style={{ marginLeft: 0, color: "var(--danger)" }} onClick={remove} disabled={busy}>
+              {busy ? "removing…" : "remove?"}
+            </button>
+            <button className="au-undo" style={{ marginLeft: 0 }} onClick={() => setConfirming(false)} disabled={busy}>
+              keep
+            </button>
+          </>
+        )}
+      </span>
+      {err && <span className="au-kicker" style={{ fontSize: 12, color: "var(--danger)" }}>{err}</span>}
+    </div>
+  );
+}
+
+function SetTargetForm({ detail, onDone, onCancel }: { detail: Detail; onDone: () => Promise<void>; onCancel: () => void }) {
+  const [label, setLabel] = useState("");
+  const [value, setValue] = useState("");
+  const [unit, setUnit] = useState("");
+  const [dateStr, setDateStr] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const listId = `target-labels-${detail.id}`;
+  const labels = useMemo(() => Array.from(new Set(detail.series.map((s) => s.label))), [detail.series]);
+
+  const submit = async () => {
+    const v = Number(value);
+    // (!value.trim() matters: Number("") is 0, which is finite)
+    if (!label.trim() || !value.trim() || !Number.isFinite(v)) {
+      setErr("A target needs a label and a number.");
+      return;
+    }
+    // If the unit was left blank but the label matches exactly one existing
+    // series, adopt that series' unit — otherwise the target would key to
+    // "label|" while the numbers live under "label|lbs" and read "no numbers
+    // yet" forever. An explicit unit always wins.
+    let u = unit.trim();
+    if (!u) {
+      const matches = detail.series.filter((s) => s.label.trim().toLowerCase() === label.trim().toLowerCase());
+      if (matches.length === 1 && matches[0].unit) u = matches[0].unit;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/athletes/${encodeURIComponent(detail.id)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "setTarget",
+          label: label.trim(),
+          targetValue: v,
+          unit: u || undefined,
+          targetDate: dateStr || undefined,
+          note: note.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "Could not set the target");
+      await onDone();
+    } catch (e: any) {
+      setErr(e?.message ?? "Could not set the target");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: ".8rem" }}>
+      <div className="flex gap-2 flex-wrap items-center">
+        <input
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="Squat, 40, vertical…"
+          aria-label="Target label"
+          list={listId}
+          disabled={busy}
+          className={`${field} flex-1 min-w-[9rem]`}
+        />
+        <datalist id={listId}>
+          {labels.map((l) => (
+            <option key={l} value={l} />
+          ))}
+        </datalist>
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="Value"
+          aria-label="Target value"
+          inputMode="decimal"
+          disabled={busy}
+          className={`${field} w-24`}
+        />
+        <input
+          value={unit}
+          onChange={(e) => setUnit(e.target.value)}
+          placeholder="in / lbs / s"
+          aria-label="Target unit"
+          disabled={busy}
+          className={`${field} w-24`}
+        />
+        <input
+          type="date"
+          value={dateStr}
+          onChange={(e) => setDateStr(e.target.value)}
+          aria-label="Target date"
+          disabled={busy}
+          className={`${field} w-36`}
+        />
+        <input
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Note (optional)"
+          aria-label="Target note"
+          disabled={busy}
+          className={`${field} flex-1 min-w-[9rem]`}
+        />
+        <Btn onClick={submit} disabled={busy}>{busy ? "Setting…" : "Set it"}</Btn>
+        <button className="au-undo" style={{ marginLeft: 0 }} onClick={onCancel} disabled={busy}>cancel</button>
+      </div>
+      {err && (
+        <p className="au-kicker" style={{ display: "block", marginTop: ".6rem", color: "var(--danger)" }}>{err}</p>
+      )}
+    </div>
+  );
+}
+
+/* ═════════════════ sessions — logged in chat, shown here ═════════════════ */
+
+const NOTES_TRUNCATE = 140;
+
+function SessionsBlock({ name, sessions }: { name: string; sessions: SessionRow[] }) {
+  return (
+    <div>
+      <SectionLabel row>Sessions</SectionLabel>
+      {sessions.length === 0 ? (
+        <p className="au-kicker" style={{ display: "block", marginTop: ".8rem" }}>
+          no sessions logged yet — log them in chat (&ldquo;log a session for {name}…&rdquo;) and they&apos;ll show here
+        </p>
+      ) : (
+        sessions.map((s) => <SessionRowView key={s.id} s={s} />)
+      )}
+    </div>
+  );
+}
+
+function SessionRowView({ s }: { s: SessionRow }) {
+  const [expanded, setExpanded] = useState(false);
+  const notes = s.notes ?? "";
+  const long = notes.length > NOTES_TRUNCATE;
+  const shown = long && !expanded ? `${notes.slice(0, NOTES_TRUNCATE).trimEnd()}…` : notes;
+  return (
+    <div style={{ borderBottom: "1px solid var(--line1)", padding: ".55rem .1rem" }}>
+      <div className="flex items-baseline gap-3 flex-wrap">
+        <span style={{ ...DATA_FONT, fontSize: 11.5, color: "var(--ink2)", fontVariantNumeric: "tabular-nums" }}>
+          {s.happenedAt ? day(s.happenedAt) : "—"}
+        </span>
+        <span style={{ ...DATA_FONT, fontSize: 10.5, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink3)" }}>
+          {s.kind.replace(/_/g, " ")}
+        </span>
+        {s.durationMin != null && (
+          <span style={{ ...DATA_FONT, fontSize: 11, color: "var(--ink3)", fontVariantNumeric: "tabular-nums" }}>
+            {s.durationMin}min
+          </span>
+        )}
+      </div>
+      {notes && (
+        <p style={{ ...BODY_FONT, fontSize: 14, color: "var(--ink2)", marginTop: 2 }}>
+          {shown}
+          {long && (
+            <button className="au-undo" style={{ marginLeft: 8 }} onClick={() => setExpanded((v) => !v)}>
+              {expanded ? "less" : "more"}
+            </button>
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* ═════════════ the program sheet — Cole's ask, linked or embedded ═════════════ */
+
+type FeedbackView = {
+  header: string;
+  date: string;
+  session: string;
+  volume: string;
+  prs?: string;
+  observation: string;
+  wroteToSheet: boolean;
+  dayTab?: string;
+};
+
+function SheetBlock({ clientId, sheetUrl, onChanged }: {
+  clientId: string;
+  sheetUrl: string | null;
+  onChanged: () => Promise<void>;
+}) {
+  const [showEmbed, setShowEmbed] = useState(false); // collapsed by default
+  const [unlinkArm, setUnlinkArm] = useState(false);
+  const [busy, setBusy] = useState<null | "find" | "link" | "unlink" | "feedback">(null);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const [paste, setPaste] = useState("");
+  const [feedback, setFeedback] = useState<FeedbackView | null>(null);
+
+  const post = async (body: Record<string, unknown>) => {
+    const res = await fetch(`/api/athletes/${encodeURIComponent(clientId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error ?? "Sheet action failed");
+    return data;
+  };
+
+  const find = async () => {
+    setBusy("find");
+    setNote(null);
+    try {
+      const out = await post({ action: "findSheet" });
+      if (out.url) {
+        setNote({ ok: true, text: out.found ? `linked "${out.found}"` : "sheet linked" });
+        await onChanged();
+      } else {
+        // The honest dormant state — shown verbatim, never a fake link.
+        setNote({ ok: false, text: out.reason ?? "No sheet found." });
+      }
+    } catch (e: any) {
+      setNote({ ok: false, text: e?.message ?? "Could not search for the sheet" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const link = async (url: string) => {
+    setBusy(url ? "link" : "unlink");
+    setNote(null);
+    try {
+      await post({ action: "linkSheet", sheetUrl: url });
+      setPaste("");
+      setUnlinkArm(false);
+      setShowEmbed(false);
+      setNote(url ? null : { ok: true, text: "sheet unlinked" });
+      await onChanged();
+    } catch (e: any) {
+      setNote({ ok: false, text: e?.message ?? "Could not update the sheet link" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runFeedback = async () => {
+    setBusy("feedback");
+    setNote(null);
+    try {
+      // ok:false arrives with 200 — the reason is the content, shown verbatim.
+      const out = await post({ action: "sessionFeedback" });
+      if (!out.ok || !out.feedback) {
+        setFeedback(null);
+        setNote({ ok: false, text: out.error ?? "No feedback came back." });
+      } else {
+        setFeedback({ ...out.feedback, wroteToSheet: !!out.wroteToSheet, dayTab: out.dayTab });
+      }
+    } catch (e: any) {
+      setNote({ ok: false, text: e?.message ?? "Could not read the sheet" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const embedSrc = sheetUrl ? (sheetUrl.includes("?") ? sheetUrl : `${sheetUrl}?rm=minimal`) : null;
+
+  return (
+    <div>
+      <SectionLabel row>Program sheet</SectionLabel>
+      <div className="flex items-center gap-2 flex-wrap" style={{ marginTop: ".8rem" }}>
+        {sheetUrl ? (
+          <>
+            <a href={sheetUrl} target="_blank" rel="noopener noreferrer" className="au-btn-ghost" style={{ textDecoration: "none" }}>
+              Open sheet ↗
+            </a>
+            <Btn ghost onClick={() => setShowEmbed((v) => !v)} disabled={busy != null}>
+              {showEmbed ? "hide" : "show here"}
+            </Btn>
+            <Btn ghost onClick={runFeedback} disabled={busy != null}>
+              {busy === "feedback" ? "Reading…" : "Session feedback"}
+            </Btn>
+            {!unlinkArm ? (
+              <button className="au-undo" aria-label="Unlink sheet" onClick={() => setUnlinkArm(true)} disabled={busy != null}>
+                ✕
+              </button>
+            ) : (
+              <>
+                <button className="au-undo" style={{ marginLeft: 0, color: "var(--danger)" }} onClick={() => link("")} disabled={busy != null}>
+                  {busy === "unlink" ? "unlinking…" : "unlink?"}
+                </button>
+                <button className="au-undo" style={{ marginLeft: 0 }} onClick={() => setUnlinkArm(false)} disabled={busy != null}>
+                  keep
+                </button>
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            <Btn ghost onClick={find} disabled={busy != null}>
+              {busy === "find" ? "Searching…" : "Find their sheet"}
+            </Btn>
+            <Btn ghost onClick={runFeedback} disabled={busy != null}>
+              {busy === "feedback" ? "Reading…" : "Session feedback"}
+            </Btn>
+            <input
+              value={paste}
+              onChange={(e) => setPaste(e.target.value)}
+              placeholder="or paste the Sheets link"
+              aria-label="Google Sheets link"
+              disabled={busy != null}
+              className={`${field} flex-1 min-w-[12rem]`}
+            />
+            <Btn onClick={() => link(paste.trim())} disabled={busy != null || !paste.trim()}>
+              {busy === "link" ? "Linking…" : "Link it"}
+            </Btn>
+          </>
+        )}
+      </div>
+
+      {busy === "feedback" && (
+        <p className="au-kicker" style={{ display: "block", marginTop: ".6rem" }}>reading the sheet…</p>
+      )}
+      {note && (
+        <p className="au-kicker" style={{ display: "block", marginTop: ".6rem", color: note.ok ? "var(--gold)" : "var(--danger)" }}>
+          {note.text}
+        </p>
+      )}
+
+      {/* ── the feedback — same artifact the chat flow writes to the sheet ── */}
+      {feedback && (
+        <div style={{ borderTop: "1px solid var(--line1)", borderBottom: "1px solid var(--line1)", padding: ".9rem .2rem", marginTop: ".9rem" }}>
+          <div className="flex items-baseline justify-between gap-3">
+            <span style={{ ...BODY_FONT, fontWeight: 600, fontSize: 15.5, color: "var(--ink)" }}>{feedback.header}</span>
+            <button className="au-undo" aria-label="Dismiss feedback" onClick={() => setFeedback(null)}>✕</button>
+          </div>
+          <div style={{ ...DATA_FONT, fontSize: 11, letterSpacing: ".08em", color: "var(--ink3)", marginTop: 2 }}>
+            {feedback.date}
+            {feedback.dayTab ? ` · ${feedback.dayTab}` : ""}
+          </div>
+          <p style={{ ...BODY_FONT, fontSize: 14.5, color: "var(--ink2)", marginTop: ".6rem" }}>{feedback.session}</p>
+          <p style={{ ...BODY_FONT, fontSize: 14.5, color: "var(--ink2)", marginTop: ".4rem" }}>{feedback.volume}</p>
+          {feedback.prs && (
+            <p style={{ ...BODY_FONT, fontSize: 14.5, color: "var(--ink2)", marginTop: ".4rem" }}>{feedback.prs}</p>
+          )}
+          <p style={{ ...BODY_FONT, fontSize: 14.5, color: "var(--ink2)", marginTop: ".4rem" }}>{feedback.observation}</p>
+          <p className="au-kicker" style={{ display: "block", marginTop: ".6rem", fontSize: 12 }}>
+            {feedback.wroteToSheet
+              ? "also written to the sheet's Feedback tab"
+              : "couldn't write to the sheet — shown here only"}
+          </p>
+        </div>
+      )}
+
+      {sheetUrl && showEmbed && (
+        <div style={{ marginTop: ".8rem" }}>
+          <iframe
+            src={embedSrc!}
+            title="Program sheet"
+            loading="lazy"
+            className="au-card"
+            style={{ width: "100%", height: 420, border: "1px solid var(--line1)", borderRadius: 2, background: "var(--bg1)" }}
+          />
+          <p className="au-kicker" style={{ display: "block", marginTop: ".45rem", fontSize: 12.5 }}>
+            shows when you&apos;re signed into Google in this browser
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 

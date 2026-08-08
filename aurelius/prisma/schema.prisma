@@ -834,6 +834,11 @@ model Client {
 
   notes String?
 
+  // The athlete's program sheet (Google Sheets is the program-delivery layer,
+  // Cole's call). Stored per athlete so the Athletes tab can open/embed it;
+  // resolvable automatically via Drive search once Google auth is live.
+  sheetUrl String?
+
   // Retention cadence (Wave 4, dormant until there's a client). When set, the
   // retention sweep drafts a check-in once lastCheckInAt + checkInEveryDays is
   // due — so a paying athlete is never quietly neglected into a churn.
@@ -846,6 +851,7 @@ model Client {
   invoices       Invoice[]
   payments       Payment[]
   metrics        Metric[]
+  targets        AthleteTarget[]
   referralsGiven Referral[]   @relation("ReferrerClient")
 
   createdAt DateTime @default(now())
@@ -1292,6 +1298,27 @@ model OutwardArtifact {
 // ═══════════════════════════════════════════════════════════════════
 
 // A tracked performance number for a client — the proof engine's raw material
+// A target Cole sets for an athlete: "squat 315 by November". Gives a trend a
+// destination — pace (ahead/on/behind) is DERIVED from the metric series at
+// read time, never stored. achievedAt stamps the crossing (checked on every
+// logMetric write); a target with no date just measures distance.
+model AthleteTarget {
+  id       String @id @default(cuid())
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  label       String // matches Metric.label (case-insensitive)
+  unit        String? // matches Metric.unit — a kg target never judges an lbs series
+  targetValue Float
+  targetDate  DateTime?
+  note        String?
+
+  achievedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([clientId, achievedAt])
+}
+
 // and the athlete's own feedback loop. isPR marks a personal best, which is the
 // event that triggers a referral ask (peak) and a proof-content draft.
 model Metric {
