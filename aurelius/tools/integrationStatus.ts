@@ -273,6 +273,20 @@ export async function getIntegrations(): Promise<Integration[]> {
       need: "not built yet — build at Mac Mini deploy, gated by grants",
     },
     {
+      name: "Sentry",
+      status: "planned",
+      desc: "Error tracking with stack traces, both services — 'why did it break' without reading logs",
+      glyph: "⚠",
+      need: "not built yet — Cole-approved for the Mac Mini deploy (free tier, SENTRY_DSN each side)",
+    },
+    {
+      name: "MinIO media store",
+      status: "planned",
+      desc: "S3-compatible backend for the media host (host.ts is provider-swappable)",
+      glyph: "▧",
+      need: "Mac Mini deploy, CONDITIONAL — default stays local disk + NAS; adopt only if that proves insufficient",
+    },
+    {
       name: "Ollama (local)",
       status: "planned",
       desc: "Free local inference — embeddings + bulk background work",
