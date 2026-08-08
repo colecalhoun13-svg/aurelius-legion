@@ -10,8 +10,14 @@
 // empty state is the loudest thing on the screen and it names the actual
 // constraint — lead generation — rather than showing four proud zeroes and a
 // chart. Machinery is not achievement.
+//
+// ELEVATED IMPERIAL re-dress (docs/REDESIGN_PLAN.md): same panels, same
+// fetches, same handlers — new surfaces (open air / stone slab / one glass
+// tablet), the funnel colonnade above the kanban, and FLIP so advance/signed
+// visibly travel. Re-dress, never delete.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Panel, SectionLabel, Stat, Btn, Divider, useFlip, money, day } from "../../../components/kit";
 
 type Snapshot = {
   empty: boolean;
@@ -21,8 +27,11 @@ type Snapshot = {
   activeClients: number;
   engagementsByShape: { monthly: number; block: number; program: number };
   mrr: string;
+  mrrCents?: number;
   receivedThisMonth: string;
+  receivedThisMonthCents?: number;
   receivedAllTime: string;
+  receivedAllTimeCents?: number;
   outstanding: string;
   outstandingCents: number;
   overdueCount: number;
@@ -38,6 +47,7 @@ type Attention = {
 type Lead = {
   id: string; name: string; status: string; source: string; sport: string | null;
   nextAction: string | null; nextActionAt: string | null; referredBy: string | null;
+  lastContactAt: string | null;
 };
 
 type Client = {
@@ -99,8 +109,43 @@ type Analyst = { truth: string; ranked: ChannelStat[]; tooEarly: ChannelStat[]; 
 const STAGES = ["new", "contacted", "conversing", "proposed"] as const;
 const SOURCES = ["manual", "referral", "instagram", "email", "word_of_mouth", "website", "other"] as const;
 
-const money = (cents: number) => `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—");
+/* ── the momentum heat of a lead: how long since anyone touched them ── */
+const daysSince = (iso: string | null) =>
+  iso == null ? null : Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000));
+const dotHeat = (iso: string | null) => {
+  const d = daysSince(iso);
+  if (d == null) return "au-dot-never";
+  if (d <= 2) return "";
+  if (d <= 14) return "au-dot-cool";
+  return "au-dot-cold";
+};
+const heatBorder = (iso: string | null) => {
+  const d = daysSince(iso);
+  if (d == null) return "var(--gold-dim)";
+  if (d <= 2) return "var(--gold)";
+  if (d <= 14) return "rgba(212,175,55,.5)";
+  return "#5a5a52";
+};
+const ageLabel = (iso: string | null) => {
+  const d = daysSince(iso);
+  return d == null ? "never" : `${d}d`;
+};
+
+const roman = (n: number) => {
+  if (n <= 0) return "0";
+  const table: [number, string][] = [
+    [1000, "M"], [900, "CM"], [500, "D"], [400, "CD"], [100, "C"], [90, "XC"],
+    [50, "L"], [40, "XL"], [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"],
+  ];
+  let out = "";
+  let v = n;
+  for (const [k, s] of table) while (v >= k) { out += s; v -= k; }
+  return out;
+};
+
+const serifFont = { fontFamily: "var(--font-serif),Georgia,serif" } as const;
+const bodyFont = { fontFamily: "var(--font-body),Georgia,serif" } as const;
+const dataFont = { fontFamily: "var(--font-data),Arial,sans-serif" } as const;
 
 export default function BusinessPage() {
   const [data, setData] = useState<{
@@ -117,6 +162,8 @@ export default function BusinessPage() {
   // Transient success line — so an action that writes a Gmail draft / converts a
   // lead confirms it happened instead of succeeding silently (council UX).
   const [notice, setNotice] = useState<string | null>(null);
+  // Baselines/segments light after first paint so the gold draws itself in.
+  const [lit, setLit] = useState(false);
 
   const [openClient, setOpenClient] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -125,11 +172,19 @@ export default function BusinessPage() {
   const [referredBy, setReferredBy] = useState("");
   const [nextAction, setNextAction] = useState("");
 
-  const load = useCallback(async () => {
+  // THE MOVING PIPELINE — kanban cards carry data-flip-id; capture() runs in
+  // the same tick as setData so advance/signed visibly travel between columns.
+  const capture = useFlip([data]);
+  const captureRef = useRef(capture);
+  captureRef.current = capture;
+
+  const load = useCallback(async (animate = false) => {
     try {
       const res = await fetch("/api/crm");
       if (!res.ok) return setLoadFailed(true);
-      setData(await res.json());
+      const json = await res.json();
+      if (animate) captureRef.current();
+      setData(json);
       setLoadFailed(false);
     } catch {
       setLoadFailed(true);
@@ -137,6 +192,12 @@ export default function BusinessPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (data && !lit) {
+      const t = setTimeout(() => setLit(true), 120);
+      return () => clearTimeout(t);
+    }
+  }, [data, lit]);
 
   async function addLead(e: React.FormEvent) {
     e.preventDefault();
@@ -178,7 +239,7 @@ export default function BusinessPage() {
         body: JSON.stringify({ id, status, lastContactAt: new Date().toISOString() }),
       });
       if (!res.ok) throw new Error((await res.json())?.error ?? "Couldn't move that lead");
-      await load();
+      await load(true);
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally { setBusy(false); }
@@ -195,7 +256,7 @@ export default function BusinessPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? "Failed to convert");
-      await load();
+      await load(true);
       setNotice("Signed — they're in the Roster below. Add what they bought (engagement) to start the money.");
     } catch (err: any) {
       setError(err?.message ?? String(err));
@@ -204,11 +265,13 @@ export default function BusinessPage() {
 
   if (loadFailed) {
     return (
-      <div className="p-6">
-        <h1 className="aurelius-heading text-2xl text-aurelius-gold mb-3">Business</h1>
-        <div className="rounded border border-red-500/40 bg-red-950/20 p-4 text-sm text-red-200">
-          Couldn&apos;t load the business. This is a loading failure, not an empty pipeline — your data is fine.
-          <button onClick={load} className="ml-3 underline hover:text-red-100">Retry</button>
+      <div className="au-horizon">
+        <div className="p-6 max-w-6xl mx-auto">
+          <h1 className="au-title" style={{ fontSize: "clamp(2rem,5vw,2.6rem)", lineHeight: 1.1 }}>Business</h1>
+          <div className="rounded-[2px] border border-red-500/40 bg-red-950/20 p-4 text-sm text-red-200 mt-4">
+            Couldn&apos;t load the business. This is a loading failure, not an empty pipeline — your data is fine.
+            <button onClick={() => load()} className="ml-3 underline hover:text-red-100">Retry</button>
+          </div>
         </div>
       </div>
     );
@@ -221,21 +284,36 @@ export default function BusinessPage() {
   const attentionCount =
     attention.blocksEnding.length + attention.renewalsDue.length + attention.followUpsOverdue.length + attention.unpaid.length;
 
+  // THE TREASURY — committed hollow outline, received emerald, outstanding
+  // amber stripes, all against the snapshot's real cents. Extent is the wider
+  // of committed vs. what's actually moving, so nothing is ever clipped.
+  const committedCents = snap.mrrCents ?? 0;
+  const receivedCents = snap.receivedThisMonthCents ?? 0;
+  const treExtent = Math.max(committedCents, receivedCents + snap.outstandingCents, 1);
+  const treRecvPct = (receivedCents / treExtent) * 100;
+  const treOutPct = (snap.outstandingCents / treExtent) * 100;
+
   return (
-    <div className="p-6 max-w-6xl mx-auto pb-24">
-      <header className="mb-4">
-        <h1 className="aurelius-heading text-2xl text-aurelius-gold">Business</h1>
-        <p className="text-xs text-aurelius-text/60 mt-1">
+    <div className="au-horizon">
+      <div className="p-6 max-w-6xl mx-auto pb-24 relative">
+      <header className="mb-5 text-center">
+        <h1 className="au-title" style={{ fontSize: "clamp(2rem,5vw,2.6rem)", lineHeight: 1.1, margin: 0 }}>
+          Business
+        </h1>
+        <p className="au-kicker" style={{ display: "block", marginTop: ".5rem", fontSize: "1.05rem", color: "var(--ink2)" }}>
+          Aurelius runs it through the night — you rule on what leaves.
+        </p>
+        <p className="au-kicker" style={{ display: "block", marginTop: ".7rem", fontSize: 13.5, maxWidth: "44rem", marginLeft: "auto", marginRight: "auto" }}>
           The remote coaching business you own. Athletes at the gym aren&apos;t here — those are your employer&apos;s.
         </p>
-        <p className="text-[11px] text-aurelius-gold/55 mt-1 leading-relaxed">
+        <p className="au-kicker" style={{ display: "block", marginTop: ".35rem", fontSize: 13.5, maxWidth: "44rem", marginLeft: "auto", marginRight: "auto", lineHeight: 1.6 }}>
           Aurelius works this on its own — drafts outreach overnight, sweeps follow-ups &amp; renewals daily, records
           money as it lands. You&apos;re here to review and approve, not to do data entry. What needs you is up top.
         </p>
         {/* The front door, from the inside. /start is public and outside the
             app lock — this is how Cole finds it, checks what a stranger sees,
             and grabs the link to put anywhere. */}
-        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
+        <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 mt-2">
           <a href="/start" target="_blank" rel="noreferrer" className="text-[11px] text-aurelius-gold/70 hover:text-aurelius-gold inline-block">
             your front door (/start) — where prospects land →
           </a>
@@ -248,12 +326,16 @@ export default function BusinessPage() {
       {/* Sticky jump-nav — a thin blurred layer so the long page is navigable
           on a phone in one tap instead of a multi-thousand-pixel scroll. */}
       <nav className="aurelius-jumpnav sticky top-0 z-20 -mx-6 px-6 py-2 mb-4 border-y border-aurelius-gold/15 overflow-x-auto">
-        <div className="flex gap-2 text-[11px] whitespace-nowrap">
+        <div className="flex gap-2 text-[11px] whitespace-nowrap justify-start md:justify-center">
           {[
             ["read", "The read"], ["needs", "Needs you"], ["sell", "Sell"], ["say", "Say"],
             ["content", "Content"], ["warm", "Warm list"], ["pipeline", "Pipeline"], ["roster", "Roster"], ["growth", "Growth"],
           ].map(([id, label]) => (
-            <a key={id} href={`#${id}`} className="px-2.5 py-1 rounded-full border border-aurelius-gold/25 text-aurelius-gold/75 hover:text-aurelius-gold hover:border-aurelius-gold/55 transition-colors">
+            <a
+              key={id} href={`#${id}`}
+              className="px-2.5 py-1 border border-aurelius-gold/25 text-aurelius-gold/75 hover:text-aurelius-gold hover:border-aurelius-gold/55 transition-colors"
+              style={{ ...bodyFont, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".18em", borderRadius: 2 }}
+            >
               {label}
             </a>
           ))}
@@ -261,10 +343,10 @@ export default function BusinessPage() {
       </nav>
 
       {error && (
-        <div className="rounded border border-red-500/40 bg-red-950/20 p-3 text-sm text-red-200 mb-4">{error}</div>
+        <div className="rounded-[2px] border border-red-500/40 bg-red-950/20 p-3 text-sm text-red-200 mb-4">{error}</div>
       )}
       {notice && (
-        <div className="rounded border border-emerald-500/40 bg-emerald-950/20 p-3 text-sm text-emerald-200 mb-4 flex items-center justify-between gap-3">
+        <div className="rounded-[2px] border border-emerald-500/40 bg-emerald-950/20 p-3 text-sm text-emerald-200 mb-4 flex items-center justify-between gap-3">
           <span>{notice}</span>
           {notice.toLowerCase().includes("gmail") && (
             <a href="https://mail.google.com/mail/u/0/#drafts" target="_blank" rel="noreferrer" className="shrink-0 underline hover:text-emerald-100">
@@ -274,19 +356,26 @@ export default function BusinessPage() {
         </div>
       )}
 
-      <div className="aurelius-reveal space-y-6">
-      {/* THE ANALYST — one confronting truth about the funnel. Names the leak
-          before the win; refuses to crown a winner on too little data. */}
+      <div className="aurelius-reveal space-y-8">
+      {/* THE ANALYST — one confronting truth about the funnel, spoken as the
+          oracle line. Names the leak before the win; refuses to crown a winner
+          on too little data. */}
       {analyst && (
-        <section id="read" className="aurelius-panel-frame p-4 scroll-mt-24">
-          <div className="aurelius-heading text-[11px] uppercase tracking-[0.2em] text-aurelius-gold/80 mb-2">The read</div>
-          <p className="text-sm text-aurelius-text/90 leading-relaxed">{analyst.truth}</p>
+        <section id="read" className="scroll-mt-24">
+          <SectionLabel>The read</SectionLabel>
+          <p style={{
+            ...bodyFont, margin: "1.4rem auto 0", maxWidth: "44rem", textAlign: "center",
+            fontWeight: 500, fontStyle: "italic", fontSize: "clamp(1.25rem,3vw,1.6rem)",
+            lineHeight: 1.65, color: "var(--ink)",
+          }}>
+            {analyst.truth}
+          </p>
           {analyst.ranked.length > 0 && (
-            <ul className="mt-3 text-xs space-y-1">
+            <ul className="mt-4 text-xs space-y-1 max-w-md mx-auto">
               {analyst.ranked.map((c) => (
                 <li key={c.channel} className="flex justify-between gap-3 text-neutral-400">
-                  <span className="text-neutral-300">{c.channel}</span>
-                  <span>
+                  <span className="text-neutral-300" style={{ ...bodyFont, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".18em" }}>{c.channel}</span>
+                  <span style={{ ...dataFont, fontVariantNumeric: "tabular-nums", letterSpacing: ".04em" }}>
                     {c.clicks} click{c.clicks === 1 ? "" : "s"} · {c.leads} lead{c.leads === 1 ? "" : "s"}
                     {c.conversionPct != null ? ` · ${c.conversionPct}% conv` : ""}
                     {c.earnedCents > 0 ? ` · ${money(c.earnedCents)}` : ""}
@@ -296,52 +385,49 @@ export default function BusinessPage() {
             </ul>
           )}
           {analyst.tooEarly.length > 0 && (
-            <p className="mt-2 text-[11px] text-neutral-500">
+            <p className="au-kicker mt-3" style={{ display: "block", textAlign: "center", fontSize: 13 }}>
               Too early to rank: {analyst.tooEarly.map((c) => c.channel).join(", ")} — not enough data yet.
             </p>
           )}
         </section>
       )}
 
-      {/* ── What costs money if ignored — PROMOTED above the ledger/links: the
-          analyst reads the situation, this is the to-do it produces. ─ */}
+      {/* ── What costs money if ignored — THE glass tablet. The analyst reads
+          the situation, this is the to-do it produces. ─ */}
       {attentionCount > 0 && (
-        <section id="needs" className="aurelius-panel-frame p-4 scroll-mt-24">
-          <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/85 mb-3">
-            Needs you
-          </h2>
+        <Panel tier="glass" id="needs" label={`Needs you · ${roman(attentionCount)}`} labelGold>
           <ul className="space-y-2 text-sm">
             {attention.blocksEnding.map((b) => (
               <li key={b.engagementId} className="flex justify-between gap-4 text-aurelius-text/90">
-                <span><strong className="text-aurelius-gold/90">{b.client}</strong> — {b.title} ends {day(b.endsAt)}. Re-sign conversation is now.</span>
+                <span><strong style={{ color: "var(--gold)" }}>{b.client}</strong> — {b.title} ends {day(b.endsAt)}. Re-sign conversation is now.</span>
               </li>
             ))}
             {attention.renewalsDue.map((r) => (
               <li key={r.engagementId} className="flex justify-between gap-4 text-aurelius-text/90">
-                <span><strong className="text-aurelius-gold/90">{r.client}</strong> — {r.amount} renews {day(r.nextBillingAt)}.</span>
+                <span><strong style={{ color: "var(--gold)" }}>{r.client}</strong> — {r.amount} renews {day(r.nextBillingAt)}.</span>
               </li>
             ))}
             {attention.followUpsOverdue.map((f) => (
-              <li key={f.leadId} className="flex justify-between gap-4 text-amber-200/90">
+              <li key={f.leadId} className="flex justify-between gap-4" style={{ color: "var(--attn)" }}>
                 <span><strong>{f.name}</strong> — {f.action ?? "follow up"} was due {day(f.dueAt)}.</span>
               </li>
             ))}
             {attention.unpaid.map((u) => (
-              <li key={u.id} className={`flex justify-between gap-4 ${u.overdue ? "text-red-300" : "text-aurelius-text/90"}`}>
-                <span>
+              <li key={u.id} className="flex justify-between gap-4" style={u.overdue ? { color: "var(--danger)" } : undefined}>
+                <span className={u.overdue ? undefined : "text-aurelius-text/90"}>
                   <strong>{u.client}</strong> owes {money(u.outstandingCents)}
                   {u.description ? ` — ${u.description}` : ""}{u.overdue ? " (overdue)" : ""}
                 </span>
               </li>
             ))}
           </ul>
-        </section>
+        </Panel>
       )}
 
       {/* ── The honest headline ──────────────────────────────────── */}
       {snap.empty ? (
-        <section className="aurelius-panel-frame aurelius-priority p-5 scroll-mt-24">
-          <div className="aurelius-heading text-amber-300 text-sm uppercase tracking-[0.2em] mb-2">
+        <section className="au-card p-5 scroll-mt-24" style={{ borderColor: "rgba(217,164,65,.4)" }}>
+          <div className="au-label-row" style={{ color: "var(--attn)", marginBottom: ".8rem" }}>
             The pipeline is empty
           </div>
           <p className="text-aurelius-text/90 leading-relaxed">
@@ -355,15 +441,16 @@ export default function BusinessPage() {
           </p>
         </section>
       ) : (
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <section className={`grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-8 scroll-mt-24 ${lit ? "au-lit" : ""}`}>
           <Stat label="Active clients" value={String(snap.activeClients)} />
           <Stat label="Open leads" value={String(snap.openLeads)} />
           <Stat label="Committed / mo" value={snap.mrr} hint={`${snap.engagementsByShape.monthly} monthly`} />
           <Stat
             label="Received this month"
+            tone={snap.overdueCount > 0 ? "alert" : "money"}
+            countUpCents={snap.receivedThisMonthCents}
             value={snap.receivedThisMonth}
             hint={snap.outstandingCents > 0 ? `${snap.outstanding} outstanding` : undefined}
-            alert={snap.overdueCount > 0}
           />
         </section>
       )}
@@ -374,50 +461,85 @@ export default function BusinessPage() {
         <div id="warm" className="scroll-mt-24"><WarmList onChange={load} empty={snap.empty} /></div>
       )}
 
-      {/* ── The money ledger: earned money, traced to what earned it ─ */}
+      {/* ── The treasury: earned money, traced to what earned it ─── */}
       {ledger && ledger.earnedCents > 0 && (
-        <section className="aurelius-panel-frame p-4 scroll-mt-24" style={{ borderColor: "rgba(16,185,129,0.3)" }}>
-          <div className="flex items-baseline justify-between mb-3">
-            <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-emerald-300/80">Earned</h2>
-            <span className="text-xs text-neutral-400">
-              {ledger.paymentCount} payment{ledger.paymentCount === 1 ? "" : "s"}
-              {ledger.selfRecordedCents > 0 ? ` · ${money(ledger.selfRecordedCents)} self-recorded` : ""}
+        <section className={`scroll-mt-24 ${lit ? "au-lit" : ""}`}>
+          <SectionLabel>The treasury</SectionLabel>
+          <div style={{ height: "1.1rem" }} />
+          <div style={{
+            ...dataFont, display: "flex", gap: "1.4rem", flexWrap: "wrap", justifyContent: "center",
+            fontWeight: 600, fontSize: 13.5, letterSpacing: ".06em", textTransform: "uppercase",
+            color: "var(--ink3)", marginBottom: ".9rem", fontVariantNumeric: "tabular-nums",
+          }}>
+            <span>
+              <i style={{ display: "inline-block", width: 8, height: 8, borderRadius: 1, marginRight: ".45em", background: "var(--money)" }} />
+              <b style={{ color: "var(--money)" }}>{snap.receivedThisMonth}</b>&nbsp;received
+            </span>
+            {snap.outstandingCents > 0 && (
+              <span>
+                <i style={{ display: "inline-block", width: 8, height: 8, borderRadius: 1, marginRight: ".45em", background: "var(--attn)" }} />
+                <b style={{ color: "var(--attn)" }}>{snap.outstanding}</b>&nbsp;outstanding
+                {snap.overdueCount > 0 ? ` · ${snap.overdueCount} overdue` : ""}
+              </span>
+            )}
+            <span>
+              <i style={{ display: "inline-block", width: 8, height: 8, borderRadius: 1, marginRight: ".45em", border: "1px solid var(--gold-line)", background: "none" }} />
+              of&nbsp;<b style={{ color: "var(--ink2)" }}>{snap.mrr}/mo</b>&nbsp;committed
             </span>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <Stat label="Earned all-time" value={ledger.earned} />
-            <Stat label="Earned this month" value={ledger.earnedThisMonth} />
-            {ledger.byChannel[0] && ledger.byChannel[0].channel !== "unattributed" && (
-              <Stat label="Top channel" value={ledger.byChannel[0].channel} hint={ledger.byChannel[0].label} />
+          <div className="au-tre" style={{ maxWidth: 760, margin: "0 auto" }}>
+            <div className="au-tre-committed" />
+            {receivedCents > 0 && <div className="au-tre-seg au-tre-recv" style={{ width: `${treRecvPct}%` }} />}
+            {snap.outstandingCents > 0 && (
+              <div className="au-tre-seg au-tre-out" style={{ left: `calc(${treRecvPct}% + 4px)`, width: `${treOutPct}%` }} />
             )}
           </div>
+          <p className="au-kicker" style={{ display: "block", textAlign: "center", marginTop: "1rem", fontSize: 14 }}>
+            {ledger.paymentCount} payment{ledger.paymentCount === 1 ? "" : "s"} recorded
+            {ledger.selfRecordedCents > 0 ? ` · ${money(ledger.selfRecordedCents)} self-recorded by Aurelius` : ""}
+          </p>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-8 mt-8">
+            <Stat label="Earned all-time" tone="money" countUpCents={ledger.earnedCents} value={ledger.earned} />
+            <Stat label="Earned this month" value={ledger.earnedThisMonth} />
+            {ledger.byChannel[0] && ledger.byChannel[0].channel !== "unattributed" && (
+              <Stat
+                label="Top channel"
+                value={<span style={{ fontSize: "1.5rem" }}>{ledger.byChannel[0].channel}</span>}
+                hint={ledger.byChannel[0].label}
+              />
+            )}
+          </div>
+
           {ledger.byChannel.length > 0 && (
-            <div className="mt-3 text-xs text-neutral-400 space-y-1">
-              <div className="uppercase tracking-wider text-neutral-500">Earned by channel</div>
+            <div className="mt-6 text-xs text-neutral-400 space-y-1 max-w-md mx-auto">
+              <div style={{ ...bodyFont, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".22em", color: "var(--ink3)" }}>Earned by channel</div>
               {ledger.byChannel.map((c) => (
                 <div key={c.channel} className="flex justify-between gap-4">
                   <span>{c.channel}</span>
-                  <span className="text-emerald-300/80">{c.label}</span>
+                  <span style={{ color: "var(--money)" }}>{c.label}</span>
                 </div>
               ))}
             </div>
           )}
           {ledger.byAngle.length > 0 && (
-            <div className="mt-3 text-xs text-neutral-400 space-y-1">
-              <div className="uppercase tracking-wider text-neutral-500">Earned by angle</div>
+            <div className="mt-4 text-xs text-neutral-400 space-y-1 max-w-md mx-auto">
+              <div style={{ ...bodyFont, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".22em", color: "var(--ink3)" }}>Earned by angle</div>
               {ledger.byAngle.map((a) => (
                 <div key={a.angle} className="flex justify-between gap-4">
                   <span className="truncate">{a.angle}</span>
-                  <span className="text-emerald-300/80 shrink-0">{a.label}</span>
+                  <span className="shrink-0" style={{ color: "var(--money)" }}>{a.label}</span>
                 </div>
               ))}
             </div>
           )}
-          <p className="mt-3 text-[11px] text-neutral-500">
+          <p className="au-kicker" style={{ display: "block", textAlign: "center", marginTop: "1.2rem", fontSize: 13 }}>
             Earned is money that actually arrived — the sum of payments, never a projection. Committed/mo above is what recurs; this is what landed.
           </p>
         </section>
       )}
+
+      <Divider capital />
 
       {/* The funnel, in order: what you sell → what you say → who you say it
           to → who's in → who's paying. Each section stays on screen when it's
@@ -437,158 +559,154 @@ export default function BusinessPage() {
         <div id="warm" className="scroll-mt-24"><WarmList onChange={load} empty={snap.empty} /></div>
       )}
 
-      {/* ── Tracked links: DIAGNOSTICS — demoted below the day's work. ─ */}
-      {trackLinks && trackLinks.length > 0 && (
-        <section className="aurelius-panel-frame p-4 scroll-mt-24">
-          <div className="flex items-baseline justify-between mb-2">
-            <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80">Your links</h2>
-            <span className="text-[11px] text-neutral-400">clicks → leads, per link</span>
-          </div>
-          <ul className="space-y-1.5 text-xs">
-            {trackLinks.map((l) => (
-              <li key={l.id} className="flex items-center justify-between gap-3">
-                <span className="flex-1 min-w-0 truncate text-neutral-300">
-                  <span className="text-neutral-500">{l.channel}</span>
-                  {l.label ? <span> · {l.label}</span> : null}
-                  <span className="text-neutral-500"> · /l/{l.code}</span>
-                </span>
-                <span className="text-neutral-400 shrink-0">
-                  {l.clickCount} click{l.clickCount === 1 ? "" : "s"} · {l._count.leads} lead{l._count.leads === 1 ? "" : "s"}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* ── Growth: integrations, partnerships, paid ─────────────── */}
-      <div id="growth" className="scroll-mt-24"><GrowthPanel /></div>
+      <Divider />
 
       {/* ── Add a lead ───────────────────────────────────────────── */}
-      <section className="aurelius-panel-frame p-4">
-        <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/85 mb-3">
-          Add someone
-        </h2>
+      <section className="au-card p-4">
+        <SectionLabel row>Add someone</SectionLabel>
+        <div style={{ height: ".9rem" }} />
         <form onSubmit={addLead} className="grid grid-cols-1 md:grid-cols-5 gap-2">
           <input
             value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required
             aria-label="Name" autoCapitalize="words" autoComplete="name"
-            className="md:col-span-1 bg-black/50 border border-aurelius-gold/30 rounded px-3 py-2 text-sm text-aurelius-text placeholder:text-aurelius-text/60"
+            className="md:col-span-1 bg-black/50 border border-aurelius-gold/30 rounded-[2px] px-3 py-2 text-sm text-aurelius-text placeholder:text-aurelius-text/60"
           />
           <input
             value={sport} onChange={(e) => setSport(e.target.value)} placeholder="Sport"
-            className="bg-black/50 border border-aurelius-gold/30 rounded px-3 py-2 text-sm text-aurelius-text placeholder:text-aurelius-text/30"
+            className="bg-black/50 border border-aurelius-gold/30 rounded-[2px] px-3 py-2 text-sm text-aurelius-text placeholder:text-aurelius-text/30"
           />
           <select
             value={source} onChange={(e) => setSource(e.target.value)}
-            className="bg-black/50 border border-aurelius-gold/30 rounded px-3 py-2 text-sm text-aurelius-text"
+            className="bg-black/50 border border-aurelius-gold/30 rounded-[2px] px-3 py-2 text-sm text-aurelius-text"
           >
             {SOURCES.map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}
           </select>
           <input
             value={referredBy} onChange={(e) => setReferredBy(e.target.value)} placeholder="Referred by"
-            className="bg-black/50 border border-aurelius-gold/30 rounded px-3 py-2 text-sm text-aurelius-text placeholder:text-aurelius-text/30"
+            className="bg-black/50 border border-aurelius-gold/30 rounded-[2px] px-3 py-2 text-sm text-aurelius-text placeholder:text-aurelius-text/30"
           />
           <input
             value={nextAction} onChange={(e) => setNextAction(e.target.value)} placeholder="Next action"
-            className="bg-black/50 border border-aurelius-gold/30 rounded px-3 py-2 text-sm text-aurelius-text placeholder:text-aurelius-text/30"
+            className="bg-black/50 border border-aurelius-gold/30 rounded-[2px] px-3 py-2 text-sm text-aurelius-text placeholder:text-aurelius-text/30"
           />
-          <button
-            type="submit" disabled={busy || !name.trim()}
-            className="aurelius-btn-primary md:col-span-5 mt-1 py-2 text-sm disabled:opacity-40"
-          >
+          {/* The one primary of this section — the letterpress gold. */}
+          <Btn type="submit" disabled={busy || !name.trim()} className="md:col-span-5 mt-1">
             {busy ? "Saving…" : "Add to pipeline"}
-          </button>
+          </Btn>
         </form>
       </section>
 
-      {/* ── Pipeline ─────────────────────────────────────────────── */}
-      {openLeads.length > 0 && (
-        <section id="pipeline" className="aurelius-panel-frame p-4 scroll-mt-24">
-          <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/85 mb-3">
-            Pipeline · {openLeads.length}
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            {STAGES.map((stage) => {
-              const inStage = openLeads.filter((l) => l.status === stage);
-              return (
-                <div key={stage} className="min-h-[4rem]">
-                  <div className="text-[10px] uppercase tracking-[0.2em] text-aurelius-gold/50 mb-2">
-                    {stage} · {inStage.length}
-                  </div>
-                  <div className="space-y-2">
-                    {inStage.map((l) => (
-                      <div key={l.id} className="rounded border border-aurelius-gold/20 bg-black/50 p-2 text-sm">
-                        <div className="text-aurelius-text/90">{l.name}</div>
-                        {(l.sport || l.referredBy) && (
-                          <div className="text-[11px] text-aurelius-text/60">
-                            {[l.sport, l.referredBy ? `via ${l.referredBy}` : null].filter(Boolean).join(" · ")}
+      {/* ── Pipeline: the colonnade above, the workbench below ───── */}
+      {leads.length > 0 && (
+        <section id="pipeline" className="scroll-mt-24">
+          <SectionLabel>
+            The pipeline{openLeads.length > 0 ? <> · <span key={openLeads.length} className="au-tickin">{openLeads.length}</span></> : null}
+          </SectionLabel>
+
+          {/* THE FUNNEL COLONNADE — five chambers, floor-glow by count, one
+              dot per lead with momentum heat. Same data as the kanban. */}
+          <FunnelColonnade leads={leads} />
+
+          {openLeads.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-8">
+              {STAGES.map((stage) => {
+                const inStage = openLeads.filter((l) => l.status === stage);
+                return (
+                  <div key={stage} className="min-h-[4rem]">
+                    <div style={{
+                      ...bodyFont, fontWeight: 600, fontSize: 12, letterSpacing: ".24em",
+                      textTransform: "uppercase", color: "var(--ink3)", marginBottom: ".6rem", textAlign: "center",
+                    }}>
+                      {stage} · <b style={{ color: "var(--ink2)", fontVariantNumeric: "tabular-nums" }}>
+                        <span key={inStage.length} className="au-tickin">{inStage.length}</span>
+                      </b>
+                    </div>
+                    <div className="space-y-2">
+                      {inStage.map((l) => (
+                        <div
+                          key={l.id} data-flip-id={l.id}
+                          className="au-card p-3 text-sm"
+                          style={{ borderLeft: `2px solid ${heatBorder(l.lastContactAt)}` }}
+                        >
+                          <div className="flex justify-between gap-2">
+                            <span className="text-aurelius-text/90">{l.name}</span>
+                            <span style={{ ...dataFont, fontSize: 11.5, color: "var(--ink3)", fontVariantNumeric: "tabular-nums" }}>
+                              {ageLabel(l.lastContactAt)}
+                            </span>
                           </div>
-                        )}
-                        {l.nextAction && (
-                          <div className="text-[11px] text-amber-200/70 mt-1">→ {l.nextAction}</div>
-                        )}
-                        <div className="flex flex-wrap gap-2 mt-2">
-                          {STAGES.indexOf(stage) < STAGES.length - 1 && (
-                            <button
-                              onClick={() => moveLead(l.id, STAGES[STAGES.indexOf(stage) + 1]!)}
-                              disabled={busy}
-                              className="text-[11px] px-2 py-1 rounded border border-aurelius-gold/40 text-aurelius-gold/80 hover:text-aurelius-gold hover:border-aurelius-gold/70 disabled:opacity-40"
-                            >
-                              advance →
-                            </button>
+                          {(l.sport || l.referredBy) && (
+                            <div className="au-kicker" style={{ fontSize: 13 }}>
+                              {[l.sport, l.referredBy ? `via ${l.referredBy}` : null].filter(Boolean).join(" · ")}
+                            </div>
                           )}
-                          <button
-                            onClick={() => convert(l.id)} disabled={busy}
-                            className="text-[11px] px-2 py-1 rounded text-emerald-400/90 hover:text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40"
-                          >
-                            signed
-                          </button>
-                          <button
-                            onClick={async () => {
-                              setBusy(true); setError(null); setNotice(null);
-                              try {
-                                const res = await fetch("/api/crm/leads/draft", {
-                                  method: "POST",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ kind: "draft", leadId: l.id }),
-                                });
-                                const j = await res.json();
-                                if (!res.ok) throw new Error(j?.error ?? "Draft failed");
-                                await load();
-                                setNotice(`Drafted a message to ${l.name} in your Gmail drafts — review and send.`);
-                              } catch (e: any) { setError(e?.message ?? String(e)); }
-                              finally { setBusy(false); }
-                            }}
-                            disabled={busy}
-                            className="text-[11px] px-2 py-1 rounded text-aurelius-gold/80 hover:text-aurelius-gold hover:bg-aurelius-gold/10 disabled:opacity-40"
-                            title="Researches them and drafts a message into your Gmail drafts. Never sends."
-                          >
-                            draft msg
-                          </button>
-                          <button
-                            onClick={() => moveLead(l.id, "lost")} disabled={busy}
-                            className="text-[11px] px-2 py-1 rounded text-aurelius-text/50 hover:text-aurelius-text/80 disabled:opacity-40"
-                          >
-                            lost
-                          </button>
+                          {l.nextAction && (
+                            <div className="text-[11px] mt-1" style={{ color: "var(--attn)" }}>→ {l.nextAction}</div>
+                          )}
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {STAGES.indexOf(stage) < STAGES.length - 1 && (
+                              <button
+                                onClick={() => moveLead(l.id, STAGES[STAGES.indexOf(stage) + 1]!)}
+                                disabled={busy}
+                                className="text-[11px] px-2 py-1 rounded-[2px] border border-aurelius-gold/40 text-aurelius-gold/80 hover:text-aurelius-gold hover:border-aurelius-gold/70 disabled:opacity-40"
+                                style={{ ...bodyFont, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em" }}
+                              >
+                                advance →
+                              </button>
+                            )}
+                            <button
+                              onClick={() => convert(l.id)} disabled={busy}
+                              className="text-[11px] px-2 py-1 rounded-[2px] text-emerald-400/90 hover:text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40"
+                              style={{ ...bodyFont, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em" }}
+                            >
+                              signed
+                            </button>
+                            <button
+                              onClick={async () => {
+                                setBusy(true); setError(null); setNotice(null);
+                                try {
+                                  const res = await fetch("/api/crm/leads/draft", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ kind: "draft", leadId: l.id }),
+                                  });
+                                  const j = await res.json();
+                                  if (!res.ok) throw new Error(j?.error ?? "Draft failed");
+                                  await load();
+                                  setNotice(`Drafted a message to ${l.name} in your Gmail drafts — review and send.`);
+                                } catch (e: any) { setError(e?.message ?? String(e)); }
+                                finally { setBusy(false); }
+                              }}
+                              disabled={busy}
+                              className="text-[11px] px-2 py-1 rounded-[2px] text-aurelius-gold/80 hover:text-aurelius-gold hover:bg-aurelius-gold/10 disabled:opacity-40"
+                              style={{ ...bodyFont, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em" }}
+                              title="Researches them and drafts a message into your Gmail drafts. Never sends."
+                            >
+                              draft msg
+                            </button>
+                            <button
+                              onClick={() => moveLead(l.id, "lost")} disabled={busy}
+                              className="text-[11px] px-2 py-1 rounded-[2px] text-aurelius-text/50 hover:text-aurelius-text/80 disabled:opacity-40"
+                              style={{ ...bodyFont, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em" }}
+                            >
+                              lost
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </section>
       )}
 
       {/* ── Roster ───────────────────────────────────────────────── */}
       {clients.length > 0 && (
-        <section id="roster" className="aurelius-panel-frame p-4 scroll-mt-24">
-          <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/85 mb-3">
-            Roster · {clients.length}
-          </h2>
+        <section id="roster" className="au-card p-4 scroll-mt-24">
+          <SectionLabel row>Roster · {clients.length}</SectionLabel>
+          <div style={{ height: ".6rem" }} />
           <ul className="divide-y divide-aurelius-gold/10">
             {clients.map((c) => (
               <li key={c.id} className="py-2">
@@ -598,7 +716,7 @@ export default function BusinessPage() {
                 >
                   <div>
                     <div className="text-aurelius-text/90 text-sm">{c.name}</div>
-                    <div className="text-[11px] text-aurelius-text/60">
+                    <div className="au-kicker" style={{ fontSize: 13 }}>
                       {[c.sport, c.status !== "active" ? c.status : null].filter(Boolean).join(" · ") || "—"}
                     </div>
                   </div>
@@ -606,7 +724,7 @@ export default function BusinessPage() {
                     {c.engagements.length === 0 ? (
                       // This label used to be a dead end — the page said an
                       // engagement was missing and gave no way to add one.
-                      <span className="text-amber-300/70">no engagement recorded — tap to add</span>
+                      <span style={{ color: "var(--attn)" }}>no engagement recorded — tap to add</span>
                     ) : (
                       c.engagements.map((e) => (
                         <div key={e.id}>{e.title} · {money(e.priceCents)}{e.shape === "monthly" ? "/mo" : ""}</div>
@@ -620,7 +738,142 @@ export default function BusinessPage() {
           </ul>
         </section>
       )}
+
+      <Divider />
+
+      {/* ── Growth: integrations, partnerships, paid ─────────────── */}
+      <div id="growth" className="scroll-mt-24"><GrowthPanel /></div>
+
+      {/* ── Tracked links: DIAGNOSTICS — demoted to the bottom of the page. ─ */}
+      {trackLinks && trackLinks.length > 0 && (
+        <section className="scroll-mt-24">
+          <SectionLabel>Diagnostics — your links</SectionLabel>
+          <p className="au-kicker" style={{ display: "block", textAlign: "center", marginTop: ".4rem", fontSize: 13 }}>
+            clicks → leads, per link
+          </p>
+          <ul className="space-y-1.5 text-xs max-w-2xl mx-auto mt-3">
+            {trackLinks.map((l) => (
+              <li key={l.id} className="flex items-center justify-between gap-3">
+                <span className="flex-1 min-w-0 truncate text-neutral-300">
+                  <span className="text-neutral-500">{l.channel}</span>
+                  {l.label ? <span> · {l.label}</span> : null}
+                  <span className="text-neutral-500"> · /l/{l.code}</span>
+                </span>
+                <span className="text-neutral-400 shrink-0" style={{ ...dataFont, fontVariantNumeric: "tabular-nums", letterSpacing: ".04em" }}>
+                  {l.clickCount} click{l.clickCount === 1 ? "" : "s"} · {l._count.leads} lead{l._count.leads === 1 ? "" : "s"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * THE FUNNEL COLONNADE — five chambers (four stages + the won coin) with a
+ * floor-glow proportional to occupancy and one dot per open lead, placed in
+ * its chamber and re-laid-out whenever the data changes. Dots travel on their
+ * own CSS transform transition, so an advance is a procession, not a repaint.
+ * Conversion labels are honest "n of m" — no percentages under n=10.
+ */
+function FunnelColonnade({ leads }: { leads: Lead[] }) {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<Record<string, { x: number; y: number }>>({});
+
+  const open = leads
+    .filter((l) => (STAGES as readonly string[]).includes(l.status))
+    .sort((a, b) => (a.id < b.id ? -1 : 1)); // stable order by id
+  const counts = STAGES.map((s) => open.filter((l) => l.status === s).length);
+  const won = leads.filter((l) => l.status === "won").length;
+  const maxCount = Math.max(1, ...counts);
+  // reached[i] = leads that made it at least as far as stage i (won counts for all)
+  const reached = STAGES.map((_, i) => counts.slice(i).reduce((a, b) => a + b, 0) + won);
+
+  const layout = useCallback(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const w = wrap.getBoundingClientRect();
+    const next: Record<string, { x: number; y: number }> = {};
+    wrap.querySelectorAll<HTMLElement>("[data-chamber]").forEach((ch) => {
+      const stage = ch.dataset.chamber!;
+      const r = ch.getBoundingClientRect();
+      const inStage = open.filter((l) => l.status === stage);
+      const perRow = Math.max(1, Math.floor((r.width - 24) / 15));
+      inStage.forEach((l, j) => {
+        const row = Math.floor(j / perRow);
+        const col = j % perRow;
+        const inRow = Math.min(perRow, inStage.length - row * perRow);
+        next[l.id] = {
+          x: r.left - w.left + r.width / 2 + (col - (inRow - 1) / 2) * 15 - 5,
+          y: r.top - w.top + Math.max(40, r.height - 32 - row * 13),
+        };
+      });
+    });
+    setPos(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leads]);
+
+  useLayoutEffect(() => { layout(); }, [layout]);
+  useEffect(() => {
+    window.addEventListener("resize", layout);
+    return () => window.removeEventListener("resize", layout);
+  }, [layout]);
+
+  const chLabel = {
+    ...bodyFont, fontWeight: 600, fontSize: 11.5, letterSpacing: ".26em",
+    textTransform: "uppercase", color: "var(--ink3)",
+  } as const;
+
+  return (
+    <div>
+      {/* extra headroom for the italic "n of m" labels that ride above the arches */}
+      <div ref={wrapRef} className="au-chambers" style={{ marginTop: "2.8rem" }}>
+        {STAGES.map((stage, i) => (
+          <div
+            key={stage} data-chamber={stage} className="au-chamber"
+            style={{ ["--heat" as any]: counts[i] / maxCount }}
+          >
+            {i > 0 && reached[i - 1] > 0 && (
+              <span className="au-conv">
+                {reached[i]} of {reached[i - 1]}
+                {reached[i - 1] >= 10 ? ` · ${Math.round((reached[i] / reached[i - 1]) * 100)}%` : ""}
+              </span>
+            )}
+            <b className="au-cc"><span key={counts[i]} className="au-tickin">{counts[i]}</span></b>
+            <span className="au-ch">{stage}</span>
+          </div>
+        ))}
+        {/* the won coin — the chamber the whole colonnade empties into */}
+        <div className="au-chamber" style={{ ["--heat" as any]: won > 0 ? 1 : 0 }}>
+          <div style={{ position: "absolute", inset: 0, display: "grid", placeContent: "center", gap: ".15rem", textAlign: "center" }}>
+            <b style={{ ...serifFont, fontWeight: 700, fontSize: "1.6rem", color: "var(--gold)", fontVariantNumeric: "tabular-nums" }}>
+              <span key={won} className="au-tickin">{won}</span>
+            </b>
+            <span style={chLabel}>won</span>
+          </div>
+        </div>
+        <div className="au-dots">
+          {open.map((l) => {
+            const p = pos[l.id];
+            return (
+              <span
+                key={l.id}
+                className={`au-dot ${dotHeat(l.lastContactAt)}`}
+                style={p
+                  ? { left: 0, top: 0, transform: `translate(${p.x}px, ${p.y}px)` }
+                  : { left: 0, top: 0, opacity: 0 }}
+              />
+            );
+          })}
+        </div>
+      </div>
+      <p className="au-kicker" style={{ display: "block", textAlign: "center", marginTop: ".8rem", fontSize: 13 }}>
+        each mark is a lead — gold was touched within two days, faded is cooling, grey has gone cold, hollow was never contacted
+      </p>
     </div>
   );
 }
@@ -694,13 +947,13 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
   }
 
   const field =
-    "bg-black/50 border border-aurelius-gold/30 rounded px-2 py-1.5 text-sm text-aurelius-text placeholder:text-aurelius-text/30";
+    "bg-black/50 border border-aurelius-gold/30 rounded-[2px] px-2 py-1.5 text-sm text-aurelius-text placeholder:text-aurelius-text/30";
   const btn =
-    "px-3 py-1.5 rounded border border-aurelius-gold/50 text-aurelius-gold text-xs hover:bg-aurelius-gold/10 disabled:opacity-40";
+    "px-3 py-1.5 rounded-[2px] border border-aurelius-gold/50 text-aurelius-gold text-xs hover:bg-aurelius-gold/10 disabled:opacity-40";
 
   if (failed) {
     return (
-      <div className="mt-3 rounded border border-red-500/40 bg-red-950/20 p-3 text-xs text-red-200">
+      <div className="mt-3 rounded-[2px] border border-red-500/40 bg-red-950/20 p-3 text-xs text-red-200">
         Couldn&apos;t load {name}&apos;s record — that&apos;s a loading failure, not an empty one.
         <button onClick={load} className="ml-2 underline">Retry</button>
       </div>
@@ -708,22 +961,22 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
   }
 
   return (
-    <div className="mt-3 rounded border border-aurelius-gold/20 bg-black/50 p-3 space-y-4">
-      {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200">{err}</div>}
+    <div className="mt-3 rounded-[2px] border border-aurelius-gold/20 bg-black/50 p-3 space-y-4">
+      {err && <div className="rounded-[2px] border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200">{err}</div>}
 
       <RetentionSection clientId={clientId} onChange={onChange} />
 
       {detail && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px]">
           <div>
-            <div className="uppercase tracking-[0.2em] text-aurelius-gold/50 mb-1">Engagements</div>
+            <div className="uppercase tracking-[0.2em] text-aurelius-gold/50 mb-1" style={bodyFont}>Engagements</div>
             {detail.engagements.length === 0 ? (
               <div className="text-aurelius-text/60">none</div>
             ) : (
               detail.engagements.map((e) => (
                 <div key={e.id} className="text-aurelius-text/80">
                   {e.title} · {money(e.priceCents)}{e.shape === "monthly" ? "/mo" : ""}
-                  {e.endsAt && <span className="text-amber-200/70"> · ends {day(e.endsAt)}</span>}
+                  {e.endsAt && <span style={{ color: "var(--attn)" }}> · ends {day(e.endsAt)}</span>}
                   {e.nextBillingAt && <span className="text-aurelius-text/50"> · renews {day(e.nextBillingAt)}</span>}
                   {/* The re-sign conversation the risk line nags about now has
                       a button to end it — either outcome, one tap. */}
@@ -752,7 +1005,7 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
             )}
           </div>
           <div>
-            <div className="uppercase tracking-[0.2em] text-aurelius-gold/50 mb-1">Owed</div>
+            <div className="uppercase tracking-[0.2em] text-aurelius-gold/50 mb-1" style={bodyFont}>Owed</div>
             {detail.invoices.filter((i) => i.status !== "paid" && i.status !== "void").length === 0 ? (
               <div className="text-aurelius-text/60">nothing outstanding</div>
             ) : (
@@ -767,7 +1020,7 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
             )}
           </div>
           <div>
-            <div className="uppercase tracking-[0.2em] text-aurelius-gold/50 mb-1">Received · {detail.lifetime} lifetime</div>
+            <div className="uppercase tracking-[0.2em] text-aurelius-gold/50 mb-1" style={bodyFont}>Received · {detail.lifetime} lifetime</div>
             {detail.payments.length === 0 ? (
               <div className="text-aurelius-text/60">nothing yet</div>
             ) : (
@@ -899,7 +1152,7 @@ function ClientMoneyPanel({ clientId, name, onChange }: { clientId: string; name
  *
  * Aurelius drafts; Cole prices and activates. The price field is his because a
  * confidently-wrong number is the one hallucination here that gets quoted to a
- * real buyer.
+ * real buyer. "Make it live" is this section's one gold primary.
  */
 function OfferPanel({ offers, state, probe, onChange }: { offers: Offer[]; state?: OfferState; probe?: Probe; onChange: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -937,48 +1190,47 @@ function OfferPanel({ offers, state, probe, onChange }: { offers: Offer[]; state
     finally { setBusy(false); }
   }
 
-  const btn = "px-3 py-1.5 rounded border border-aurelius-gold/50 text-aurelius-gold text-xs hover:bg-aurelius-gold/10 disabled:opacity-40";
-
   return (
-    <section className={`rounded border p-4 ${state?.hasActive ? "border-aurelius-gold/20 bg-black/30" : "border-amber-500/40 bg-amber-950/10"}`}>
-      <div className="flex justify-between items-baseline gap-4 mb-2">
-        <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80">What you sell</h2>
+    <section className="au-card p-4" style={state?.hasActive ? undefined : { borderColor: "rgba(217,164,65,.45)" }}>
+      <div className="flex justify-between items-baseline gap-4 mb-2 flex-wrap">
+        <SectionLabel row>What you sell</SectionLabel>
         <div className="flex gap-2">
           {!state?.hasActive && (
-            <button
-              disabled={busy}
+            <Btn
+              ghost disabled={busy}
               onClick={() => post({ kind: "probe" })}
-              className={btn}
               title="Float 2–3 variants, each behind its own tracked link, and let real intake decide which promise lands."
             >
               {busy ? "Working…" : "Probe A/B"}
-            </button>
+            </Btn>
           )}
-          <button disabled={busy} onClick={() => post({ kind: "draft" })} className={btn}>
+          <Btn ghost disabled={busy} onClick={() => post({ kind: "draft" })}>
             {busy ? "Working…" : "Draft one"}
-          </button>
+          </Btn>
         </div>
       </div>
 
       {/* THE PROBE — let the market pick the promise. Each variant carries its
           own tracked link; the one that pulls leads is the one to price. */}
       {probe && probe.variants.length > 0 && (
-        <div className="rounded border border-sky-500/30 bg-sky-950/10 p-3 mb-3">
+        <div className="rounded-[2px] border border-aurelius-gold/25 bg-black/30 p-3 mb-3">
           <div className="flex items-baseline justify-between mb-2">
-            <span className="aurelius-heading text-[11px] uppercase tracking-[0.2em] text-sky-300/80">Offer probe</span>
-            <span className="text-[11px] text-neutral-500">{probe.note}</span>
+            <span className="text-[11px] uppercase tracking-[0.2em] text-aurelius-gold/80" style={bodyFont}>Offer probe</span>
+            <span className="au-kicker" style={{ fontSize: 12.5 }}>{probe.note}</span>
           </div>
           <ul className="space-y-1.5">
             {probe.variants.map((v) => {
               const leading = probe.leader?.offerId === v.offerId;
               return (
-                <li key={v.offerId} className={`flex items-center justify-between gap-3 text-xs ${leading ? "text-sky-200" : "text-neutral-300"}`}>
+                <li key={v.offerId} className={`flex items-center justify-between gap-3 text-xs ${leading ? "text-aurelius-gold" : "text-neutral-300"}`}>
                   <span className="flex-1 min-w-0 truncate">
-                    {leading && <span className="text-sky-400 mr-1">★</span>}
+                    {leading && <span className="text-aurelius-gold mr-1">★</span>}
                     {v.name} <span className="text-neutral-600">· {v.shape}{v.status === "active" ? " · live" : ""}</span>
                   </span>
-                  <span className="text-neutral-500 shrink-0">{v.leads} lead{v.leads === 1 ? "" : "s"} · {v.clicks} click{v.clicks === 1 ? "" : "s"}</span>
-                  <button onClick={() => copyLink(v.code)} className="text-sky-300/80 hover:text-sky-200 shrink-0" title={linkFor(v.code)}>
+                  <span className="text-neutral-500 shrink-0" style={{ ...dataFont, fontVariantNumeric: "tabular-nums" }}>
+                    {v.leads} lead{v.leads === 1 ? "" : "s"} · {v.clicks} click{v.clicks === 1 ? "" : "s"}
+                  </span>
+                  <button onClick={() => copyLink(v.code)} className="text-aurelius-gold/70 hover:text-aurelius-gold shrink-0" title={linkFor(v.code)}>
                     {copied === v.code ? "copied" : "copy link"}
                   </button>
                 </li>
@@ -987,10 +1239,11 @@ function OfferPanel({ offers, state, probe, onChange }: { offers: Offer[]; state
           </ul>
         </div>
       )}
-      <p className={`text-xs mb-3 leading-relaxed ${state?.hasActive ? "text-aurelius-text/60" : "text-amber-200/90"}`}>
+      <p className={`text-xs mb-3 leading-relaxed ${state?.hasActive ? "text-aurelius-text/60" : ""}`}
+        style={state?.hasActive ? undefined : { color: "var(--attn)" }}>
         {state?.headline ?? "Loading…"}
       </p>
-      {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200 mb-3">{err}</div>}
+      {err && <div className="rounded-[2px] border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200 mb-3">{err}</div>}
 
       {offers.length === 0 ? (
         <p className="text-xs text-aurelius-text/50 leading-relaxed">
@@ -1005,14 +1258,14 @@ function OfferPanel({ offers, state, probe, onChange }: { offers: Offer[]; state
                 <div>
                   <div className="text-sm text-aurelius-text/90">
                     {o.name}
-                    <span className="ml-2 text-[10px] uppercase tracking-wider text-aurelius-text/60">
+                    <span className="ml-2 text-[10px] uppercase tracking-wider text-aurelius-text/60" style={bodyFont}>
                       {o.shape}{o.durationWeeks ? ` · ${o.durationWeeks}wk` : ""}
                     </span>
                   </div>
-                  <div className="text-[11px] text-aurelius-text/60">{o.audience}</div>
+                  <div className="au-kicker" style={{ fontSize: 13 }}>{o.audience}</div>
                 </div>
                 <div className="text-right text-[11px] shrink-0">
-                  <div className={o.status === "active" ? "text-emerald-400/80" : "text-amber-300/70"}>
+                  <div style={{ color: o.status === "active" ? "var(--money)" : "var(--attn)" }}>
                     {o.status === "active" ? `live · ${o.priceCents != null ? money(o.priceCents) : "no price"}` : "draft"}
                   </div>
                   <div className={o.grounding === "external" ? "text-emerald-400/60" : o.grounding === "internal" ? "text-aurelius-gold/60" : "text-amber-300/60"}>
@@ -1029,7 +1282,7 @@ function OfferPanel({ offers, state, probe, onChange }: { offers: Offer[]; state
                   {o.edge && <p><span className="text-aurelius-gold/60">Edge · </span>{o.edge}</p>}
                   {/* Assumptions are shown, never quietly dropped — they are
                       the difference between a drafted offer and a claim. */}
-                  {o.assumptions && <p className="text-amber-200/70"><span className="text-amber-300/80">Assumed · </span>{o.assumptions}</p>}
+                  {o.assumptions && <p style={{ color: "var(--attn)" }}><span>Assumed · </span>{o.assumptions}</p>}
 
                   <div className="flex flex-wrap gap-2 items-center pt-1">
                     {o.status === "active" ? (
@@ -1042,16 +1295,15 @@ function OfferPanel({ offers, state, probe, onChange }: { offers: Offer[]; state
                         <input
                           value={prices[o.id] ?? ""} onChange={(e) => setPrices({ ...prices, [o.id]: e.target.value })}
                           placeholder={o.shape === "monthly" ? "$ / month" : "$ total"} inputMode="decimal"
-                          className="bg-black/50 border border-aurelius-gold/30 rounded px-2 py-1.5 text-sm text-aurelius-text placeholder:text-aurelius-text/30 w-32"
+                          className="bg-black/50 border border-aurelius-gold/30 rounded-[2px] px-2 py-1.5 text-sm text-aurelius-text placeholder:text-aurelius-text/30 w-32"
                         />
-                        <button
+                        <Btn
                           disabled={busy || !(prices[o.id] ?? "").trim()}
                           onClick={() => post({ kind: "activate", offerId: o.id, price: Number(prices[o.id]) })}
-                          className={btn}
                           title="Makes this the offer every draft, email and DM points at."
                         >
                           Make it live
-                        </button>
+                        </Btn>
                       </>
                     )}
                   </div>
@@ -1094,15 +1346,15 @@ function MarketingPanel({ marketing, hasOffer, onChange }: { marketing?: Marketi
     finally { setBusy(false); }
   }
 
-  const btn = "px-3 py-1.5 rounded border border-aurelius-gold/50 text-aurelius-gold text-xs hover:bg-aurelius-gold/10 disabled:opacity-40";
+  const btn = "px-3 py-1.5 rounded-[2px] border border-aurelius-gold/50 text-aurelius-gold text-xs hover:bg-aurelius-gold/10 disabled:opacity-40";
 
   return (
-    <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4">
-      <div className="flex justify-between items-baseline gap-4 mb-2">
-        <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80">What you say</h2>
-        <button disabled={busy} onClick={async () => { if (await post({ kind: "propose", count: 3 })) onChange(); }} className={btn}>
+    <section className="au-card p-4">
+      <div className="flex justify-between items-baseline gap-4 mb-2 flex-wrap">
+        <SectionLabel row>What you say</SectionLabel>
+        <Btn ghost disabled={busy} onClick={async () => { if (await post({ kind: "propose", count: 3 })) onChange(); }}>
           {busy ? "Researching…" : "Propose angles"}
-        </button>
+        </Btn>
       </div>
 
       {/* The honest read on sample size comes FIRST — a 33% reply rate from
@@ -1112,18 +1364,18 @@ function MarketingPanel({ marketing, hasOffer, onChange }: { marketing?: Marketi
         {marketing?.headline ?? "No angles yet. An angle is a testable claim about what makes one specific person reply."}
       </p>
       {!hasOffer && angles.length > 0 && (
-        <p className="text-[11px] text-amber-200/80 mb-3">
+        <p className="text-[11px] mb-3" style={{ color: "var(--attn)" }}>
           No offer is live, so this copy can start a conversation but can&apos;t close one. Define an offer above first.
         </p>
       )}
-      {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200 mb-3">{err}</div>}
+      {err && <div className="rounded-[2px] border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200 mb-3">{err}</div>}
 
       {angles.length > 0 && (
         <>
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-[10px] uppercase tracking-[0.2em] text-aurelius-gold/50">write as</span>
+            <span className="text-[10px] uppercase tracking-[0.2em] text-aurelius-gold/50" style={bodyFont}>write as</span>
             <select value={format} onChange={(e) => setFormat(e.target.value)}
-              className="bg-black/50 border border-aurelius-gold/30 rounded px-2 py-1 text-xs text-aurelius-text">
+              className="bg-black/50 border border-aurelius-gold/30 rounded-[2px] px-2 py-1 text-xs text-aurelius-text">
               {["email", "instagram_post", "instagram_carousel", "dm", "landing_section"].map((f) => (
                 <option key={f} value={f}>{f.replace(/_/g, " ")}</option>
               ))}
@@ -1134,7 +1386,7 @@ function MarketingPanel({ marketing, hasOffer, onChange }: { marketing?: Marketi
               <li key={a.id} className="py-2 flex justify-between items-start gap-4">
                 <div className="min-w-0">
                   <div className="text-sm text-aurelius-text/90">{a.title}</div>
-                  <div className="text-[11px] text-aurelius-text/60">{a.audience}</div>
+                  <div className="au-kicker" style={{ fontSize: 13 }}>{a.audience}</div>
                   {/* The citation, openable. "research-backed" printed in gold
                       over a claim you can't check is worse than no label. */}
                   {a.sources?.length > 0 && (
@@ -1191,13 +1443,13 @@ function MarketingPanel({ marketing, hasOffer, onChange }: { marketing?: Marketi
       )}
 
       {draft && (
-        <div className="mt-4 rounded border border-aurelius-gold/25 bg-black/50 p-3">
+        <div className="mt-4 rounded-[2px] border border-aurelius-gold/25 bg-black/50 p-3">
           <div className="flex justify-between items-baseline gap-4 mb-2">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-aurelius-gold/50">{draft.angle}</div>
+            <div className="text-[10px] uppercase tracking-[0.2em] text-aurelius-gold/50" style={bodyFont}>{draft.angle}</div>
             <button onClick={() => setDraft(null)} className="text-[11px] text-aurelius-text/60 hover:text-aurelius-text/70">close</button>
           </div>
           <pre className="whitespace-pre-wrap text-sm text-aurelius-text/85 font-sans leading-relaxed">{draft.body}</pre>
-          <p className="text-[10px] text-amber-200/70 mt-3">{draft.trust}</p>
+          <p className="text-[10px] mt-3" style={{ color: "var(--attn)" }}>{draft.trust}</p>
           {/* Copy you generate and don't keep is copy you never wrote. This
               button is the difference between a text generator and a pipeline. */}
           <div className="flex items-center gap-3 mt-3">
@@ -1264,17 +1516,14 @@ function ContentQueue({ drafts, state, onChange }: { drafts: ContentDraft[]; sta
     finally { setBusy(false); }
   }
 
-  const btn = "px-3 py-1.5 rounded border border-aurelius-gold/50 text-aurelius-gold text-xs hover:bg-aurelius-gold/10 disabled:opacity-40";
-
   return (
-    <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4">
-      <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80 mb-2">
-        What you&apos;ve written
-      </h2>
+    <section className="au-card p-4">
+      <SectionLabel row>What you&apos;ve written</SectionLabel>
+      <div style={{ height: ".6rem" }} />
       {/* A full queue is not output. The headline refuses to let a pile of
           unpublished drafts read as progress. */}
       <p className="text-xs text-aurelius-text/60 mb-3">{state?.headline ?? "Loading…"}</p>
-      {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200 mb-3">{err}</div>}
+      {err && <div className="rounded-[2px] border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200 mb-3">{err}</div>}
 
       {live.length === 0 ? (
         <p className="text-xs text-aurelius-text/50 leading-relaxed">
@@ -1288,17 +1537,17 @@ function ContentQueue({ drafts, state, onChange }: { drafts: ContentDraft[]; sta
               <button onClick={() => setOpen(open === d.id ? null : d.id)} className="w-full text-left flex justify-between items-start gap-4">
                 <div className="min-w-0">
                   <div className="text-sm text-aurelius-text/90 truncate">{d.title ?? d.body.slice(0, 60)}</div>
-                  <div className="text-[11px] text-aurelius-text/60">
+                  <div className="au-kicker" style={{ fontSize: 13 }}>
                     {[d.channel, d.format?.replace(/_/g, " "), d.angle ? `from "${d.angle.title}"` : null].filter(Boolean).join(" · ")}
                   </div>
                 </div>
                 <div className="text-right text-[11px] shrink-0">
-                  <div className={
-                    d.status === "published" ? "text-emerald-400/80"
-                    : d.status === "staged" ? "text-amber-300/80"
-                    : d.status === "ready" ? "text-aurelius-gold/70"
-                    : "text-aurelius-text/50"
-                  }>
+                  <div style={{
+                    color: d.status === "published" ? "var(--money)"
+                      : d.status === "staged" ? "var(--attn)"
+                      : d.status === "ready" ? "var(--gold)"
+                      : "var(--ink3)",
+                  }}>
                     {d.status === "staged" ? "waiting on your confirm" : d.status}
                   </div>
                   {d.grounding === "none" && <div className="text-amber-300/60">unverified idea</div>}
@@ -1323,20 +1572,20 @@ function ContentQueue({ drafts, state, onChange }: { drafts: ContentDraft[]; sta
                         value={edits[d.id] ?? d.body}
                         onChange={(e) => setEdits({ ...edits, [d.id]: e.target.value })}
                         rows={7}
-                        className="w-full bg-black/50 border border-aurelius-gold/30 rounded px-3 py-2 text-sm text-aurelius-text leading-relaxed"
+                        className="w-full bg-black/50 border border-aurelius-gold/30 rounded-[2px] px-3 py-2 text-sm text-aurelius-text leading-relaxed"
                       />
                       <div className="flex flex-wrap gap-2 items-center">
-                        <button
+                        <Btn
+                          ghost
                           disabled={busy || (edits[d.id] ?? d.body) === d.body}
                           onClick={() => post({ kind: "edit", draftId: d.id, body: edits[d.id] })}
-                          className={btn}
                         >
                           Save my version
-                        </button>
+                        </Btn>
                         {d.status === "draft" && (
-                          <button disabled={busy} onClick={() => post({ kind: "edit", draftId: d.id, status: "ready" })} className={btn}>
+                          <Btn ghost disabled={busy} onClick={() => post({ kind: "edit", draftId: d.id, status: "ready" })}>
                             Mark ready
-                          </button>
+                          </Btn>
                         )}
                         {d.channel === "instagram" && (
                           <input
@@ -1344,19 +1593,19 @@ function ContentQueue({ drafts, state, onChange }: { drafts: ContentDraft[]; sta
                             onChange={(e) => setImages({ ...images, [d.id]: e.target.value })}
                             onBlur={() => images[d.id] !== undefined && post({ kind: "edit", draftId: d.id, imageUrl: images[d.id] })}
                             placeholder="public image URL"
-                            className="bg-black/50 border border-aurelius-gold/30 rounded px-2 py-1.5 text-xs text-aurelius-text placeholder:text-aurelius-text/30 flex-1 min-w-[12rem]"
+                            className="bg-black/50 border border-aurelius-gold/30 rounded-[2px] px-2 py-1.5 text-xs text-aurelius-text placeholder:text-aurelius-text/30 flex-1 min-w-[12rem]"
                             title="Instagram fetches the image itself, so it has to be a public URL — an upload won't work."
                           />
                         )}
                         {d.status !== "staged" && (
-                          <button
+                          <Btn
+                            ghost
                             disabled={busy}
                             onClick={() => post({ kind: "publish", draftId: d.id })}
-                            className={btn}
                             title="Stages it on Decisions for your confirm. Nothing goes out until you tap."
                           >
                             Publish…
-                          </button>
+                          </Btn>
                         )}
                         <button
                           disabled={busy}
@@ -1381,7 +1630,7 @@ function ContentQueue({ drafts, state, onChange }: { drafts: ContentDraft[]; sta
                         </code>
                       </div>
                       {d.status === "staged" && (
-                        <p className="text-[10px] text-amber-200/70">
+                        <p className="text-[10px]" style={{ color: "var(--attn)" }}>
                           Waiting on Decisions for your confirm. Nothing has gone out.
                         </p>
                       )}
@@ -1437,16 +1686,16 @@ function RetentionSection({ clientId, onChange }: { clientId: string; onChange: 
     finally { setBusy(false); }
   }
 
-  const field = "bg-black/50 border border-aurelius-gold/30 rounded px-2 py-1.5 text-sm text-aurelius-text placeholder:text-aurelius-text/30";
-  const btn = "px-2.5 py-1 rounded border border-aurelius-gold/50 text-aurelius-gold text-[11px] hover:bg-aurelius-gold/10 disabled:opacity-40";
+  const field = "bg-black/50 border border-aurelius-gold/30 rounded-[2px] px-2 py-1.5 text-sm text-aurelius-text placeholder:text-aurelius-text/30";
+  const btn = "px-2.5 py-1 rounded-[2px] border border-aurelius-gold/50 text-aurelius-gold text-[11px] hover:bg-aurelius-gold/10 disabled:opacity-40";
 
   return (
-    <div className="rounded border border-aurelius-gold/15 bg-black/30 p-3 space-y-3">
+    <div className="rounded-[2px] border border-aurelius-gold/15 bg-black/30 p-3 space-y-3">
       <div className="flex items-baseline justify-between">
-        <span className="uppercase tracking-[0.2em] text-aurelius-gold/50 text-[11px]">Retention</span>
+        <span className="uppercase tracking-[0.2em] text-aurelius-gold/50 text-[11px]" style={bodyFont}>Retention</span>
         {view && <span className="text-[11px] text-neutral-500">{view.prCount} PR{view.prCount === 1 ? "" : "s"}{view.nextCheckInAt ? ` · next check-in ${day(view.nextCheckInAt)}` : ""}</span>}
       </div>
-      {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-[11px] text-red-200">{err}</div>}
+      {err && <div className="rounded-[2px] border border-red-500/40 bg-red-950/20 p-2 text-[11px] text-red-200">{err}</div>}
 
       {/* PR ledger */}
       {view && view.metrics.length > 0 && (
@@ -1475,8 +1724,8 @@ function RetentionSection({ clientId, onChange }: { clientId: string; onChange: 
         <button disabled={busy} onClick={() => act({ kind: "proof" })} className={btn}>Draft proof post</button>
       </div>
       {drafted && (
-        <div className="rounded border border-aurelius-gold/25 bg-black/50 p-2.5">
-          <div className="text-[10px] uppercase tracking-wider text-aurelius-gold/50 mb-1">{drafted.kind} draft — your words, your send</div>
+        <div className="rounded-[2px] border border-aurelius-gold/25 bg-black/50 p-2.5">
+          <div className="text-[10px] uppercase tracking-wider text-aurelius-gold/50 mb-1" style={bodyFont}>{drafted.kind} draft — your words, your send</div>
           <p className="text-xs text-aurelius-text/85 whitespace-pre-line">{drafted.body}</p>
         </div>
       )}
@@ -1517,70 +1766,59 @@ function GrowthPanel() {
     finally { setBusy(false); }
   }
 
-  const btn = "px-3 py-1.5 rounded border border-aurelius-gold/50 text-aurelius-gold text-xs hover:bg-aurelius-gold/10 disabled:opacity-40";
-  const dot = (on: boolean) => (on ? "text-emerald-400" : "text-neutral-600");
+  const dot = (on: boolean) => (on ? { color: "var(--money)" } : { color: "var(--ink3)" });
 
   return (
-    <section className="rounded border border-aurelius-gold/20 bg-black/30 p-4 space-y-4">
-      <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80">Growth engines</h2>
+    <section className="au-card p-4 space-y-4">
+      <SectionLabel row>Growth engines</SectionLabel>
 
       {/* Connect state — honest about what's dormant */}
       {g && (
         <div className="flex flex-wrap gap-4 text-xs">
-          <span className={dot(g.integrations.stripe)}>● Stripe {g.integrations.stripe ? "connected" : "— set STRIPE_WEBHOOK_SECRET"}</span>
-          <span className={dot(g.integrations.twilio)}>● Twilio {g.integrations.twilio ? "connected" : "— set TWILIO_* + 10DLC"}</span>
-          <span className={dot(g.integrations.paidAds)}>● Meta ads {g.integrations.paidAds ? "connected" : "— set META_ADS_TOKEN"}</span>
+          <span style={dot(g.integrations.stripe)}>● Stripe {g.integrations.stripe ? "connected" : "— set STRIPE_WEBHOOK_SECRET"}</span>
+          <span style={dot(g.integrations.twilio)}>● Twilio {g.integrations.twilio ? "connected" : "— set TWILIO_* + 10DLC"}</span>
+          <span style={dot(g.integrations.paidAds)}>● Meta ads {g.integrations.paidAds ? "connected" : "— set META_ADS_TOKEN"}</span>
         </div>
       )}
-      <p className="text-[11px] text-neutral-600">
+      <p className="au-kicker" style={{ display: "block", fontSize: 12.5 }}>
         Payments self-record once Stripe/Venmo/Zelle land; an unmatched one becomes a notice on Decisions. Inbound texts self-record too — sending stays your tap.
       </p>
 
-      {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200">{err}</div>}
+      {err && <div className="rounded-[2px] border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200">{err}</div>}
 
       {/* Partnership */}
       <div className="space-y-2">
-        <div className="text-[11px] uppercase tracking-wider text-aurelius-gold/50">Partnerships (find the next one)</div>
+        <div className="text-[11px] uppercase tracking-wider text-aurelius-gold/50" style={bodyFont}>Partnerships (find the next one)</div>
         <div className="flex flex-wrap gap-2 items-center">
-          <button disabled={busy} onClick={() => act({ kind: "research_partners" }, "Partner types to pursue")} className={btn}>Research partners</button>
-          <input value={partnerName} onChange={(e) => setPartnerName(e.target.value)} placeholder="a specific partner…" className="bg-black/50 border border-aurelius-gold/30 rounded px-2 py-1.5 text-sm text-aurelius-text w-44 placeholder:text-aurelius-text/30" />
-          <button disabled={busy || !partnerName.trim()} onClick={() => act({ kind: "partner_intro", name: partnerName }, `Intro to ${partnerName}`)} className={btn}>Draft intro</button>
+          <Btn ghost disabled={busy} onClick={() => act({ kind: "research_partners" }, "Partner types to pursue")}>Research partners</Btn>
+          <input value={partnerName} onChange={(e) => setPartnerName(e.target.value)} placeholder="a specific partner…" className="bg-black/50 border border-aurelius-gold/30 rounded-[2px] px-2 py-1.5 text-sm text-aurelius-text w-44 placeholder:text-aurelius-text/30" />
+          <Btn ghost disabled={busy || !partnerName.trim()} onClick={() => act({ kind: "partner_intro", name: partnerName }, `Intro to ${partnerName}`)}>Draft intro</Btn>
         </div>
       </div>
 
       {/* Paid boost */}
       <div className="space-y-2">
-        <div className="text-[11px] uppercase tracking-wider text-aurelius-gold/50">Paid boost (only behind proof)</div>
+        <div className="text-[11px] uppercase tracking-wider text-aurelius-gold/50" style={bodyFont}>Paid boost (only behind proof)</div>
         <div className="flex flex-wrap gap-2">
-          <button disabled={busy} onClick={() => act({ kind: "propose_boost" }, "Boost proposal")} className={btn}>Propose a boost</button>
+          <Btn ghost disabled={busy} onClick={() => act({ kind: "propose_boost" }, "Boost proposal")}>Propose a boost</Btn>
           {/* Stage the spend → files a pending confirm on Decisions. Spend is always your tap. */}
-          <button disabled={busy} onClick={() => act({ kind: "stage_boost" }, "Boost staged — confirm on Decisions")} className={btn}>Stage the spend →</button>
+          <Btn ghost disabled={busy} onClick={() => act({ kind: "stage_boost" }, "Boost staged — confirm on Decisions")}>Stage the spend →</Btn>
         </div>
         {g?.boost?.active && (
-          <p className={`text-xs ${g.boost.cplCents != null && g.boost.verdict.includes("kill") ? "text-red-300" : "text-neutral-300"}`}>
+          <p className="text-xs" style={g.boost.cplCents != null && g.boost.verdict.includes("kill") ? { color: "var(--danger)" } : { color: "var(--ink2)" }}>
             Spent ${(g.boost.spentCents / 100).toFixed(2)} · {g.boost.leads} lead{g.boost.leads === 1 ? "" : "s"} · {g.boost.verdict}
           </p>
         )}
       </div>
 
       {out && (
-        <div className="rounded border border-aurelius-gold/25 bg-black/50 p-2.5">
-          <div className="text-[10px] uppercase tracking-wider text-aurelius-gold/50 mb-1">{out.label}</div>
+        <div className="rounded-[2px] border border-aurelius-gold/25 bg-black/50 p-2.5">
+          <div className="text-[10px] uppercase tracking-wider text-aurelius-gold/50 mb-1" style={bodyFont}>{out.label}</div>
           <p className="text-xs text-aurelius-text/85 whitespace-pre-line">{out.text}</p>
           {out.ref && <p className="text-[11px] text-aurelius-gold/70 mt-1">Tracked ref: {out.ref}</p>}
         </div>
       )}
     </section>
-  );
-}
-
-function Stat({ label, value, hint, alert }: { label: string; value: string; hint?: string; alert?: boolean }) {
-  return (
-    <div className={`rounded border p-3 ${alert ? "border-red-500/40 bg-red-950/10" : "border-aurelius-gold/25 bg-black/40"}`}>
-      <div className="text-[10px] uppercase tracking-[0.2em] text-aurelius-gold/50">{label}</div>
-      <div className="text-xl text-aurelius-text/90 mt-1">{value}</div>
-      {hint && <div className={`text-[11px] mt-0.5 ${alert ? "text-red-300/80" : "text-aurelius-text/60"}`}>{hint}</div>}
-    </div>
   );
 }
 
@@ -1628,15 +1866,13 @@ function WarmList({ onChange, empty }: { onChange: () => void; empty: boolean })
   }
 
   return (
-    <section className="rounded border border-aurelius-gold/30 bg-black/40 p-4">
+    <section className="au-card p-4">
       <button
         onClick={() => setOpen(!open)}
         className="w-full flex justify-between items-center text-left"
       >
-        <h2 className="aurelius-heading text-sm uppercase tracking-[0.2em] text-aurelius-gold/80">
-          The warm list
-        </h2>
-        <span className="text-aurelius-gold/50 text-xs">{open ? "hide" : "open"}</span>
+        <SectionLabel row>The warm list</SectionLabel>
+        <span className="au-kicker" style={{ fontSize: 12.5 }}>{open ? "hide" : "open"}</span>
       </button>
 
       {open && (
@@ -1651,22 +1887,23 @@ function WarmList({ onChange, empty }: { onChange: () => void; empty: boolean })
             onChange={(e) => setRaw(e.target.value)}
             rows={6}
             placeholder={"Jake Miller, dana@example.com, trained him two years\nSarah Chen, coached her sister\nCoach Davis, sends me athletes"}
-            className="w-full bg-black/50 border border-aurelius-gold/30 rounded px-3 py-2 text-sm text-aurelius-text placeholder:text-aurelius-text/25 font-mono"
+            className="w-full bg-black/50 border border-aurelius-gold/30 rounded-[2px] px-3 py-2 text-sm text-aurelius-text placeholder:text-aurelius-text/25 font-mono"
           />
-          {err && <div className="rounded border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200">{err}</div>}
-          {result && <div className="rounded border border-emerald-500/40 bg-emerald-950/20 p-2 text-xs text-emerald-200">{result}</div>}
+          {err && <div className="rounded-[2px] border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200">{err}</div>}
+          {result && <div className="rounded-[2px] border border-emerald-500/40 bg-emerald-950/20 p-2 text-xs text-emerald-200">{result}</div>}
           <div className="flex flex-wrap gap-2 items-center">
-            <button
+            {/* The one primary of this section — the shortest path at zero. */}
+            <Btn
               disabled={busy || parsed.length === 0}
               onClick={async () => {
                 const j = await post({ kind: "warm_list", entries: parsed });
                 if (j) { setResult(`${j.created} added${j.skipped ? `, ${j.skipped} already known` : ""}. Each has a follow-up due today.`); setRaw(""); onChange(); }
               }}
-              className="px-3 py-2 rounded border border-aurelius-gold/50 text-aurelius-gold text-sm hover:bg-aurelius-gold/10 disabled:opacity-40"
             >
               {busy ? "Adding…" : `Add ${parsed.length || ""} to the pipeline`}
-            </button>
-            <button
+            </Btn>
+            <Btn
+              ghost
               disabled={busy}
               onClick={async () => {
                 const j = await post({ kind: "sweep" });
@@ -1679,11 +1916,10 @@ function WarmList({ onChange, empty }: { onChange: () => void; empty: boolean })
                   onChange();
                 }
               }}
-              className="px-3 py-2 rounded border border-aurelius-gold/30 text-aurelius-text/80 text-sm hover:text-aurelius-gold disabled:opacity-40"
               title="Drafts messages for every lead whose follow-up is due. Writes Gmail drafts only."
             >
               Draft what&apos;s due
-            </button>
+            </Btn>
           </div>
           <p className="text-[10px] text-aurelius-text/60">
             Drafts land in your Gmail drafts for you to read and send. Aurelius never messages anyone on its own.
