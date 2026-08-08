@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
     const { listActiveGrants } = await import("../../../../../aurelius/autonomy/grants");
-    const { listGrantableClasses } = await import("../../../../../aurelius/autonomy/actionClasses");
+    const { listGrantableClasses, listAllActionClasses } = await import("../../../../../aurelius/autonomy/actionClasses");
     const { getTrustLedger, suggestNextGrant } = await import("../../../../../aurelius/autonomy/trustLedger");
     const { prisma } = await import("../../../../../aurelius/core/db/prisma");
 
@@ -31,6 +31,12 @@ export async function GET(request: Request) {
         trackRecord: l ? { acted: l.acted, confirmed: l.confirmed, undone: l.undone, failed: l.failed } : null,
       };
     });
+    // The LOCKED dials — outward / domain-locked / neverGrant classes, each with
+    // its refusal reason, so the Tuning Room can render "no dial exists" rows
+    // from the registry's own truth instead of a hardcoded line.
+    const locked = listAllActionClasses()
+      .filter((c: any) => !c.grantable)
+      .map((c: any) => ({ key: c.key, description: c.description, reason: c.grantReason }));
 
     // Recent autonomous actions that carry a one-tap Undo. Default horizon is
     // a week; ?days=N widens it (the server undoes older ones just fine).
@@ -65,6 +71,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       active: active.map((g: any) => ({ actionClass: g.actionClass, grantedAt: g.grantedAt })),
       classes,
+      locked,
       suggestions,
       recentActions,
       flow,

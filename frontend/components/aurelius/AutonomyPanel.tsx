@@ -4,9 +4,16 @@
 // keyholes are open, the track record behind each ("acted 24×, 0 undos"), the
 // "want me to just handle it?" suggestions, and reverse anything Aurelius did on
 // its own. Granting/revoking here is Cole's own hand on the switch.
+//
+// ELEVATED IMPERIAL re-dress: same /api/autonomy/dial + /api/autonomy/undo
+// calls, same grant/revoke/undo handlers — keyholes render as au-kh rows with
+// au-sw switches. The outward levers (publish · send · spend) render LOCKED:
+// the dial API only lists grantable classes because no dial for outward
+// exists — non-grantable by construction, so the row is carved in statically.
 
 import { useCallback, useEffect, useState } from "react";
 import { SparkBars } from "../viz/Spark";
+import { Btn, Panel, SectionLabel } from "../kit";
 
 type TrackRecord = { acted: number; confirmed: number; undone: number; failed: number };
 type Keyhole = { key: string; description: string; on: boolean; trackRecord: TrackRecord | null };
@@ -17,20 +24,20 @@ type Dial = { active: { actionClass: string; grantedAt: string }[]; classes: Key
 
 // TRUST BAR (final council graphic): a keyhole's record as a shape, not
 // arithmetic. Gold = trusted-and-held (acted + confirmed), amber = Cole
-// reversed it, red = it failed. An unbroken gold bar is a visceral "widen
-// it"; any amber segment is a visible scar.
+// reversed it, terracotta = it failed. An unbroken gold bar is a visceral
+// "widen it"; any amber segment is a visible scar.
 function TrustBar({ t }: { t: TrackRecord }) {
   const total = t.acted + t.confirmed + t.undone + t.failed;
   if (total === 0) return null;
   const pct = (n: number) => `${(n / total) * 100}%`;
   return (
     <span className="flex items-center gap-2 mt-1.5">
-      <span className="flex h-1.5 rounded-full overflow-hidden flex-1 max-w-[220px] bg-neutral-800">
-        <span className="bg-aurelius-gold/90" style={{ width: pct(t.acted + t.confirmed) }} />
-        <span className="bg-amber-400/90" style={{ width: pct(t.undone) }} />
-        <span className="bg-red-400/90" style={{ width: pct(t.failed) }} />
+      <span className="flex h-1.5 rounded-full overflow-hidden flex-1 max-w-[220px]" style={{ background: "var(--line1)" }}>
+        <span style={{ width: pct(t.acted + t.confirmed), background: "linear-gradient(90deg,var(--gold-dim),var(--gold))" }} />
+        <span style={{ width: pct(t.undone), background: "var(--attn)" }} />
+        <span style={{ width: pct(t.failed), background: "var(--danger)" }} />
       </span>
-      <span className="text-[10px] text-neutral-600 shrink-0">{total}×</span>
+      <span className="text-[10px] shrink-0" style={{ color: "var(--ink3)", fontVariantNumeric: "tabular-nums" }}>{total}×</span>
     </span>
   );
 }
@@ -99,20 +106,88 @@ export default function AutonomyPanel() {
   const onCount = dial?.classes.filter((c) => c.on).length ?? 0;
 
   return (
-    <main className="text-aurelius-text max-w-3xl mx-auto space-y-6 aurelius-stagger">
-      <header className="flex items-baseline justify-between aurelius-rule">
-        <h1 className="aurelius-heading text-4xl">Autonomy</h1>
-        <span className="text-sm text-neutral-500">
-          {dial === null ? "…" : onCount ? `${onCount} keyhole${onCount === 1 ? "" : "s"} open` : "acts on nothing"}
-        </span>
-      </header>
+    <div className="max-w-3xl mx-auto space-y-8 aurelius-reveal">
+      <div>
+        <div className="flex items-baseline justify-between gap-4 flex-wrap">
+          <SectionLabel row>The keyholes — what he may finish on his own</SectionLabel>
+          <span className="au-kicker" style={{ fontSize: 13.5 }}>
+            {dial === null ? "…" : onCount ? `${onCount} keyhole${onCount === 1 ? "" : "s"} open` : "acts on nothing"}
+          </span>
+        </div>
+        <p className="au-kicker mt-2" style={{ display: "block", fontSize: 13.5 }}>
+          each switch lets Aurelius finalize an inward action on its own — reversibly, always landing on the
+          Bridge. Outward actions (send · publish · spend) can never be granted. The switch is only ever your hand.
+        </p>
+      </div>
 
-      <p className="text-sm text-neutral-500">
-        The keyholes that let Aurelius finalize an inward action on its own — reversibly, always landing on the Bridge.
-        Outward actions (send/publish/spend) can never be granted. The switch is only ever your hand.
-      </p>
+      {err && <p className="text-sm" style={{ color: "var(--danger)" }}>Couldn't load: {err}</p>}
 
-      {err && <p className="text-red-400 text-sm">Couldn't load: {err}</p>}
+      {/* THE KEYHOLES — the dial itself */}
+      <div>
+        {(dial?.classes ?? []).map((c) => (
+          <div key={c.key} className="au-kh flex-wrap">
+            <span className="au-kn">{c.description || c.key}</span>
+            <span className="au-kd min-w-[180px]">
+              <span style={{ color: "var(--gold-dim)", fontStyle: "normal", fontSize: 12 }}>{c.key}</span>
+              {c.trackRecord && (c.trackRecord.acted + c.trackRecord.confirmed + c.trackRecord.undone + c.trackRecord.failed) > 0 && (
+                <>
+                  <span className="block" style={{ fontSize: 12.5 }}>
+                    acted {c.trackRecord.acted} · confirmed {c.trackRecord.confirmed}
+                    {c.trackRecord.undone > 0 && <span style={{ color: "var(--attn)" }}> · undone {c.trackRecord.undone}</span>}
+                    {c.trackRecord.failed > 0 && <span style={{ color: "var(--danger)" }}> · failed {c.trackRecord.failed}</span>}
+                  </span>
+                  <TrustBar t={c.trackRecord} />
+                </>
+              )}
+            </span>
+            <button
+              type="button"
+              className={`au-sw ${c.on ? "on" : ""}`}
+              style={{ padding: 0 }}
+              role="switch"
+              aria-checked={c.on}
+              aria-label={`${c.on ? "Revoke" : "Grant"} ${c.description || c.key}`}
+              title={busy === c.key ? "…" : c.on ? "granted — tap to revoke" : "tap to grant"}
+              disabled={busy === c.key}
+              onClick={() => act(c.on ? "revoke" : "grant", c.key)}
+            />
+          </div>
+        ))}
+
+        {/* The outward levers — no dial exists. The dial API lists only
+            grantable (inward) classes; publish/send/spend are non-grantable
+            by construction, so this row is architecture, not data. */}
+        <div className="au-kh flex-wrap">
+          <span className="au-kn">Publish · Send · Spend</span>
+          <span className="au-kd min-w-[180px]" style={{ color: "var(--gold)" }}>
+            no dial exists — outward is non-grantable by construction; every instance asks
+          </span>
+          <div className="au-sw lock" title="non-grantable by construction" aria-disabled="true" />
+        </div>
+
+        <p className="au-kicker mt-3" style={{ display: "block" }}>
+          trust is earned upward: when a keyhole runs clean for weeks, he suggests the next — never flips it himself
+        </p>
+      </div>
+
+      {/* Suggestions — earned trust, offered */}
+      {dial?.suggestions && dial.suggestions.length > 0 && (
+        <div className="space-y-3">
+          <SectionLabel row gold>Worth handing over</SectionLabel>
+          {dial.suggestions.map((s) => (
+            <div key={s.actionClass} className="au-card p-4 flex items-start justify-between gap-3" style={{ borderColor: "var(--gold-line)" }}>
+              <span className="text-sm" style={{ color: "var(--ink)" }}>{s.reason}</span>
+              <Btn
+                onClick={() => act("grant", s.actionClass)}
+                disabled={busy === s.actionClass}
+                className="shrink-0"
+              >
+                {busy === s.actionClass ? "…" : "Grant it"}
+              </Btn>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* The fortnight's flow — how much got done without Cole's hand, per day */}
       {(() => {
@@ -120,12 +195,12 @@ export default function AutonomyPanel() {
         if (flow.length === 0) return null;
         // Calendar-stepped, not 86400s arithmetic — DST fall-back would
         // duplicate a key (duplicate React keys, one missing bar).
-        const days = Array.from({ length: 14 }, (_, i) => {
+        const flowDays = Array.from({ length: 14 }, (_, i) => {
           const d = new Date();
           d.setDate(d.getDate() - (13 - i));
           return { key: localDayKey(d), label: "SMTWTFS"[d.getDay()]! };
         });
-        const byDay = new Map(days.map((d) => [d.key, 0]));
+        const byDay = new Map(flowDays.map((d) => [d.key, 0]));
         let undone = 0;
         for (const s of flow) {
           if (s.status === "undone") { undone++; continue; }
@@ -133,111 +208,50 @@ export default function AutonomyPanel() {
           if (byDay.has(k)) byDay.set(k, (byDay.get(k) ?? 0) + 1);
         }
         return (
-          <section className="aurelius-panel-frame p-4">
-            <div className="flex items-baseline justify-between mb-2">
-              <h2 className="aurelius-heading text-lg">Work handled, fourteen days</h2>
-              <span className={`text-[11px] ${undone > 0 ? "text-amber-300" : "text-neutral-500"}`}>
+          <Panel
+            tier="card"
+            label="Work handled, fourteen days"
+            headerRight={
+              <span className="au-kicker" style={{ fontSize: 12.5, color: undone > 0 ? "var(--attn)" : undefined }}>
                 {undone > 0 ? `${undone} undone` : "nothing undone"}
               </span>
+            }
+          >
+            <div className="overflow-x-auto">
+              <SparkBars values={flowDays.map((d) => byDay.get(d.key) ?? 0)} labels={flowDays.map((d) => d.label)} width={520} height={64} />
             </div>
-            <SparkBars values={days.map((d) => byDay.get(d.key) ?? 0)} labels={days.map((d) => d.label)} width={520} height={64} />
-          </section>
+          </Panel>
         );
       })()}
 
-      {/* Suggestions — earned trust, offered */}
-      {dial?.suggestions && dial.suggestions.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="aurelius-heading text-lg text-aurelius-gold/80">Worth handing over</h2>
-          {dial.suggestions.map((s) => (
-            <div key={s.actionClass} className="aurelius-panel-frame p-4 border border-emerald-400/40 flex items-start justify-between gap-3">
-              <span className="text-sm text-neutral-200">{s.reason}</span>
-              <button
-                onClick={() => act("grant", s.actionClass)}
-                disabled={busy === s.actionClass}
-                className="text-sm border border-emerald-500/60 rounded-lg px-4 py-1 hover:bg-emerald-500/20 text-emerald-300 font-medium disabled:opacity-50 shrink-0"
-              >
-                {busy === s.actionClass ? "…" : "Grant it"}
-              </button>
-            </div>
-          ))}
-        </section>
-      )}
-
-      {/* The keyholes */}
-      <section className="space-y-3">
-        <h2 className="aurelius-heading text-lg">The keyholes</h2>
-        {(dial?.classes ?? []).map((c) => {
-          const t = c.trackRecord;
-          return (
-            <div key={c.key} className={`aurelius-panel-frame p-4 border ${c.on ? "border-aurelius-gold/50" : "border-neutral-700/60"}`}>
-              <div className="flex items-start justify-between gap-3">
-                <span className="min-w-0">
-                  {/* Human description leads; the class key is metadata. */}
-                  <span className="font-medium text-sm">
-                    <span className="text-neutral-100">{c.description || c.key}</span>
-                    {c.on && <span className="ml-2 text-[10px] uppercase tracking-wider text-emerald-400 border border-emerald-500/40 rounded px-1.5 py-0.5">on</span>}
-                  </span>
-                  <span className="block text-[11px] text-aurelius-gold/60 mt-1">{c.key}</span>
-                  {t && (t.acted + t.confirmed + t.undone + t.failed) > 0 && (
-                    <>
-                      <TrustBar t={t} />
-                      <span className="block text-[11px] text-neutral-600 mt-1">
-                        acted {t.acted} · confirmed {t.confirmed}
-                        {t.undone > 0 && <span className="text-amber-400/80"> · undone {t.undone}</span>}
-                        {t.failed > 0 && <span className="text-red-400/80"> · failed {t.failed}</span>}
-                      </span>
-                    </>
-                  )}
-                </span>
-                <button
-                  onClick={() => act(c.on ? "revoke" : "grant", c.key)}
-                  disabled={busy === c.key}
-                  className={`text-sm rounded-lg px-4 py-1 shrink-0 disabled:opacity-50 border ${
-                    c.on
-                      ? "border-neutral-600 hover:bg-neutral-800 text-neutral-300"
-                      : "border-aurelius-gold/50 hover:bg-aurelius-gold/15 text-aurelius-gold"
-                  }`}
-                >
-                  {busy === c.key ? "…" : c.on ? "Revoke" : "Grant"}
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </section>
-
       {/* Recent autonomous actions — reversible */}
       {dial?.recentActions && dial.recentActions.length > 0 && (
-        <section className="space-y-3">
-          <div className="flex items-baseline justify-between">
-            <h2 className="aurelius-heading text-lg">Recent actions — reversible</h2>
+        <div>
+          <div className="flex items-baseline justify-between gap-4 flex-wrap">
+            <SectionLabel row>Recent actions — reversible</SectionLabel>
             <button
               onClick={() => setDays(days === 7 ? 90 : 7)}
-              className="text-xs text-neutral-500 hover:text-aurelius-gold"
+              className="au-kicker"
+              style={{ background: "none", border: 0, cursor: "pointer", fontSize: 12.5 }}
             >
               {days === 7 ? "show older ↓" : "last 7 days ↑"}
             </button>
           </div>
-          {dial.recentActions.map((a) => (
-            <div key={a.id} className="aurelius-panel-frame p-4 border border-aurelius-gold/20 flex items-start justify-between gap-3">
-              <span className="min-w-0">
-                <span className="block text-sm text-neutral-200 truncate">{a.title}</span>
-                <span className="block text-[11px] text-neutral-600 mt-0.5">
+          <div className="mt-1">
+            {dial.recentActions.map((a) => (
+              <div key={a.id} className="au-lrow">
+                <span className="au-verb min-w-0 truncate">{a.title}</span>
+                <span className="au-obj shrink-0" style={{ fontSize: 12.5 }}>
                   {a.actionClass ?? a.kind} · {new Date(a.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                 </span>
-              </span>
-              <button
-                onClick={() => undo(a.id)}
-                disabled={busy === a.id}
-                className="text-sm border border-amber-500/50 rounded-lg px-4 py-1 hover:bg-amber-500/15 text-amber-300 disabled:opacity-50 shrink-0"
-              >
-                {busy === a.id ? "Undoing…" : "Undo"}
-              </button>
-            </div>
-          ))}
-        </section>
+                <button className="au-undo" onClick={() => undo(a.id)} disabled={busy === a.id}>
+                  {busy === a.id ? "undoing…" : "undo"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
-    </main>
+    </div>
   );
 }

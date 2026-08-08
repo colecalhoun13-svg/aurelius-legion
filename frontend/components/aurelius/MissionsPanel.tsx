@@ -1,11 +1,15 @@
 "use client";
 
-// AURELIUS — what the system is doing in the background.
+// MISSIONS — what the system is doing in the background.
 // Missions (the autonomy loop), activity counts, compiled patterns,
 // research memory, the pulse. Plus the launcher: give it an objective,
 // it plans, runs, and reports — the report joins the second brain.
+//
+// ELEVATED IMPERIAL re-dress: same fetches (/api/deck, /api/scoreboard,
+// /api/missions), same launcher and Run handlers — new surfaces only.
 
 import { useCallback, useEffect, useState } from "react";
+import { Btn, Panel, SectionLabel, Stat } from "../kit";
 
 type MissionStep = { idx: number; kind: string; input?: string; status: string; error?: string | null };
 type Mission = {
@@ -29,14 +33,15 @@ type Activity = {
   missions?: Mission[];
 };
 
+// Imperial status inks — gold is work, patina is done, terracotta failed.
 const STATUS_COLOR: Record<string, string> = {
-  proposed: "text-neutral-500",
-  planned: "text-sky-300",
-  running: "text-aurelius-gold",
-  completed: "text-emerald-400",
-  failed: "text-red-400",
-  cancelled: "text-neutral-600",
-  archived: "text-neutral-600", // unanswered 14 days → the sweep retired it
+  proposed: "var(--ink3)",
+  planned: "var(--ink2)",
+  running: "var(--gold)",
+  completed: "var(--money)",
+  failed: "var(--danger)",
+  cancelled: "var(--ink3)",
+  archived: "var(--ink3)", // unanswered 14 days → the sweep retired it
 };
 
 const STEP_GLYPH: Record<string, string> = { recall: "❈", research: "☄", synthesize: "✒" };
@@ -46,7 +51,7 @@ export default function MissionsPanel() {
   const [objective, setObjective] = useState("");
   const [launching, setLaunching] = useState(false);
   const [week, setWeek] = useState<{ acted7: number; undone7: number; pendingNow: number } | null>(null);
-  // null = still checking; the pulse dot must not glow green for a dead backend.
+  // null = still checking; the pulse dot must not glow for a dead backend.
   const [alive, setAlive] = useState<boolean | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
 
@@ -108,57 +113,55 @@ export default function MissionsPanel() {
   const missions = activity?.missions ?? [];
 
   return (
-    <main className="text-aurelius-text max-w-3xl mx-auto space-y-6 aurelius-stagger">
-      <header className="flex items-baseline justify-between aurelius-rule">
-        <h1 className="aurelius-heading text-4xl">Aurelius</h1>
-        <span className="flex items-center gap-2.5 text-sm text-neutral-500">
+    <div className="max-w-3xl mx-auto space-y-8 aurelius-reveal">
+      <div className="flex items-baseline justify-between gap-4 flex-wrap">
+        <SectionLabel row>Missions — the background work</SectionLabel>
+        <span className="au-kicker flex items-center gap-2" style={{ fontSize: 13.5 }}>
           {alive === false ? (
             <>
-              <span className="w-2 h-2 rounded-full bg-red-400/80 shadow-[0_0_8px_rgba(248,113,113,0.6)]" />
+              <span className="w-2 h-2 rounded-full" style={{ background: "var(--danger)", boxShadow: "0 0 8px rgba(201,107,90,.5)" }} />
               brain unreachable
             </>
           ) : (
             <>
-              <span className={`w-2 h-2 rounded-full ${alive ? "aurelius-live-dot bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" : "bg-neutral-600"}`} />
+              <span
+                className={`w-2 h-2 rounded-full ${alive ? "au-breathe" : ""}`}
+                style={alive ? { background: "var(--gold)", boxShadow: "0 0 8px rgba(212,175,55,.5)" } : { background: "var(--ink3)" }}
+              />
               {alive ? "pulse armed" : "checking…"}
             </>
           )}
         </span>
-      </header>
+      </div>
 
       {/* The week, counted — the trust loop made visible */}
       {week && (
-        <p className="text-sm text-neutral-400 -mt-2">
-          This week on its own:{" "}
-          <span className="text-aurelius-gold font-semibold">{week.acted7}</span> handled ·{" "}
-          <span className={week.undone7 > 0 ? "text-amber-300" : "text-neutral-500"}>{week.undone7} undone</span> ·{" "}
-          <span className="text-neutral-500">{week.pendingNow} awaiting you</span>
+        <p className="au-kicker -mt-4" style={{ display: "block" }}>
+          this week on its own:{" "}
+          <b style={{ color: "var(--gold)", fontStyle: "normal" }}>{week.acted7}</b> handled ·{" "}
+          <b style={{ color: week.undone7 > 0 ? "var(--attn)" : "var(--ink3)", fontStyle: "normal" }}>{week.undone7} undone</b> ·{" "}
+          {week.pendingNow} awaiting you
         </p>
       )}
 
       {/* MISSION LAUNCHER — the autonomy front door */}
-      <section className="aurelius-panel-frame p-5 space-y-3">
-        <h2 className="aurelius-heading text-lg">Missions</h2>
-        <div className="flex gap-3">
+      <div className="space-y-3">
+        <div className="au-chatbar">
           <input
             value={objective}
             onChange={(e) => setObjective(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && launch()}
             placeholder="Give Aurelius an objective — it plans, runs it in the background, and reports…"
-            className="flex-1 bg-black/40 border border-aurelius-gold/25 rounded-lg px-3 py-2 text-sm outline-none focus:border-aurelius-gold/60"
+            aria-label="Mission objective"
           />
-          <button
-            onClick={launch}
-            disabled={launching}
-            className="px-5 py-2 bg-aurelius-gold text-black text-sm font-semibold rounded-lg disabled:opacity-40"
-          >
+          <Btn onClick={launch} disabled={launching} className="shrink-0">
             {launching ? "Launching…" : "Launch"}
-          </button>
+          </Btn>
         </div>
-        {launchError && <p className="text-xs text-amber-300">{launchError}</p>}
+        {launchError && <p className="text-xs" style={{ color: "var(--attn)" }}>{launchError}</p>}
 
         {missions.length === 0 ? (
-          <p className="text-neutral-600 italic text-sm">
+          <p className="au-kicker text-center py-4" style={{ display: "block" }}>
             No missions yet. Objectives become plans, plans become reports, reports join the second brain.
           </p>
         ) : (
@@ -166,21 +169,25 @@ export default function MissionsPanel() {
             {missions.map((m) => (
               <div
                 key={m.id}
-                className={`border rounded-lg px-4 py-3 bg-black/30 transition-colors hover:border-aurelius-gold/40 ${
-                  m.status === "running" ? "border-aurelius-gold/40 aurelius-working" : "border-aurelius-gold/15"
-                }`}
+                className="au-card px-4 py-3"
+                style={m.status === "running" ? { borderColor: "var(--gold-line)" } : undefined}
               >
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-sm font-medium flex-1">
+                  <span className="text-sm flex-1" style={{ color: "var(--ink)" }}>
                     {m.title}
                     {m.origin === "aurelius_proposed" && (
-                      <span className="ml-2 text-[10px] uppercase tracking-wider text-sky-300 border border-sky-400/40 rounded px-1.5 py-0.5">
+                      <span
+                        className="ml-2 text-[10px] uppercase tracking-wider rounded-[2px] px-1.5 py-0.5"
+                        style={{ color: "var(--gold-dim)", border: "1px solid var(--gold-line)" }}
+                      >
                         aurelius proposed
                       </span>
                     )}
                   </span>
                   {m.status === "proposed" ? (
-                    <button
+                    <Btn
+                      ghost
+                      style={{ padding: ".2rem .7rem", fontSize: 11 }}
                       onClick={async () => {
                         await fetch("/api/missions", {
                           method: "POST",
@@ -189,40 +196,50 @@ export default function MissionsPanel() {
                         });
                         await load();
                       }}
-                      className="text-xs border border-emerald-500/40 rounded px-2.5 py-0.5 text-emerald-400 hover:bg-emerald-500/15"
                     >
                       Run ▸
-                    </button>
+                    </Btn>
                   ) : (
-                    <span className={`text-xs font-semibold ${STATUS_COLOR[m.status] ?? "text-neutral-500"}`}>
+                    <span
+                      className="text-xs uppercase"
+                      style={{
+                        fontFamily: "var(--font-body),Georgia,serif", fontWeight: 600, letterSpacing: ".14em",
+                        color: STATUS_COLOR[m.status] ?? "var(--ink3)",
+                      }}
+                    >
                       {m.status}
                     </span>
                   )}
                 </div>
-                {m.planSummary && <p className="text-xs text-neutral-500 mt-1">{m.planSummary}</p>}
+                {m.planSummary && <p className="text-xs mt-1" style={{ color: "var(--ink3)" }}>{m.planSummary}</p>}
                 {m.status === "completed" && m.corpusDocId && (
                   <a
                     href={`/brain?doc=${m.corpusDocId}`}
-                    className="inline-block text-xs text-aurelius-gold hover:underline underline-offset-2 mt-1.5"
+                    className="inline-block text-xs hover:underline underline-offset-2 mt-1.5"
+                    style={{ color: "var(--gold)" }}
                   >
                     Read the report →
                   </a>
                 )}
                 {m.steps.length > 0 && (
-                  <div className="flex gap-2 mt-2">
+                  <div className="flex gap-2 mt-2 flex-wrap">
                     {m.steps.map((s) => (
                       <span
                         key={s.idx}
                         title={`${s.kind}: ${s.status}${s.error ? ` — ${s.error}` : ""}`}
-                        className={`text-xs px-2 py-0.5 rounded-full border ${
-                          s.status === "done"
-                            ? "border-emerald-500/40 text-emerald-400"
-                            : s.status === "running"
-                              ? "border-aurelius-gold/50 text-aurelius-gold animate-pulse"
-                              : s.status === "failed"
-                                ? "border-red-500/40 text-red-400"
-                                : "border-neutral-700 text-neutral-600"
-                        }`}
+                        className={`text-xs px-2 py-0.5 rounded-full border ${s.status === "running" ? "animate-pulse" : ""}`}
+                        style={{
+                          color:
+                            s.status === "done" ? "var(--money)"
+                            : s.status === "running" ? "var(--gold)"
+                            : s.status === "failed" ? "var(--danger)"
+                            : "var(--ink3)",
+                          borderColor:
+                            s.status === "done" ? "rgba(168,195,154,.4)"
+                            : s.status === "running" ? "var(--gold-line)"
+                            : s.status === "failed" ? "rgba(201,107,90,.4)"
+                            : "var(--line2)",
+                        }}
                       >
                         {STEP_GLYPH[s.kind] ?? "·"} {s.kind}
                       </span>
@@ -233,62 +250,54 @@ export default function MissionsPanel() {
             ))}
           </div>
         )}
-      </section>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div className="aurelius-panel-frame p-6 text-center">
-          <div className="text-4xl text-aurelius-gold font-semibold drop-shadow-[0_0_14px_rgba(212,175,55,0.3)]">
-            {activity?.counts.memories24h ?? "—"}
-          </div>
-          <div className="text-[11px] uppercase tracking-widest text-neutral-500 mt-2">Memories written · 24h</div>
-        </div>
-        <div className="aurelius-panel-frame p-6 text-center">
-          <div className="text-4xl text-aurelius-gold font-semibold drop-shadow-[0_0_14px_rgba(212,175,55,0.3)]">
-            {activity?.counts.reasoningRuns24h ?? "—"}
-          </div>
-          <div className="text-[11px] uppercase tracking-widest text-neutral-500 mt-2">Reasoning runs · 24h</div>
-        </div>
       </div>
 
-      <section className="aurelius-panel-frame p-6">
-        <h2 className="aurelius-heading text-lg mb-3">Compiled Patterns</h2>
+      {/* The day's internal motion */}
+      <div className="au-lit grid grid-cols-2 gap-6 max-w-md mx-auto">
+        <Stat label="memories · 24h" value={activity?.counts.memories24h ?? "—"} pct={activity?.counts.memories24h ? 70 : 0} />
+        <Stat label="reasoning runs · 24h" value={activity?.counts.reasoningRuns24h ?? "—"} pct={activity?.counts.reasoningRuns24h ? 70 : 0} />
+      </div>
+
+      <Panel tier="card" label="Compiled patterns" className="p-6">
         {(activity?.recentPatterns ?? []).length === 0 ? (
-          <p className="text-neutral-600 italic text-sm">Nothing compiled yet — patterns emerge as situations repeat. This is how Aurelius learns to lean on the LLM less.</p>
+          <p className="au-kicker" style={{ display: "block" }}>
+            Nothing compiled yet — patterns emerge as situations repeat. This is how Aurelius learns to lean on the LLM less.
+          </p>
         ) : (
           <ul className="space-y-2 text-sm">
             {activity!.recentPatterns.map((p, i) => (
-              <li key={i} className="text-neutral-300">
-                <span className="text-aurelius-gold">{p.patternType}</span> · {p.domain} · seen {p.supportCount}×
-                <span className="text-neutral-500 text-xs ml-2">({p.status.replace(/_/g, " ")})</span>
+              <li key={i} style={{ color: "var(--ink2)" }}>
+                <span style={{ color: "var(--gold)" }}>{p.patternType}</span> · {p.domain} · seen {p.supportCount}×
+                <span className="text-xs ml-2" style={{ color: "var(--ink3)" }}>({p.status.replace(/_/g, " ")})</span>
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Panel>
 
-      <section className="aurelius-panel-frame p-6">
-        <h2 className="aurelius-heading text-lg mb-3">Research Memory</h2>
+      <Panel tier="card" label="Research memory" className="p-6">
         {(activity?.recentResearch ?? []).length === 0 ? (
-          <p className="text-neutral-600 italic text-sm">The weekend pass runs Sundays 09:00 — findings and knowledge proposals land here for Monday review.</p>
+          <p className="au-kicker" style={{ display: "block" }}>
+            The weekend pass runs Sundays 09:00 — findings and knowledge proposals land here for Monday review.
+          </p>
         ) : (
-          <ul className="space-y-2.5 text-sm text-neutral-400">
+          <ul className="space-y-2.5 text-sm" style={{ color: "var(--ink2)" }}>
             {activity!.recentResearch.map((r, i) => <li key={i}>• {r.summary}</li>)}
           </ul>
         )}
-      </section>
+      </Panel>
 
       {/* The old hardcoded 3-item "Pulse" card was a static under-truth about
           a ~16-job spine (alignment council) — the honest instrument is the
           spine-health grid, one tab over. Point there; state truth nowhere twice. */}
-      <section className="aurelius-panel-frame p-6">
-        <h2 className="aurelius-heading text-lg mb-2">The Pulse</h2>
-        <p className="text-sm text-neutral-400">
+      <Panel tier="card" label="The pulse" className="p-6">
+        <p className="text-sm" style={{ color: "var(--ink2)" }}>
           The scheduled spine — briefings, sweeps, the Sunday learning cycle — runs inside the backend around the clock.{" "}
-          <a href="/aurelius?tab=traces" className="text-aurelius-gold hover:underline underline-offset-2">
+          <a href="/aurelius?tab=traces" className="hover:underline underline-offset-2" style={{ color: "var(--gold)" }}>
             Watch every job fire, day by day →
           </a>
         </p>
-      </section>
-    </main>
+      </Panel>
+    </div>
   );
 }
