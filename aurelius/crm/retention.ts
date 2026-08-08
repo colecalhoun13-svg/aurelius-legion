@@ -64,6 +64,12 @@ export async function logMetric(input: {
     },
   });
   if (isPR) await onPeak(input.clientId, { label, value: input.value, unit: input.unit }).catch(() => {});
+  // A new number may cross an open target — stamp and celebrate (training
+  // domain, both athlete kinds). Fire-and-forget: a metric write never fails
+  // because the target check did.
+  import("./targets.ts")
+    .then((t) => t.checkTargetCrossing(input.clientId, label, input.value, input.unit))
+    .catch(() => {});
   return { metricId: metric.id, isPR };
 }
 

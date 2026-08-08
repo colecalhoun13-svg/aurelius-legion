@@ -83,7 +83,9 @@ internal synthesis jobs out of the semantic reuse cache, both sides.
 
 02:00 db backup · 05:30 inbox triage (drafts only — never sends; the 07:00
 briefing names what's waiting) · 07:30 outreach sweep (drafts to leads whose
-follow-up is due, bounded to 3/run — Gmail drafts only, never sends) · 06:00 RSS · 06:30 market pulse · 06:45 schedule-protection
+follow-up is due, bounded to 3/run — Gmail drafts only, never sends) ·
+Mon 06:50 training trend sweep (stalls/slides/off-pace targets → one deduped
+training-domain signal per athlete, both kinds) · 06:00 RSS · 06:30 market pulse · 06:45 schedule-protection
 (acts if granted, else proposes) · 07:00 morning briefing (carries the risk
 line + checks last night's "tomorrow starts with") · 08:00 initiative ·
 13:00 midday check (silent when on pace) · 21:15 queue sweep (keyhole

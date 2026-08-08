@@ -268,6 +268,15 @@ export async function updateClient(id: string, patch: Record<string, any>) {
   for (const f of ["name", "email", "phone", "sport", "position", "timezone", "parentName", "parentEmail", "parentPhone", "notes", "endedReason"]) {
     if (patch[f] !== undefined) data[f] = String(patch[f]).trim() || null;
   }
+  // The program sheet link. Only a real Google Sheets URL (or empty to clear) —
+  // this gets iframed on the Athletes page, so it never stores an arbitrary URL.
+  if (patch.sheetUrl !== undefined) {
+    const url = String(patch.sheetUrl ?? "").trim();
+    if (url && !/^https:\/\/docs\.google\.com\/spreadsheets\/d\/[\w-]+/.test(url)) {
+      throw new Error("sheetUrl must be a Google Sheets link (https://docs.google.com/spreadsheets/d/…) — or empty to clear it.");
+    }
+    data.sheetUrl = url || null;
+  }
   if (patch.gradYear !== undefined) data.gradYear = patch.gradYear ?? null;
   if (patch.isMinor !== undefined) data.isMinor = Boolean(patch.isMinor);
   if (patch.status !== undefined) {

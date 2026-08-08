@@ -123,8 +123,20 @@ export const crmAdapter: ToolAdapter = {
     {
       name: "athlete_performance",
       description:
-        "One athlete's performance: every measured lift/test as a time series with trend, PRs, last-logged. Use for 'how are Jake's numbers trending', 'show me Jake's squat progress'. Works for clients AND training-only athletes.",
+        "One athlete's performance: every measured lift/test as a time series with trend, stall/streak flags, targets with pace, recent sessions, PRs. Use for 'how are Jake's numbers trending', 'show me Jake's squat progress'. Works for clients AND training-only athletes.",
       dataSchema: '{ client: string (name or id) }',
+    },
+    {
+      name: "set_target",
+      description:
+        "Set (or update) a performance target for an athlete — 'Jake should squat 315 by November'. Pace (ahead/on/behind) derives from their logged trend; hitting the number in a logged metric stamps it achieved. One open target per measure — setting again replaces it. Training domain, both athlete kinds.",
+      dataSchema: '{ client: string (name or id), label: string, targetValue: number, unit?: string, targetDate?: string (ISO), note?: string }',
+      example: '[TOOL: crm.set_target {"client": "Jake Miller", "label": "squat", "targetValue": 315, "unit": "lbs", "targetDate": "2026-11-01"}]',
+    },
+    {
+      name: "drop_target",
+      description: "Remove a target (from athlete_performance's targets list — use its id).",
+      dataSchema: '{ targetId: string }',
     },
     {
       name: "client_detail",
@@ -135,8 +147,8 @@ export const crmAdapter: ToolAdapter = {
     },
     {
       name: "update_client",
-      description: "Update a client — pause, end, correct details.",
-      dataSchema: '{ clientId: string, status?: "active"|"paused"|"ended", endedReason?: string, notes?: string, ... }',
+      description: "Update a client — pause, end, correct details, or link their program sheet (sheetUrl: a Google Sheets link; empty string clears it).",
+      dataSchema: '{ clientId: string, status?: "active"|"paused"|"ended", endedReason?: string, notes?: string, sheetUrl?: string, ... }',
     },
     {
       name: "add_engagement",
@@ -298,6 +310,22 @@ export const crmAdapter: ToolAdapter = {
           const view = await athletePerformance(id);
           if (!view) return { ok: false, output: null, error: "No athlete matching that." };
           return { ok: true, output: view as any };
+        }
+
+        case "set_target": {
+          const clientId = await resolveClientId(data);
+          const { setTarget } = await import("../../crm/targets.ts");
+          const t = await setTarget({ ...(data as any), clientId, targetValue: Number(data.targetValue) });
+          return {
+            ok: true,
+            output: { targetId: t.id, label: t.label, targetValue: t.targetValue, unit: t.unit, targetDate: t.targetDate },
+          };
+        }
+
+        case "drop_target": {
+          if (!data.targetId) throw new Error("drop_target needs targetId (from athlete_performance's targets).");
+          const { dropTarget } = await import("../../crm/targets.ts");
+          return { ok: true, output: await dropTarget(String(data.targetId)) as any };
         }
 
         case "client_detail": {

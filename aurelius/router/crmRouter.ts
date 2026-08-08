@@ -34,7 +34,7 @@ export const crmRouter = Router();
 /** Service errors are Cole-facing validation messages, not server faults. */
 function fail(res: Response, err: any) {
   const message = err?.message ?? String(err);
-  const isValidation = /must be one of|needs a|No client|No lead|No invoice|No engagement|not a valid|already been converted|already a full client|is training-only|Be more specific|isn't a payment|cannot be negative/i.test(
+  const isValidation = /must be one of|needs a|No client|No lead|No invoice|No engagement|No such target|not a valid|already been converted|already a full client|is training-only|doesn't parse|sheetUrl must be|Be more specific|isn't a payment|cannot be negative/i.test(
     message
   );
   res.status(isValidation ? 400 : 500).json({ error: message });
@@ -204,6 +204,44 @@ crmRouter.get("/clients/:id/performance", async (req: Request, res: Response) =>
     const view = await athletePerformance(String(req.params.id));
     if (!view) return res.status(404).json({ error: "No such athlete." });
     res.json(view);
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+crmRouter.post("/clients/:id/targets", async (req: Request, res: Response) => {
+  try {
+    const { setTarget } = await import("../crm/targets.ts");
+    res.json(await setTarget({ ...(req.body ?? {}), clientId: String(req.params.id), targetValue: Number(req.body?.targetValue) }));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+crmRouter.delete("/targets/:id", async (req: Request, res: Response) => {
+  try {
+    const { dropTarget } = await import("../crm/targets.ts");
+    res.json(await dropTarget(String(req.params.id)));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+crmRouter.post("/clients/:id/sheet/find", async (req: Request, res: Response) => {
+  try {
+    const { resolveAthleteSheet } = await import("../crm/performance.ts");
+    res.json(await resolveAthleteSheet(String(req.params.id)));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+// The pass-2 review engine, reachable from the Athletes tab: most recent
+// session in their sheet → reasoned feedback → written to the Feedback tab.
+crmRouter.post("/clients/:id/session-feedback", async (req: Request, res: Response) => {
+  try {
+    const { sessionFeedbackForAthlete } = await import("../training/sessionFeedback.ts");
+    res.json(await sessionFeedbackForAthlete(String(req.params.id)));
   } catch (err) {
     fail(res, err);
   }
