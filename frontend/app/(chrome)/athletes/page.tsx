@@ -18,7 +18,7 @@
 // and the page says so. Sparklines draw raw values (a dropping 40 time slopes
 // down); the trend chip carries direction honestly (positive always = better).
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Panel, Btn, Divider, LedgerRow, SectionLabel, day } from "../../../components/kit";
 import AthleteRadar, { type RadarAxis } from "../../../components/kit/AthleteRadar";
 
@@ -70,10 +70,9 @@ type Detail = {
 
 /* ── small helpers ── */
 
-const fmt = (value: number, unit: string | null) => {
-  const v = Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100);
-  return `${v}${unit ?? ""}`;
-};
+const fmtNum = (value: number) =>
+  Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100);
+const fmt = (value: number, unit: string | null) => `${fmtNum(value)}${unit ?? ""}`;
 
 function ago(iso: string | null): string {
   if (!iso) return "never";
@@ -91,9 +90,12 @@ const BODY_FONT: React.CSSProperties = { fontFamily: "var(--font-body),Georgia,s
 const field =
   "bg-black/50 border border-aurelius-gold/30 rounded-[2px] px-2 py-1.5 text-sm text-aurelius-text placeholder:text-aurelius-text/30";
 
-/* ── kind badge: gold CLIENT tick-label vs neutral stone TRAINING ── */
-function KindBadge({ kind }: { kind: string }) {
+/* ── kind badge: gold CLIENT tick-label vs neutral stone TRAINING.
+      A paused/ended athlete wears it dimmed — the roster meta line carries
+      the status word itself. ── */
+function KindBadge({ kind, status }: { kind: string; status?: string }) {
   const client = kind === "client";
+  const dimmed = status != null && status !== "active";
   return (
     <span
       style={{
@@ -106,6 +108,7 @@ function KindBadge({ kind }: { kind: string }) {
         border: `1px solid ${client ? "var(--gold-line)" : "var(--line2)"}`,
         color: client ? "var(--gold)" : "var(--ink3)",
         background: client ? "rgba(212,175,55,.08)" : "none",
+        opacity: dimmed ? 0.5 : 1,
       }}
     >
       {client ? "CLIENT" : "TRAINING"}
@@ -200,6 +203,12 @@ export default function AthletesPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  // Save succeeded but the roster re-read didn't — say so, never silently.
+  const [staleNote, setStaleNote] = useState<string | null>(null);
+  // The id of the detail fetch currently in flight / most recently requested.
+  // A response (data OR error) from an older request is dropped, so rapid
+  // athlete-switching can never wedge the panel or paint the wrong error.
+  const detailReqRef = useRef<string | null>(null);
 
   const loadRoster = useCallback(async (): Promise<RosterRow[]> => {
     const res = await fetch("/api/athletes");
@@ -210,13 +219,16 @@ export default function AthletesPage() {
   }, []);
 
   const loadDetail = useCallback(async (clientId: string) => {
+    detailReqRef.current = clientId;
     setDetailError(null);
     try {
       const res = await fetch(`/api/athletes/${encodeURIComponent(clientId)}`);
       const data = await res.json();
+      if (detailReqRef.current !== clientId) return; // stale — a newer request owns the panel
       if (!res.ok) throw new Error(data?.error ?? "Failed to load the athlete");
       setDetail(data);
     } catch (e: any) {
+      if (detailReqRef.current !== clientId) return;
       setDetail(null);
       setDetailError(e?.message ?? "Failed to load the athlete");
     }
@@ -229,6 +241,7 @@ export default function AthletesPage() {
   useEffect(() => {
     setDetail(null);
     if (selectedId) loadDetail(selectedId);
+    else detailReqRef.current = null;
   }, [selectedId, loadDetail]);
 
   // Most recently logged first; never-logged last; stable by name within ties.
@@ -243,7 +256,10 @@ export default function AthletesPage() {
 
   const refreshAll = useCallback(async () => {
     await Promise.all([
-      loadRoster().catch(() => {}),
+      loadRoster()
+        .then(() => setStaleNote(null))
+        // The write landed; only the re-read failed — say so instead of silence.
+        .catch(() => setStaleNote("saved — roster view may be stale, refresh to be sure")),
       selectedId ? loadDetail(selectedId) : Promise.resolve(),
     ]);
   }, [loadRoster, loadDetail, selectedId]);
@@ -295,7 +311,16 @@ export default function AthletesPage() {
             </div>
           ) : (
             <>
-              {/* ── the roster ── */}
+              {staleNote && (
+                <p className="au-kicker" style={{ display: "block", textAlign: "center", color: "var(--attn)" }}>
+                  {staleNote}
+                </p>
+              )}
+
+              {/* ── the roster ──
+                    (A "You" row for Cole's OWN training — the REDESIGN_PLAN
+                    roster chip — is a later phase: deferred, never faked with
+                    a placeholder row here.) */}
               <div className="space-y-3">
                 {sorted.map((a) => (
                   <div key={a.id}>
@@ -311,10 +336,15 @@ export default function AthletesPage() {
                             <span style={{ ...BODY_FONT, fontWeight: 600, fontSize: "1.2rem", color: "var(--ink)" }}>
                               {a.name}
                             </span>
-                            <KindBadge kind={a.kind} />
+                            <KindBadge kind={a.kind} status={a.status} />
                           </span>
                           <span style={{ ...DATA_FONT, fontSize: 12, letterSpacing: ".06em", color: "var(--ink3)" }}>
-                            {[a.sport, a.position, a.gradYear != null ? `'${String(a.gradYear).slice(-2)}` : null]
+                            {[
+                              a.sport,
+                              a.position,
+                              a.gradYear != null ? `'${String(a.gradYear).slice(-2)}` : null,
+                              a.status !== "active" ? a.status : null,
+                            ]
                               .filter(Boolean)
                               .join(" · ") || "—"}
                           </span>
@@ -386,7 +416,7 @@ function AthleteDetail({ detail, onChanged }: { detail: Detail; onChanged: () =>
       <div className="flex items-baseline justify-between gap-x-5 gap-y-2 flex-wrap">
         <span className="flex items-center gap-2.5 flex-wrap">
           <span style={{ ...BODY_FONT, fontWeight: 600, fontSize: "1.45rem", color: "var(--ink)" }}>{detail.name}</span>
-          <KindBadge kind={detail.kind} />
+          <KindBadge kind={detail.kind} status={detail.status} />
         </span>
         <span className="flex items-baseline gap-4">
           <span>
@@ -400,9 +430,14 @@ function AthleteDetail({ detail, onChanged }: { detail: Detail; onChanged: () =>
           <span style={{ ...DATA_FONT, fontSize: 12, color: "var(--ink3)" }}>last logged {ago(detail.lastLoggedAt)}</span>
         </span>
       </div>
-      {(detail.sport || detail.position || detail.gradYear != null) && (
+      {(detail.sport || detail.position || detail.gradYear != null || detail.status !== "active") && (
         <p style={{ ...DATA_FONT, fontSize: 12, letterSpacing: ".06em", color: "var(--ink3)", marginTop: 4 }}>
-          {[detail.sport, detail.position, detail.gradYear != null ? `class of ${detail.gradYear}` : null]
+          {[
+            detail.sport,
+            detail.position,
+            detail.gradYear != null ? `class of ${detail.gradYear}` : null,
+            detail.status !== "active" ? detail.status : null,
+          ]
             .filter(Boolean)
             .join(" · ")}
         </p>
@@ -439,8 +474,15 @@ function AthleteDetail({ detail, onChanged }: { detail: Detail; onChanged: () =>
                   <span className="au-kicker" style={{ fontSize: 12.5, flex: "none" }}>first entry — baseline</span>
                 )}
                 <div className="flex items-center gap-2 ml-auto flex-none">
+                  {/* Cinzel carries ONLY the numeral — the unit drops to a
+                      Cormorant sub-span, the kit's .au-unit grammar */}
                   <span style={{ ...SERIF_FONT, fontWeight: 700, fontSize: "1.15rem", color: "var(--ink)", fontVariantNumeric: "tabular-nums" }}>
-                    {fmt(s.latest.value, s.unit)}
+                    {fmtNum(s.latest.value)}
+                    {s.unit ? (
+                      <span style={{ ...BODY_FONT, fontWeight: 600, fontSize: ".6em", letterSpacing: ".06em", color: "var(--ink2)", marginLeft: 2 }}>
+                        {s.unit}
+                      </span>
+                    ) : null}
                   </span>
                   <TrendChip pct={s.improvementPct} />
                 </div>
@@ -471,7 +513,9 @@ function AthleteDetail({ detail, onChanged }: { detail: Detail; onChanged: () =>
               : "positioned against his own history — more entries per lift will draw the ghost"
             : axes.length === 2
               ? "two measures — a pair of gauges, not a shape; a third draws the polygon"
-              : "no numbers on record yet — the first entry below starts the shape"}
+              : axes.length === 1
+                ? "one measure on record — a second different measure starts the instrument"
+                : "no numbers on record yet — the first entry below starts the shape"}
         </p>
       </div>
 
@@ -559,12 +603,14 @@ function LogMetricForm({ clientId, onLogged }: { clientId: string; onLogged: () 
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="Vertical, squat, 40…"
+          aria-label="Metric label"
           className={`${field} flex-1 min-w-[10rem]`}
         />
         <input
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder="Value"
+          aria-label="Value"
           inputMode="decimal"
           className={`${field} w-24`}
         />
@@ -572,29 +618,34 @@ function LogMetricForm({ clientId, onLogged }: { clientId: string; onLogged: () 
           value={unit}
           onChange={(e) => setUnit(e.target.value)}
           placeholder="in / lbs / s"
+          aria-label="Unit"
           className={`${field} w-24`}
         />
         <Btn onClick={submit} disabled={busy}>
           {busy ? "Logging…" : "Log it"}
         </Btn>
-        {prFlash && (
-          <span
-            className="au-land au-shimmer"
-            style={{
-              ...SERIF_FONT,
-              fontWeight: 700,
-              fontSize: 14,
-              letterSpacing: ".3em",
-              color: "var(--gold)",
-              border: "1px solid var(--gold-line)",
-              borderRadius: 2,
-              padding: "2px 8px",
-            }}
-            aria-live="polite"
-          >
-            PR
-          </span>
-        )}
+        {/* PR flash — the live region stays mounted (initially empty) so
+            screen readers announce the text CHANGE; only the styling flips */}
+        <span
+          aria-live="polite"
+          className={prFlash ? "au-land au-shimmer" : undefined}
+          style={
+            prFlash
+              ? {
+                  ...SERIF_FONT,
+                  fontWeight: 700,
+                  fontSize: 14,
+                  letterSpacing: ".3em",
+                  color: "var(--gold)",
+                  border: "1px solid var(--gold-line)",
+                  borderRadius: 2,
+                  padding: "2px 8px",
+                }
+              : { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }
+          }
+        >
+          {prFlash ? "PR" : ""}
+        </span>
       </div>
       {note && (
         <p
@@ -751,19 +802,21 @@ function AddAthleteForm({ onAdded, startOpen }: { onAdded: () => Promise<void>; 
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Name (required)"
+            aria-label="Name"
             className={`${field} flex-1 min-w-[12rem]`}
           />
         </div>
         {/* kind: two labeled doors, training-only by default — adding a gym
-            athlete must never accidentally enter the business machinery */}
-        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Athlete kind">
+            athlete must never accidentally enter the business machinery.
+            Plain toggle buttons (aria-pressed), not role=radio — we don't
+            implement the arrow-key semantics that role would promise. */}
+        <div className="flex flex-wrap gap-2">
           {KIND_OPTIONS.map((o) => {
             const on = kind === o.kind;
             return (
               <button
                 key={o.kind}
-                role="radio"
-                aria-checked={on}
+                aria-pressed={on}
                 onClick={() => setKind(o.kind)}
                 style={{
                   ...BODY_FONT, fontWeight: 600, fontSize: 12.5, letterSpacing: ".08em",
@@ -780,12 +833,13 @@ function AddAthleteForm({ onAdded, startOpen }: { onAdded: () => Promise<void>; 
           })}
         </div>
         <div className="flex flex-wrap gap-2">
-          <input value={sport} onChange={(e) => setSport(e.target.value)} placeholder="Sport" className={`${field} flex-1 min-w-[8rem]`} />
-          <input value={position} onChange={(e) => setPosition(e.target.value)} placeholder="Position" className={`${field} flex-1 min-w-[8rem]`} />
+          <input value={sport} onChange={(e) => setSport(e.target.value)} placeholder="Sport" aria-label="Sport" className={`${field} flex-1 min-w-[8rem]`} />
+          <input value={position} onChange={(e) => setPosition(e.target.value)} placeholder="Position" aria-label="Position" className={`${field} flex-1 min-w-[8rem]`} />
           <input
             value={gradYear}
             onChange={(e) => setGradYear(e.target.value)}
             placeholder="Grad year"
+            aria-label="Grad year"
             inputMode="numeric"
             className={`${field} w-28`}
           />
@@ -794,6 +848,7 @@ function AddAthleteForm({ onAdded, startOpen }: { onAdded: () => Promise<void>; 
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder="Notes"
+          aria-label="Notes"
           rows={2}
           className={`${field} w-full`}
         />
