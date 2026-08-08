@@ -4,25 +4,37 @@
 // athlete's numbers, and their trends (REDESIGN_PLAN.md).
 //
 // The roster comes from /api/athletes (backed by crm/performance.athleteRoster
-// — BOTH kinds: paying clients and training-only athletes, each badged).
-// Selecting a row expands the performance view in place (/api/athletes/[id]):
-// per-metric sparkline trends, the radar, and the PR ledger. Logging a metric
-// POSTs the existing retention kind:"metric" — the same write the rest of the
-// system uses, PR detection included. Promotion (training_only → client) is
-// the ONE door into the business machinery, behind a two-step confirm; there
-// is deliberately no demote.
+// — BOTH kinds: paying clients and training-only athletes, each badged, each
+// carrying a trend summary). The QUICK-LOG BAR up top is the page's primary
+// action for gym use — pick an athlete, type the number, done; it POSTs the
+// same retention kind:"metric" write as everything else, PR detection
+// included. The roster sorts (recent · trending · PRs · name) and filters
+// (all · clients · training) client-side. Selecting a row expands the
+// performance view in place (/api/athletes/[id]): per-metric sparkline
+// trends, the radar, and the PR ledger — with a second log form in context.
+// Promotion (training_only → client) is the ONE door into the business
+// machinery, behind a two-step confirm; there is deliberately no demote.
 //
 // Honesty rules this page: an empty roster says so — never sample athletes,
-// never rendered zeroes dressed as progress. Radar axes are normalized against
-// THAT athlete's own history (latest vs his min/max) — his shape over time,
-// and the page says so. Sparklines draw raw values (a dropping 40 time slopes
-// down); the trend chip carries direction honestly (positive always = better).
+// never rendered zeroes dressed as progress. An athlete with no measure at
+// 2+ points has NO trend chip (null is a fact, not a zero). Radar axes are
+// normalized against THAT athlete's own history (latest vs his min/max) —
+// his shape over time, and the page says so. Sparklines draw raw values (a
+// dropping 40 time slopes down); trend chips carry direction honestly
+// (positive always = better, even for sprint times — the server orients).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Panel, Btn, Divider, LedgerRow, SectionLabel, day } from "../../../components/kit";
 import AthleteRadar, { type RadarAxis } from "../../../components/kit/AthleteRadar";
 
 /* ── types (JSON shapes of crm/performance — dates arrive as ISO strings) ── */
+
+type TrendSummary = {
+  improving: number;
+  declining: number;
+  flat: number;
+  avgPct: number; // orientation-corrected: positive ALWAYS means got better
+};
 
 type RosterRow = {
   id: string;
@@ -35,6 +47,7 @@ type RosterRow = {
   lastLoggedAt: string | null;
   prCount: number;
   metricCount: number;
+  trend: TrendSummary | null; // null = no measure has 2+ points yet — a fact, not a zero
 };
 
 type SeriesPoint = { value: number; isPR: boolean; achievedAt: string };
@@ -141,6 +154,54 @@ function TrendChip({ pct }: { pct: number | null }) {
   );
 }
 
+/* ── PR flash — the live region stays mounted (initially empty) so screen
+      readers announce the text CHANGE; only the styling flips. Shared by the
+      quick-log bar and the detail-panel form. ── */
+function PrFlash({ on }: { on: boolean }) {
+  return (
+    <span
+      aria-live="polite"
+      className={on ? "au-land au-shimmer" : undefined}
+      style={
+        on
+          ? {
+              ...SERIF_FONT,
+              fontWeight: 700,
+              fontSize: 14,
+              letterSpacing: ".3em",
+              color: "var(--gold)",
+              border: "1px solid var(--gold-line)",
+              borderRadius: 2,
+              padding: "2px 8px",
+            }
+          : { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }
+      }
+    >
+      {on ? "PR" : ""}
+    </span>
+  );
+}
+
+/* ── small engraved chip-button: the sort/filter control grammar ── */
+function ChipBtn({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={on}
+      style={{
+        ...BODY_FONT, fontWeight: 600, fontSize: 11.5, letterSpacing: ".16em", textTransform: "uppercase",
+        padding: ".3rem .7rem", borderRadius: 2, cursor: "pointer",
+        border: `1px solid ${on ? "var(--gold-line)" : "var(--line1)"}`,
+        color: on ? "var(--gold)" : "var(--ink3)",
+        background: on ? "rgba(212,175,55,.08)" : "none",
+        transition: "color .15s, border-color .15s",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 /* ── inline sparkline: raw values over time (never inverted — the chip
       carries direction), gold-dim 1px, PR dots, final point emphasized ── */
 function Sparkline({ points }: { points: SeriesPoint[] }) {
@@ -197,6 +258,21 @@ function deriveAxes(series: Series[]): { axes: RadarAxis[]; priorR?: number[] } 
 
 /* ═══════════════════════════ the page ═══════════════════════════ */
 
+const SORT_OPTIONS = [
+  { key: "recent", label: "Recent" },
+  { key: "trending", label: "Trending" },
+  { key: "prs", label: "PRs" },
+  { key: "name", label: "Name" },
+] as const;
+type SortKey = (typeof SORT_OPTIONS)[number]["key"];
+
+const FILTER_OPTIONS = [
+  { key: "all", label: "All" },
+  { key: "client", label: "Clients" },
+  { key: "training_only", label: "Training" },
+] as const;
+type FilterKey = (typeof FILTER_OPTIONS)[number]["key"];
+
 export default function AthletesPage() {
   const [athletes, setAthletes] = useState<RosterRow[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -244,15 +320,38 @@ export default function AthletesPage() {
     else detailReqRef.current = null;
   }, [selectedId, loadDetail]);
 
-  // Most recently logged first; never-logged last; stable by name within ties.
-  const sorted = useMemo(() => {
+  // Sort + filter are view state only — the roster itself is never mutated.
+  const [sortKey, setSortKey] = useState<SortKey>("recent");
+  const [filterKey, setFilterKey] = useState<FilterKey>("all");
+
+  // The current view: filtered by kind, then sorted. "Recent" is the default
+  // (last-logged desc, never-logged last); "Trending" puts null-trend rows
+  // last — no trend is a fact, not a bad score.
+  const view = useMemo(() => {
     if (!athletes) return null;
-    return [...athletes].sort((a, b) => {
-      const ta = a.lastLoggedAt ? new Date(a.lastLoggedAt).getTime() : -1;
-      const tb = b.lastLoggedAt ? new Date(b.lastLoggedAt).getTime() : -1;
-      return tb - ta || a.name.localeCompare(b.name);
-    });
-  }, [athletes]);
+    const t = (a: RosterRow) => (a.lastLoggedAt ? new Date(a.lastLoggedAt).getTime() : -1);
+    const byRecent = (a: RosterRow, b: RosterRow) => t(b) - t(a) || a.name.localeCompare(b.name);
+    const arr = filterKey === "all" ? [...athletes] : athletes.filter((a) => a.kind === filterKey);
+    switch (sortKey) {
+      case "trending":
+        arr.sort((a, b) => {
+          if (a.trend == null && b.trend == null) return byRecent(a, b);
+          if (a.trend == null) return 1;
+          if (b.trend == null) return -1;
+          return b.trend.avgPct - a.trend.avgPct || byRecent(a, b);
+        });
+        break;
+      case "prs":
+        arr.sort((a, b) => b.prCount - a.prCount || byRecent(a, b));
+        break;
+      case "name":
+        arr.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+      default:
+        arr.sort(byRecent);
+    }
+    return arr;
+  }, [athletes, sortKey, filterKey]);
 
   const refreshAll = useCallback(async () => {
     await Promise.all([
@@ -261,6 +360,17 @@ export default function AthletesPage() {
         // The write landed; only the re-read failed — say so instead of silence.
         .catch(() => setStaleNote("saved — roster view may be stale, refresh to be sure")),
       selectedId ? loadDetail(selectedId) : Promise.resolve(),
+    ]);
+  }, [loadRoster, loadDetail, selectedId]);
+
+  // After a quick-log: refresh the roster, and the detail panel only if the
+  // logged athlete is the one currently expanded.
+  const refreshAfterLog = useCallback(async (clientId: string) => {
+    await Promise.all([
+      loadRoster()
+        .then(() => setStaleNote(null))
+        .catch(() => setStaleNote("saved — roster view may be stale, refresh to be sure")),
+      selectedId === clientId ? loadDetail(clientId) : Promise.resolve(),
     ]);
   }, [loadRoster, loadDetail, selectedId]);
 
@@ -296,9 +406,9 @@ export default function AthletesPage() {
             </p>
           </header>
 
-          {sorted == null ? (
+          {view == null || athletes == null ? (
             <p className="au-kicker" style={{ display: "block", textAlign: "center" }}>reading the roster…</p>
-          ) : sorted.length === 0 ? (
+          ) : athletes.length === 0 ? (
             /* ── the honest empty: no athletes, no theatre ── */
             <div className="text-center space-y-6">
               <div className="flex justify-center mt-2">
@@ -311,18 +421,55 @@ export default function AthletesPage() {
             </div>
           ) : (
             <>
+              {/* ── quick log — THE primary action for gym use ── */}
+              <QuickLogBar athletes={athletes} onLogged={refreshAfterLog} />
+
               {staleNote && (
                 <p className="au-kicker" style={{ display: "block", textAlign: "center", color: "var(--attn)" }}>
                   {staleNote}
                 </p>
               )}
 
+              {/* ── sort + filter — who's trending well, at a glance ── */}
+              <div className="flex items-center justify-between gap-x-4 gap-y-2 flex-wrap">
+                <div className="flex gap-1.5 flex-wrap items-center">
+                  {FILTER_OPTIONS.map((f) => {
+                    const count =
+                      f.key === "all" ? athletes.length : athletes.filter((a) => a.kind === f.key).length;
+                    return (
+                      <ChipBtn key={f.key} on={filterKey === f.key} onClick={() => setFilterKey(f.key)}>
+                        {f.label}{" "}
+                        <span style={{ ...DATA_FONT, fontSize: 10.5, letterSpacing: ".04em", fontVariantNumeric: "tabular-nums" }}>
+                          {count}
+                        </span>
+                      </ChipBtn>
+                    );
+                  })}
+                </div>
+                <div className="flex gap-1.5 flex-wrap items-center">
+                  <span style={{ ...DATA_FONT, fontSize: 10.5, letterSpacing: ".2em", color: "var(--ink3)" }}>SORT</span>
+                  {SORT_OPTIONS.map((s) => (
+                    <ChipBtn key={s.key} on={sortKey === s.key} onClick={() => setSortKey(s.key)}>
+                      {s.label}
+                    </ChipBtn>
+                  ))}
+                </div>
+              </div>
+
               {/* ── the roster ──
                     (A "You" row for Cole's OWN training — the REDESIGN_PLAN
                     roster chip — is a later phase: deferred, never faked with
                     a placeholder row here.) */}
+              {view.length === 0 ? (
+                /* filtered-empty is its own honest message, never the generic empty */
+                <p className="au-kicker" style={{ display: "block", textAlign: "center" }}>
+                  {filterKey === "client"
+                    ? "no clients on the roster yet — promote a training athlete or add one"
+                    : "no training-only athletes yet"}
+                </p>
+              ) : (
               <div className="space-y-3">
-                {sorted.map((a) => (
+                {view.map((a) => (
                   <div key={a.id}>
                     <button
                       onClick={() => setSelectedId((cur) => (cur === a.id ? null : a.id))}
@@ -350,6 +497,18 @@ export default function AthletesPage() {
                           </span>
                         </div>
                         <div className="flex items-baseline gap-5 flex-none">
+                          {/* trend: server-oriented avgPct — absent entirely
+                              when no measure has 2+ points (never a fake 0) */}
+                          {a.trend && (
+                            <span className="flex items-center gap-1.5 flex-none">
+                              <TrendChip pct={a.trend.avgPct} />
+                              {a.trend.improving > 0 && a.trend.declining > 0 && (
+                                <span style={{ ...DATA_FONT, fontSize: 10.5, color: "var(--ink3)", fontVariantNumeric: "tabular-nums", letterSpacing: ".04em" }}>
+                                  {a.trend.improving}▲ {a.trend.declining}▼
+                                </span>
+                              )}
+                            </span>
+                          )}
                           <span className="text-right">
                             <span style={{ ...SERIF_FONT, fontWeight: 700, fontSize: "1.3rem", color: a.prCount > 0 ? "var(--gold)" : "var(--ink3)", fontVariantNumeric: "tabular-nums" }}>
                               {a.prCount}
@@ -386,6 +545,7 @@ export default function AthletesPage() {
                   </div>
                 ))}
               </div>
+              )}
 
               <Divider />
 
@@ -553,6 +713,138 @@ function AthleteDetail({ detail, onChanged }: { detail: Detail; onChanged: () =>
   );
 }
 
+/* ═════════════════ quick log — the gym-floor write ═════════════════ */
+
+// The fastest thing on the page: pick an athlete, type the number, done.
+// Same POST as the detail-panel form (retention kind:"metric", PR detection
+// included). Athlete + label + unit are STICKY after a save and only the
+// value clears — both gym flows ("three lifts for one athlete", "everyone's
+// 40 today") are one keystroke away from the next entry.
+function QuickLogBar({ athletes, onLogged }: {
+  athletes: RosterRow[];
+  onLogged: (clientId: string) => Promise<void>;
+}) {
+  // Select is always in recency order (who you just coached is on top),
+  // independent of the roster's current sort control.
+  const options = useMemo(
+    () =>
+      [...athletes].sort((a, b) => {
+        const ta = a.lastLoggedAt ? new Date(a.lastLoggedAt).getTime() : -1;
+        const tb = b.lastLoggedAt ? new Date(b.lastLoggedAt).getTime() : -1;
+        return tb - ta || a.name.localeCompare(b.name);
+      }),
+    [athletes]
+  );
+  const [clientId, setClientId] = useState<string>(options[0]?.id ?? "");
+  useEffect(() => {
+    // Keep the selection valid across roster refreshes; never point at a ghost.
+    if (!options.some((o) => o.id === clientId)) setClientId(options[0]?.id ?? "");
+  }, [options, clientId]);
+
+  const [label, setLabel] = useState("");
+  const [value, setValue] = useState("");
+  const [unit, setUnit] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const [prFlash, setPrFlash] = useState(false);
+
+  const submit = async () => {
+    const who = options.find((o) => o.id === clientId);
+    const v = Number(value);
+    if (!who) {
+      setNote({ ok: false, text: "Pick an athlete." });
+      return;
+    }
+    // (!value.trim() matters: Number("") is 0, which is finite)
+    if (!label.trim() || !value.trim() || !Number.isFinite(v)) {
+      setNote({ ok: false, text: "A metric needs a label and a number." });
+      return;
+    }
+    setBusy(true);
+    setNote(null);
+    try {
+      const res = await fetch("/api/crm/retention", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId, kind: "metric", label: label.trim(), value: v, unit: unit.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "Could not log the metric");
+      if (data.isPR) {
+        setPrFlash(true);
+        window.setTimeout(() => setPrFlash(false), 1400);
+      }
+      setNote({
+        ok: true,
+        text: `${who.name} — ${label.trim()} ${fmt(v, unit.trim() || null)} logged${data.isPR ? " · a personal best" : ""}`,
+      });
+      setValue(""); // athlete, label, unit stay for the next rep
+      await onLogged(clientId);
+    } catch (e: any) {
+      setNote({ ok: false, text: e?.message ?? "Could not log the metric" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="au-card p-3">
+      <div className="flex gap-2 flex-wrap items-center">
+        <select
+          value={clientId}
+          onChange={(e) => setClientId(e.target.value)}
+          aria-label="Athlete"
+          disabled={busy}
+          className={`${field} min-w-[9rem]`}
+        >
+          {options.map((o) => (
+            <option key={o.id} value={o.id}>{o.name}</option>
+          ))}
+        </select>
+        <input
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="Vertical, squat, 40…"
+          aria-label="Metric label"
+          disabled={busy}
+          className={`${field} flex-1 min-w-[9rem]`}
+        />
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !busy) submit(); }}
+          placeholder="Value"
+          aria-label="Value"
+          inputMode="decimal"
+          disabled={busy}
+          className={`${field} w-24`}
+        />
+        <input
+          value={unit}
+          onChange={(e) => setUnit(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !busy) submit(); }}
+          placeholder="in / lbs / s"
+          aria-label="Unit"
+          disabled={busy}
+          className={`${field} w-24`}
+        />
+        <Btn onClick={submit} disabled={busy}>
+          {busy ? "Logging…" : "Log it"}
+        </Btn>
+        <PrFlash on={prFlash} />
+      </div>
+      {note && (
+        <p
+          className="au-kicker"
+          style={{ display: "block", marginTop: ".55rem", fontSize: 13, color: note.ok ? "var(--gold)" : "var(--danger)" }}
+        >
+          {note.text}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /* ═════════════════════ log a metric ═════════════════════ */
 
 function LogMetricForm({ clientId, onLogged }: { clientId: string; onLogged: () => Promise<void> }) {
@@ -565,7 +857,8 @@ function LogMetricForm({ clientId, onLogged }: { clientId: string; onLogged: () 
 
   const submit = async () => {
     const v = Number(value);
-    if (!label.trim() || !Number.isFinite(v)) {
+    // (!value.trim() matters: Number("") is 0, which is finite)
+    if (!label.trim() || !value.trim() || !Number.isFinite(v)) {
       setNote({ ok: false, text: "A metric needs a label and a number." });
       return;
     }
@@ -624,28 +917,7 @@ function LogMetricForm({ clientId, onLogged }: { clientId: string; onLogged: () 
         <Btn onClick={submit} disabled={busy}>
           {busy ? "Logging…" : "Log it"}
         </Btn>
-        {/* PR flash — the live region stays mounted (initially empty) so
-            screen readers announce the text CHANGE; only the styling flips */}
-        <span
-          aria-live="polite"
-          className={prFlash ? "au-land au-shimmer" : undefined}
-          style={
-            prFlash
-              ? {
-                  ...SERIF_FONT,
-                  fontWeight: 700,
-                  fontSize: 14,
-                  letterSpacing: ".3em",
-                  color: "var(--gold)",
-                  border: "1px solid var(--gold-line)",
-                  borderRadius: 2,
-                  padding: "2px 8px",
-                }
-              : { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }
-          }
-        >
-          {prFlash ? "PR" : ""}
-        </span>
+        <PrFlash on={prFlash} />
       </div>
       {note && (
         <p
