@@ -34,6 +34,7 @@ import {
 } from "../../crm/service.ts";
 import { importWarmList, draftOutreach, runOutreachSweep } from "../../crm/leadEngine.ts";
 import { stageSms } from "../../crm/sms.ts";
+import { addExpense, listExpenses, expenseSummary, EXPENSE_CATEGORIES } from "../../business/expenses.ts";
 
 /**
  * Accept a client id OR a name, because Cole will always say "Jake".
@@ -192,6 +193,20 @@ export const crmAdapter: ToolAdapter = {
       dataSchema: "{} (no fields)",
     },
     {
+      name: "record_expense",
+      description:
+        "Record what the business COSTS — a tool subscription, equipment, a course, platform fees. Capture-only book entry: nothing is deducted or filed anywhere. amount is in dollars. Use for 'I paid $15 for TrueCoach', 'expense: $40 bands'.",
+      dataSchema:
+        '{ amount: number (dollars), category?: "software"|"equipment"|"education"|"marketing"|"fees"|"other", note?: string, incurredAt?: string (ISO) }',
+      example: '[TOOL: crm.record_expense {"amount": 14.99, "category": "software", "note": "TrueCoach monthly"}]',
+    },
+    {
+      name: "expenses",
+      description:
+        "What the business spent — a month's total, by category, with recent entries and the quarterly estimated-tax reminder. Use for 'what am I spending', 'expenses this month'.",
+      dataSchema: '{ month?: string (YYYY-MM, default this month) }',
+    },
+    {
       name: "text_lead",
       description:
         "STAGE a text message to a lead or client for your confirm — it does NOT send. Sending an SMS is an outward action, so this prepares it and stops on the Bridge for your Confirm tap. Needs Twilio configured. Use for 'text Jake: ...'.",
@@ -230,7 +245,11 @@ export const crmAdapter: ToolAdapter = {
           const client = await convertLead(String(data.leadId), data as any);
           return {
             ok: true,
-            output: { clientId: client.id, name: client.name, message: `${client.name} is a client. Add an engagement to record what they bought.` },
+            output: {
+              clientId: client.id,
+              name: client.name,
+              message: `${client.name} is a client. The onboarding runway is on your task list — 5 steps over 14 days (welcome draft, intake, program sheet by day 3, day-7 check-in, day-14 review). Add an engagement to record what they bought.`,
+            },
           };
         }
 
@@ -358,6 +377,41 @@ export const crmAdapter: ToolAdapter = {
           const rows = await outstandingInvoices();
           const total = rows.reduce((s, r) => s + r.outstandingCents, 0);
           return { ok: true, output: { count: rows.length, total: fromCents(total), invoices: rows } };
+        }
+
+        case "record_expense": {
+          const e = await addExpense(data as any);
+          return {
+            ok: true,
+            output: {
+              expenseId: e.id,
+              amount: fromCents(e.amountCents, e.currency),
+              category: e.category,
+              incurredAt: e.incurredAt,
+              message: `Recorded ${fromCents(e.amountCents)} (${e.category}) as spent. A book entry only — nothing was deducted or filed anywhere.`,
+            },
+          };
+        }
+
+        case "expenses": {
+          const [summary, recent] = await Promise.all([
+            expenseSummary(data.month ? String(data.month) : undefined),
+            listExpenses({ month: data.month ? String(data.month) : undefined, limit: 10 }),
+          ]);
+          return {
+            ok: true,
+            output: {
+              ...summary,
+              recent: recent.map((e) => ({
+                id: e.id,
+                amount: fromCents(e.amountCents, e.currency),
+                category: e.category,
+                note: e.note,
+                incurredAt: e.incurredAt,
+              })),
+              categories: EXPENSE_CATEGORIES,
+            },
+          };
         }
 
         case "text_lead": {

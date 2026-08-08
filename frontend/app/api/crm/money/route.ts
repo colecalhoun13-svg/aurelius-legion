@@ -7,8 +7,24 @@ import {
   updateClient,
   updateEngagement,
 } from "../../../../../aurelius/crm/service";
+import { expenseSummary, listExpenses } from "../../../../../aurelius/business/expenses";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * The spend side of the treasury — what this month COST. The honest negative
+ * a zero-revenue business needs on screen next to "received". Read-only here;
+ * recording an expense is the crm.record_expense tool (chat) — capture-only,
+ * nothing deducted or filed anywhere.
+ */
+export async function GET() {
+  try {
+    const [expenses, recent] = await Promise.all([expenseSummary(), listExpenses({ limit: 10 })]);
+    return NextResponse.json({ expenses, recent });
+  } catch (error: any) {
+    return NextResponse.json({ error: error?.message ?? "Failed to load expenses" }, { status: 500 });
+  }
+}
 
 /**
  * The money writes, behind one endpoint keyed by `kind`.

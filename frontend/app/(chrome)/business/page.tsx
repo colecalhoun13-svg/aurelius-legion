@@ -89,6 +89,14 @@ type MoneyLedger = {
   selfRecordedCents: number; headline: string;
 };
 
+type ExpenseSummary = {
+  month: string; count: number; spentCents: number; spent: string;
+  byCategory: { category: string; cents: number; label: string }[];
+  quarterEstimateNote: string;
+};
+
+type Cadence = { lastPublishedAt: string | null; daysSince: number | null; plannedThisWeek: number; line: string };
+
 type ProbeVariant = { offerId: string; name: string; shape: string; status: string; code: string; clicks: number; leads: number };
 type Probe = {
   running: boolean; variants: ProbeVariant[];
@@ -157,6 +165,9 @@ export default function BusinessPage() {
   // A failed load must never render as "you have no business" — that reads
   // identically to the real empty state and would be a lie about his data.
   const [loadFailed, setLoadFailed] = useState(false);
+  // The spend side of the treasury (what this month COST). Loaded separately
+  // and tolerant of failure — a missing chip must never read as "no business".
+  const [expenses, setExpenses] = useState<ExpenseSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Transient success line — so an action that writes a Gmail draft / converts a
@@ -189,6 +200,15 @@ export default function BusinessPage() {
     } catch {
       setLoadFailed(true);
     }
+    // Spent-this-month, best-effort: the honest negative belongs on screen,
+    // but its loading failure is a missing chip, never a broken page.
+    try {
+      const eres = await fetch("/api/crm/money");
+      if (eres.ok) {
+        const ej = await eres.json();
+        setExpenses(ej?.expenses ?? null);
+      }
+    } catch { /* the chip is additive */ }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -461,8 +481,11 @@ export default function BusinessPage() {
         <div id="warm" className="scroll-mt-24"><WarmList onChange={load} empty={snap.empty} /></div>
       )}
 
-      {/* ── The treasury: earned money, traced to what earned it ─── */}
-      {ledger && ledger.earnedCents > 0 && (
+      {/* ── The treasury: earned money, traced to what earned it — and what
+          it cost. Renders on spend alone too: a business earning nothing and
+          spending something is NEGATIVE, and hiding that would be the exact
+          encouraging-zeroes failure this page refuses. ─ */}
+      {ledger && (ledger.earnedCents > 0 || (expenses?.spentCents ?? 0) > 0) && (
         <section className={`scroll-mt-24 ${lit ? "au-lit" : ""}`}>
           <SectionLabel>The treasury</SectionLabel>
           <div style={{ height: "1.1rem" }} />
@@ -486,6 +509,17 @@ export default function BusinessPage() {
               <i style={{ display: "inline-block", width: 8, height: 8, borderRadius: 1, marginRight: ".45em", border: "1px solid var(--gold-line)", background: "none" }} />
               of&nbsp;<b style={{ color: "var(--ink2)" }}>{snap.mrr}/mo</b>&nbsp;committed
             </span>
+            {/* The spent chip — what the month COST, top category named.
+                The tooltip carries the quarterly estimated-tax reminder. */}
+            {expenses && expenses.spentCents > 0 && (
+              <span title={expenses.quarterEstimateNote}>
+                <i style={{ display: "inline-block", width: 8, height: 8, borderRadius: 1, marginRight: ".45em", background: "var(--danger)" }} />
+                <b style={{ color: "var(--danger)" }}>{expenses.spent}</b>&nbsp;spent
+                {expenses.byCategory[0]
+                  ? ` · ${expenses.byCategory[0].category === "software" ? "tools" : expenses.byCategory[0].category}`
+                  : ""}
+              </span>
+            )}
           </div>
           <div className="au-tre" style={{ maxWidth: 760, margin: "0 auto" }}>
             <div className="au-tre-committed" />
@@ -1499,6 +1533,19 @@ function ContentQueue({ drafts, state, onChange }: { drafts: ContentDraft[]; sta
   const [open, setOpen] = useState<string | null>(null);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [images, setImages] = useState<Record<string, string>>({});
+  // The cadence truth — "nothing published in N days" when the feed has gone
+  // quiet; silent when there's nothing worth saying. Fetched from the content
+  // route so it stays the backend's honest sentence, not a UI recomputation.
+  const [cadence, setCadence] = useState<Cadence | null>(null);
+  const [planNote, setPlanNote] = useState<string | null>(null);
+
+  const loadCadence = useCallback(async () => {
+    try {
+      const res = await fetch("/api/crm/content");
+      if (res.ok) setCadence((await res.json())?.cadence ?? null);
+    } catch { /* the cadence line is additive */ }
+  }, []);
+  useEffect(() => { loadCadence(); }, [loadCadence]);
 
   const live = drafts.filter((d) => d.status !== "discarded");
 
@@ -1518,11 +1565,30 @@ function ContentQueue({ drafts, state, onChange }: { drafts: ContentDraft[]; sta
 
   return (
     <section className="au-card p-4">
-      <SectionLabel row>What you&apos;ve written</SectionLabel>
-      <div style={{ height: ".6rem" }} />
+      <div className="flex justify-between items-baseline gap-4 mb-2 flex-wrap">
+        <SectionLabel row>What you&apos;ve written</SectionLabel>
+        <Btn
+          ghost
+          disabled={busy}
+          onClick={async () => {
+            const j = await post({ kind: "plan_slots" });
+            if (j) { setPlanNote(j.note ?? `${j.assigned} slotted.`); loadCadence(); }
+          }}
+          title="Assigns Mon/Thu 9am slots to ready drafts that lack one. A slot is a plan — publishing still stops for your confirm."
+        >
+          {busy ? "Working…" : "Plan the week's slots"}
+        </Btn>
+      </div>
       {/* A full queue is not output. The headline refuses to let a pile of
           unpublished drafts read as progress. */}
       <p className="text-xs text-aurelius-text/60 mb-3">{state?.headline ?? "Loading…"}</p>
+      {/* The cadence truth — spoken only when the feed has gone quiet. */}
+      {cadence?.line && (
+        <p className="text-[11px] mb-3" style={{ color: "var(--attn)" }}>{cadence.line}</p>
+      )}
+      {planNote && (
+        <p className="text-[11px] mb-3 text-emerald-200/80">{planNote}</p>
+      )}
       {err && <div className="rounded-[2px] border border-red-500/40 bg-red-950/20 p-2 text-xs text-red-200 mb-3">{err}</div>}
 
       {live.length === 0 ? (

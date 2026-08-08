@@ -154,7 +154,7 @@ export async function convertLead(
   if (!lead) throw new Error(`No lead with id ${leadId}.`);
   if (lead.convertedClientId) throw new Error(`${lead.name} has already been converted.`);
 
-  return prisma.$transaction(async (tx) => {
+  const client = await prisma.$transaction(async (tx) => {
     const client = await tx.client.create({
       data: {
         name: lead.name,
@@ -176,6 +176,19 @@ export async function convertLead(
     });
     return client;
   });
+
+  // THE ONBOARDING RUNWAY — five tasks over 14 days, laid the moment the
+  // client exists (crm/onboarding.ts). Inward (tasks + a receipt), fires only
+  // on a real conversion, and best-effort OUTSIDE the transaction: a runway
+  // failure must never roll back the conversion itself.
+  try {
+    const { layOnboardingRunway } = await import("./onboarding.ts");
+    await layOnboardingRunway(client);
+  } catch (err: any) {
+    console.warn("[crm] onboarding runway failed (conversion stands):", err?.message ?? err);
+  }
+
+  return client;
 }
 
 // ── clients ──────────────────────────────────────────────────────────
