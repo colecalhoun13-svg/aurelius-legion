@@ -40,6 +40,70 @@ const CONNECTS: Array<{ name: string; path: string; desc: string }> = [
 export default function SettingsPage() {
   const [items, setItems] = useState<Integration[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // ── Quiet mode (the verb landed with the completeness wave) ──
+  const [quiet, setQuiet] = useState<{ active: boolean; until: string | null; reason: string | null } | null>(null);
+  const [quietDays, setQuietDays] = useState("3");
+  const [quietReason, setQuietReason] = useState("");
+  const [quietBusy, setQuietBusy] = useState(false);
+  const [quietMsg, setQuietMsg] = useState<string | null>(null);
+
+  const loadQuiet = () =>
+    fetch("/api/promises")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j?.quiet && setQuiet(j.quiet))
+      .catch(() => {});
+  useEffect(() => {
+    loadQuiet();
+  }, []);
+
+  const goQuiet = async () => {
+    const days = Number(quietDays);
+    if (!Number.isFinite(days) || days <= 0) {
+      setQuietMsg("How many days? A positive number.");
+      return;
+    }
+    setQuietBusy(true);
+    setQuietMsg(null);
+    try {
+      const res = await fetch("/api/promises", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ op: "quiet", days, reason: quietReason.trim() || "away" }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setQuietMsg(`Couldn't set quiet: ${j.error ?? "try again in a moment"}`);
+      } else {
+        setQuietMsg(
+          `Quiet until ${String(j.until ?? "").slice(0, 10)} — rituals holding, ${j.leadsShifted ?? 0} follow-up${(j.leadsShifted ?? 0) === 1 ? "" : "s"} shifted. It ends itself.`
+        );
+        await loadQuiet();
+      }
+    } catch {
+      setQuietMsg("Couldn't reach the brain — quiet was not set.");
+    } finally {
+      setQuietBusy(false);
+    }
+  };
+
+  const endQuiet = async () => {
+    setQuietBusy(true);
+    setQuietMsg(null);
+    try {
+      const res = await fetch("/api/promises", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ op: "quiet_end" }),
+      });
+      const j = await res.json().catch(() => ({}));
+      setQuietMsg(res.ok ? (j.summary ? `Back. ${j.summary}` : "Back — rituals resume.") : `Couldn't end quiet: ${j.error ?? "try again"}`);
+      await loadQuiet();
+    } catch {
+      setQuietMsg("Couldn't reach the brain.");
+    } finally {
+      setQuietBusy(false);
+    }
+  };
   // Resolved on the client so Connect works from the phone PWA too
   // (Codespaces forwarded domains derive the backend from the page's host).
   const [backend, setBackend] = useState("http://localhost:3001");
@@ -122,16 +186,53 @@ export default function SettingsPage() {
 
         <section className="space-y-3">
           <SectionLabel>The household</SectionLabel>
-          <div className="text-center">
-            {/* Honest placeholder — the quiet-mode verb is a coming backend
-                wave (REDESIGN_PLAN completeness list). No dead API call. */}
-            <Btn ghost disabled title="Not wired yet — the backend verb ships in the next wave">
-              Quiet mode — arrives with the next backend wave
-            </Btn>
-            <p className="au-kicker mt-2" style={{ display: "block", fontSize: 12.5 }}>
-              away or sick? everything will shift, then resume itself — once the verb exists
-            </p>
-          </div>
+          {quiet?.active ? (
+            <div className="text-center space-y-2">
+              <p className="text-sm" style={{ color: "var(--gold)" }}>
+                Quiet until {String(quiet.until ?? "").slice(0, 10)}
+                {quiet.reason ? ` — ${quiet.reason}` : ""}
+              </p>
+              <p className="au-kicker" style={{ display: "block", fontSize: 12.5 }}>
+                briefing, midday check, debrief and outreach sweep are holding; it ends itself
+              </p>
+              <Btn ghost onClick={endQuiet} disabled={quietBusy}>
+                {quietBusy ? "…" : "I'm back — end quiet now"}
+              </Btn>
+            </div>
+          ) : (
+            <div className="text-center space-y-2">
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={quietDays}
+                  onChange={(e) => setQuietDays(e.target.value)}
+                  aria-label="Quiet days"
+                  className="au-card px-2 py-1.5 text-sm text-center"
+                  style={{ width: 64, background: "none", color: "var(--ink)" }}
+                />
+                <span className="au-kicker">days ·</span>
+                <input
+                  value={quietReason}
+                  onChange={(e) => setQuietReason(e.target.value)}
+                  placeholder="reason (sick, travel…)"
+                  aria-label="Quiet reason"
+                  className="au-card px-2 py-1.5 text-sm"
+                  style={{ width: 180, background: "none", color: "var(--ink)" }}
+                />
+                <Btn onClick={goQuiet} disabled={quietBusy}>
+                  {quietBusy ? "…" : "Go quiet"}
+                </Btn>
+              </div>
+              <p className="au-kicker" style={{ display: "block", fontSize: 12.5 }}>
+                away or sick? the pushy rituals pause, follow-ups shift past the window, and everything resumes itself
+              </p>
+            </div>
+          )}
+          {quietMsg && (
+            <p className="text-xs text-center" style={{ color: "var(--ink2)" }}>{quietMsg}</p>
+          )}
         </section>
 
         <section className="space-y-3">

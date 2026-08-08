@@ -236,7 +236,7 @@ async function handleCommand(chatId: string | number, text: string) {
     case "/help":
       await send(
         chatId,
-        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\n/grants — what I can act on for you (grant/revoke keyholes)\n/protect — hold deep-work time on your calendar\n/triage — draft replies to what needs one\n/doctor — what is actually working right now (live check, with fixes)\n/deep <question> — think it through on the heavier model (your call, costs more)\nA voice note transcribes and captures the same as text.\nAnything else you type goes straight to the inbox."
+        "Aurelius, standing by.\n\n/brief — morning briefing now\n/ask <question> — ask the second brain\n/mission <objective> — launch a background mission\n/status — today at a glance\n/plan — run the weekly planning session\n/cal — today and tomorrow from the calendar\n/grants — what I can act on for you (grant/revoke keyholes)\n/protect — hold deep-work time on your calendar\n/triage — draft replies to what needs one\n/quiet 3d <reason> — away/sick: rituals hold and follow-ups shift (/quiet end to come back)\n/doctor — what is actually working right now (live check, with fixes)\n/deep <question> — think it through on the heavier model (your call, costs more)\nA voice note transcribes and captures the same as text.\nAnything else you type goes straight to the inbox — a multi-item dump gets split and filed piece by piece."
       );
       return;
 
@@ -397,6 +397,37 @@ async function handleCommand(chatId: string | number, text: string) {
       return;
     }
 
+    case "/quiet": {
+      // QUIET MODE from the phone — "/quiet 3d sick", "/quiet 12h travel",
+      // "/quiet end", bare "/quiet" for status. Same verb as the chat tool.
+      const { quietUntil, endQuietNow, ensureQuietState, parseQuietWindow } = await import("../planning/quiet.ts");
+      const [winSpec, ...reasonParts] = arg.split(/\s+/);
+      if ((winSpec ?? "").toLowerCase() === "end" || (winSpec ?? "").toLowerCase() === "off") {
+        const state = await endQuietNow();
+        await send(chatId, state.restored ? `Back. ${state.summary ?? ""}`.trim() : "Quiet wasn't on — nothing to end.");
+        return;
+      }
+      const ms = parseQuietWindow(winSpec);
+      if (!ms) {
+        const state = await ensureQuietState();
+        await send(
+          chatId,
+          state.active
+            ? `Quiet is on until ${state.until?.slice(0, 10)}${state.reason ? ` (${state.reason})` : ""}. /quiet end to come back early.`
+            : "Quiet is off. /quiet 3d <reason> (d = days, h = hours) to go quiet."
+        );
+        return;
+      }
+      const r = await quietUntil(new Date(Date.now() + ms).toISOString(), reasonParts.join(" ") || "away");
+      await send(
+        chatId,
+        r.ok
+          ? `Quiet until ${r.until!.slice(0, 10)}. Briefing, midday check, debrief and outreach sweep are holding; ${r.leadsShifted} lead follow-up${r.leadsShifted === 1 ? "" : "s"} shifted. Everything resumes itself — /quiet end if you're back sooner.`
+          : `Couldn't set quiet: ${r.error}`
+      );
+      return;
+    }
+
     case "/status": {
       const today = await getToday();
       await send(
@@ -415,6 +446,24 @@ async function handleCommand(chatId: string | number, text: string) {
     }
 
     default: {
+      // BRAIN DUMPS split BEFORE the chat pipeline: 2+ clause captures
+      // ("invoice Sarah, Jake's knee better, $30 chalk") file deterministically
+      // as task/lead/athlete-note/idea/expense/note with verb-first receipts.
+      // Conservative gate (looksLikeBrainDump) — questions, commands and single
+      // thoughts keep the full pipeline below. Engine-less, splitCapture files
+      // the whole text as ONE note (the old behavior — never lost).
+      try {
+        const { looksLikeBrainDump, splitCapture } = await import("../productivity/captureSplit.ts");
+        if (looksLikeBrainDump(text)) {
+          const result = await splitCapture(text, { captureContext: "telegram" });
+          if (result.receipts.length > 0) {
+            await send(chatId, result.receipts.map((r) => `✓ ${r.line}`).join("\n"));
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("[telegram] capture split failed — falling through to the chat pipeline:", (err as any)?.message ?? err);
+      }
       // Plain text → the FULL chat pipeline (tools, planning, memory, second
       // brain), the same one the web chat uses — so "add a task", "what's on
       // today", "plan my day", "grant schedule protection", "draft an IG post"

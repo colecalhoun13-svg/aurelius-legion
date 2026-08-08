@@ -105,9 +105,33 @@ async function fileInstance(ritualName: string, outputText: string, structured?:
 // ── Morning briefing ─────────────────────────────────────────────────
 
 export async function generateMorningBriefing(dateStr?: string) {
+  // ── QUIET MODE, checked lazily where the ritual actually runs (the
+  // scheduler can't be edited per-wave; the generator can). Active quiet →
+  // the briefing IS the minimal line, nothing else fires from here. An
+  // EXPIRED quiet restores itself right here (re-enable + one "back" line),
+  // so quiet never needs a boot hook to end.
+  let quietBackLine: string | null = null;
+  try {
+    const { ensureQuietState } = await import("../planning/quiet.ts");
+    const q = await ensureQuietState();
+    if (q.active) {
+      const untilDay = q.until ? new Date(q.until).toISOString().slice(0, 10) : "soon";
+      const quietText = `Quiet until ${untilDay}${q.reason ? ` — ${q.reason}` : ""}. Rituals are holding, follow-ups are shifted, nothing is waiting on you here. Say "end quiet" when you're back.`;
+      const instance = await fileInstance("morning_briefing", quietText, { quiet: true, until: q.until });
+      console.log(`[rituals] quiet-mode briefing (${instance.id})`);
+      return { instance, briefing: quietText };
+    }
+    if (q.restored && q.summary) {
+      quietBackLine = `Back — quiet ended. While you were out: ${q.summary}`;
+    }
+  } catch {
+    // quiet is a gate, never a briefing blocker
+  }
+
   const today = await getToday(dateStr ?? operatorToday());
 
   const lines: string[] = [];
+  if (quietBackLine) lines.push(quietBackLine);
   lines.push(`Focus: ${today.plan?.focus?.trim() || "(no focus set yet — set one)"}`);
   lines.push(
     `Deck: ${today.tasks.length} on today, ${today.overdue.length} overdue, ${today.inboxCount} in inbox`
@@ -200,6 +224,31 @@ export async function generateMorningBriefing(dateStr?: string) {
     }
   } catch {
     // business layer unavailable — the rest of the briefing stands
+  }
+  // THE PROMISE LEDGER — the sweep runs here (its daily invoker), then ONE
+  // compact block: only promises due today or already lapsed. Kept promises,
+  // future promises and an empty ledger say nothing — same silence discipline
+  // as the business block.
+  try {
+    const { lapseSweep, listOpenPromises, dueDayOf } = await import("../productivity/promises.ts");
+    await lapseSweep();
+    const open = await listOpenPromises();
+    const surfacing = open.filter((p) => {
+      if (p.status === "lapsed") return true;
+      const day = dueDayOf(p.dueAt);
+      return day !== null && day <= today.date;
+    });
+    if (surfacing.length > 0) {
+      lines.push("Promises:");
+      for (const p of surfacing.slice(0, 4)) {
+        const who = p.direction === "owed_by_cole" ? `you → ${p.counterpart}` : `waiting on ${p.counterpart}`;
+        const state = p.status === "lapsed" ? "lapsed" : "due today";
+        lines.push(`  ⚑ ${who}: ${p.text} — ${state}`);
+      }
+      if (surfacing.length > 4) lines.push(`  ⚑ +${surfacing.length - 4} more on the ledger`);
+    }
+  } catch {
+    // the ledger is a bonus line, never a briefing blocker
   }
   // THE ANALYST — one confronting truth about the funnel, once a week (Monday).
   // Not a daily number (Cole would tune it out), and it names the leak before

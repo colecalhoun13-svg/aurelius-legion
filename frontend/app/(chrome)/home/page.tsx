@@ -41,6 +41,25 @@ type UpNext = {
   freeHours: number;
   nextMove: { time: string; label: string; tomorrow: boolean };
 };
+type PromiseRow = {
+  id: string;
+  direction: "owed_by_cole" | "waiting_on";
+  counterpart: string;
+  text: string;
+  dueAt: string | null;
+  status: string; // "open" | "lapsed"
+};
+
+// "due today" / "lapsed" / "due 08-14" — the ledger speaks in states, not timestamps.
+function promiseDueLabel(p: PromiseRow): string | null {
+  if (p.status === "lapsed") return "lapsed";
+  if (!p.dueAt) return null;
+  const due = new Date(p.dueAt);
+  const today = localDate();
+  const dueDay = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, "0")}-${String(due.getDate()).padStart(2, "0")}`;
+  if (dueDay === today) return "due today";
+  return `due ${dueDay.slice(5)}`;
+}
 
 // "in 40 min" / "in 3 h" — trajectory, not timestamps.
 function untilLabel(iso: string): string {
@@ -190,6 +209,11 @@ export default function HomePage() {
       .catch(() => {});
   }, []);
 
+  // The promise ledger — best-effort, never load-bearing. Honest-empty:
+  // no promises → the section simply doesn't exist.
+  const [promises, setPromises] = useState<PromiseRow[]>([]);
+  const [promiseBusy, setPromiseBusy] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     try {
       const [d, t] = await Promise.all([
@@ -202,7 +226,32 @@ export default function HomePage() {
     } catch {
       setUnreachable(true);
     }
+    fetch("/api/promises")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j && Array.isArray(j.promises) && setPromises(j.promises))
+      .catch(() => {});
   }, []);
+
+  const rulePromise = useCallback(async (id: string, status: "kept" | "dropped") => {
+    if (promiseBusy) return;
+    setPromiseBusy(id);
+    try {
+      const res = await fetch("/api/promises", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ op: "resolve", id, status }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setFlash(`Couldn't resolve that promise: ${j.error ?? "try again in a moment"}`);
+      }
+      await load();
+    } catch {
+      setFlash("Couldn't reach the brain — the promise stands.");
+    } finally {
+      setPromiseBusy(null);
+    }
+  }, [promiseBusy, load]);
 
   // A flashed error clears itself — one amber line, not a modal.
   useEffect(() => {
@@ -610,6 +659,62 @@ export default function HomePage() {
                 ))}
               </div>
             )}
+          </section>
+        )}
+
+        {/* ── LEDGER OF PROMISES — the smallest unit of trust. Gold tick =
+            Cole owes it; hollow = he's waiting on it. Honest-empty: no
+            promises, no section. ── */}
+        {promises.length > 0 && (
+          <section className="mt-6">
+            <SectionLabel row>Ledger of promises</SectionLabel>
+            <div className="mt-1">
+              {promises.map((p) => (
+                <LedgerRow
+                  key={p.id}
+                  tick={p.direction === "owed_by_cole" ? "gold" : "hollow"}
+                  verb={
+                    <>
+                      {p.text}
+                      {promiseDueLabel(p) && (
+                        <span
+                          style={{
+                            marginLeft: 8,
+                            fontSize: 11,
+                            letterSpacing: ".08em",
+                            textTransform: "uppercase",
+                            color: p.status === "lapsed" ? "var(--attn)" : "var(--ink3)",
+                          }}
+                        >
+                          {promiseDueLabel(p)}
+                        </span>
+                      )}
+                    </>
+                  }
+                  obj={p.direction === "owed_by_cole" ? `→ ${p.counterpart}` : `waiting on ${p.counterpart}`}
+                  right={
+                    <span className="flex gap-2 shrink-0">
+                      <button
+                        className="au-undo"
+                        disabled={promiseBusy === p.id}
+                        onClick={() => rulePromise(p.id, "kept")}
+                        title="Mark kept"
+                      >
+                        {promiseBusy === p.id ? "…" : "kept"}
+                      </button>
+                      <button
+                        className="au-undo"
+                        disabled={promiseBusy === p.id}
+                        onClick={() => rulePromise(p.id, "dropped")}
+                        title="Drop it (deliberately let go)"
+                      >
+                        dropped
+                      </button>
+                    </span>
+                  }
+                />
+              ))}
+            </div>
           </section>
         )}
 
