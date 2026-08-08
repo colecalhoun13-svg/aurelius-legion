@@ -4,8 +4,12 @@
 // request, a scheduled ritual, an action) reassembled from the LogEntry rows
 // that share its traceId: request in → operator routed → model called → tools
 // run → action gated or acted. "Debug from the cockpit alone" (NORTH_STAR DoD).
+//
+// ELEVATED IMPERIAL re-dress: same /api/traces fetch, same spine-grid filter
+// handshake, same expand/collapse — au-card threads, imperial inks.
 
 import { useCallback, useEffect, useState } from "react";
+import { SectionLabel } from "../kit";
 import SpineHealth from "./SpineHealth";
 
 type Step = {
@@ -39,13 +43,14 @@ const KIND_GLYPH: Record<string, string> = {
   catchup: "↺",
 };
 
-const KIND_COLOR: Record<string, string> = {
-  request: "text-sky-300 border-sky-400/40",
-  llm: "text-aurelius-gold border-aurelius-gold/40",
-  tool: "text-emerald-300 border-emerald-400/40",
-  action: "text-amber-300 border-amber-400/40",
-  schedule: "text-violet-300 border-violet-400/40",
-  catchup: "text-violet-300 border-violet-400/40",
+// Imperial inks per kind — gold for the mind, patina for the hands.
+const KIND_INK: Record<string, string> = {
+  request: "var(--ink2)",
+  llm: "var(--gold)",
+  tool: "var(--money)",
+  action: "var(--attn)",
+  schedule: "var(--gold-dim)",
+  catchup: "var(--gold-dim)",
 };
 
 function fmtTime(iso: string): string {
@@ -83,14 +88,14 @@ export default function TracesPanel() {
   useEffect(() => { load(); }, [load]);
 
   return (
-    <main className="text-aurelius-text max-w-3xl mx-auto space-y-5 aurelius-stagger">
-      <header className="flex items-baseline justify-between aurelius-rule">
-        <h1 className="aurelius-heading text-4xl">Traces</h1>
-        <button onClick={load} className="text-xs text-neutral-500 hover:text-aurelius-gold">refresh</button>
-      </header>
+    <div className="max-w-3xl mx-auto space-y-5 aurelius-reveal">
+      <div className="flex items-baseline justify-between gap-4 flex-wrap">
+        <SectionLabel row>Traces — every act, one tap deep</SectionLabel>
+        <button onClick={load} className="au-undo" style={{ marginLeft: 0 }}>refresh</button>
+      </div>
 
-      <p className="text-sm text-neutral-500">
-        Every step of one decision, threaded by a shared id — a turn from request to action.
+      <p className="au-kicker" style={{ display: "block", fontSize: 13.5 }}>
+        every step of one decision, threaded by a shared id — a turn from request to action
       </p>
 
       {/* The aggregate the thread list lacks: did every scheduled job fire?
@@ -98,21 +103,23 @@ export default function TracesPanel() {
       <SpineHealth onPick={(j) => setJobFilter((cur) => (cur === j ? null : j))} />
 
       {jobFilter && (
-        <p className="text-xs text-neutral-400">
-          Showing threads for <span className="text-aurelius-gold">{jobFilter.replace(/_/g, " ")}</span>{" "}
-          <button onClick={() => setJobFilter(null)} className="text-neutral-500 hover:text-aurelius-gold ml-1">✕ clear</button>
+        <p className="text-xs" style={{ color: "var(--ink2)" }}>
+          Showing threads for <span style={{ color: "var(--gold)" }}>{jobFilter.replace(/_/g, " ")}</span>{" "}
+          <button onClick={() => setJobFilter(null)} className="ml-1" style={{ color: "var(--ink3)", background: "none", border: 0, cursor: "pointer" }}>
+            ✕ clear
+          </button>
           {threads &&
             threads.filter((t) => t.label.toLowerCase().replace(/[^a-z0-9]/g, "").includes(jobFilter.toLowerCase().replace(/[^a-z0-9]/g, ""))).length === 0 && (
-              <span className="block mt-1 text-neutral-600 italic">
+              <span className="au-kicker block mt-1" style={{ fontSize: 12.5 }}>
                 No threads for this job in the recent window — weekly jobs often scroll out of the last 25.
               </span>
             )}
         </p>
       )}
 
-      {err && <p className="text-red-400 text-sm">Couldn't load traces: {err}</p>}
+      {err && <p className="text-sm" style={{ color: "var(--danger)" }}>Couldn't load traces: {err}</p>}
       {threads && threads.length === 0 && (
-        <p className="text-neutral-600 italic text-center py-16">
+        <p className="au-kicker text-center py-16" style={{ display: "block" }}>
           No threads yet. As requests and scheduled rituals run, each one lands here as a
           single, replayable thread.
         </p>
@@ -124,60 +131,69 @@ export default function TracesPanel() {
           .map((t) => {
           const isOpen = open === t.traceId;
           return (
-            <li key={t.traceId} className={`aurelius-panel-frame border ${t.hadError ? "border-red-400/40" : "border-aurelius-gold/20"}`}>
+            <li key={t.traceId} className="au-card" style={t.hadError ? { borderColor: "rgba(201,107,90,.4)" } : undefined}>
               {/* Thread header — click to expand the timeline */}
               <button
                 onClick={() => setOpen(isOpen ? null : t.traceId)}
                 className="w-full text-left p-4 flex items-center gap-3"
+                style={{ background: "none", border: 0, cursor: "pointer", color: "inherit" }}
               >
-                <span className={`text-lg shrink-0 ${t.hadError ? "text-red-400" : "text-aurelius-gold/70"}`}>
+                <span className="text-lg shrink-0" style={{ color: t.hadError ? "var(--danger)" : "var(--gold-dim)" }}>
                   {isOpen ? "▾" : "▸"}
                 </span>
                 <span className="flex-1 min-w-0">
-                  <span className="block font-medium text-sm truncate">{t.label}</span>
-                  <span className="block text-[11px] text-neutral-600 mt-0.5">
+                  <span className="block text-sm truncate" style={{ color: "var(--ink)" }}>{t.label}</span>
+                  <span className="block text-[11px] mt-0.5" style={{ color: "var(--ink3)", fontVariantNumeric: "tabular-nums" }}>
                     {relDay(t.startedAt)} · {fmtTime(t.startedAt)} · {t.count} steps · {fmtDur(t.durationMs)}
                   </span>
                 </span>
                 <span className="flex gap-1 shrink-0 flex-wrap justify-end">
                   {t.kinds.map((k) => (
-                    <span key={k} className={`text-[10px] uppercase tracking-wider border rounded px-1.5 py-0.5 ${KIND_COLOR[k] ?? "text-neutral-400 border-neutral-600"}`}>
+                    <span
+                      key={k}
+                      className="text-[10px] uppercase tracking-wider border rounded-[2px] px-1.5 py-0.5"
+                      style={{ color: KIND_INK[k] ?? "var(--ink3)", borderColor: "var(--line2)" }}
+                    >
                       {KIND_GLYPH[k] ?? "•"} {k}
                     </span>
                   ))}
                 </span>
                 {t.hadError && (
-                  <span className="text-[10px] uppercase tracking-wider text-red-400 border border-red-400/50 rounded px-1.5 py-0.5 shrink-0">error</span>
+                  <span
+                    className="text-[10px] uppercase tracking-wider border rounded-[2px] px-1.5 py-0.5 shrink-0"
+                    style={{ color: "var(--danger)", borderColor: "rgba(201,107,90,.5)" }}
+                  >
+                    error
+                  </span>
                 )}
               </button>
 
               {/* The timeline */}
               {isOpen && (
-                <ol className="border-t border-aurelius-gold/15 px-4 py-3 space-y-0">
+                <ol className="px-4 py-3 space-y-0" style={{ borderTop: "1px solid var(--line1)" }}>
                   {t.steps.map((s, i) => {
-                    const color = KIND_COLOR[s.kind ?? ""] ?? "text-neutral-400 border-neutral-600";
                     const errored = s.status === "error";
                     return (
                       <li key={s.id} className="flex gap-3 py-2 relative">
                         {/* rail */}
                         <span className="flex flex-col items-center shrink-0 w-5">
-                          <span className={`text-sm ${errored ? "text-red-400" : color.split(" ")[0]}`}>
+                          <span className="text-sm" style={{ color: errored ? "var(--danger)" : KIND_INK[s.kind ?? ""] ?? "var(--ink3)" }}>
                             {KIND_GLYPH[s.kind ?? ""] ?? "•"}
                           </span>
-                          {i < t.steps.length - 1 && <span className="flex-1 w-px bg-aurelius-gold/15 mt-1" />}
+                          {i < t.steps.length - 1 && <span className="flex-1 w-px mt-1" style={{ background: "var(--line1)" }} />}
                         </span>
                         <span className="flex-1 min-w-0">
                           <span className="flex items-baseline justify-between gap-2">
-                            <span className={`text-sm truncate ${errored ? "text-red-300" : "text-neutral-200"}`}>{s.name}</span>
-                            <span className="text-[10px] text-neutral-600 shrink-0">
+                            <span className="text-sm truncate" style={{ color: errored ? "var(--danger)" : "var(--ink)" }}>{s.name}</span>
+                            <span className="text-[10px] shrink-0" style={{ color: "var(--ink3)", fontVariantNumeric: "tabular-nums" }}>
                               {fmtTime(s.ts)}{s.durationMs != null ? ` · ${fmtDur(s.durationMs)}` : ""}
                             </span>
                           </span>
                           {errored && s.detail?.error && (
-                            <span className="block text-xs text-red-400/80 mt-0.5 whitespace-pre-line">{String(s.detail.error)}</span>
+                            <span className="block text-xs mt-0.5 whitespace-pre-line" style={{ color: "var(--danger)" }}>{String(s.detail.error)}</span>
                           )}
                           {!errored && detailLine(s) && (
-                            <span className="block text-[11px] text-neutral-500 mt-0.5">{detailLine(s)}</span>
+                            <span className="block text-[11px] mt-0.5" style={{ color: "var(--ink3)" }}>{detailLine(s)}</span>
                           )}
                         </span>
                       </li>
@@ -189,7 +205,7 @@ export default function TracesPanel() {
           );
         })}
       </ul>
-    </main>
+    </div>
   );
 }
 

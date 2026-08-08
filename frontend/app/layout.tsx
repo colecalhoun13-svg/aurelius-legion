@@ -5,6 +5,7 @@
 import "./globals.css";
 import type { Viewport } from "next";
 import AureliusStartup from "../components/identity/AureliusStartup";
+import { fontVars } from "../lib/fonts";
 
 export const metadata = {
   title: "Aurelius OS",
@@ -33,7 +34,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-black text-zinc-100 min-h-screen">
+      <body className={`${fontVars} bg-black text-zinc-100 min-h-screen`}>
         <AureliusStartup>{children}</AureliusStartup>
       </body>
     </html>

@@ -170,6 +170,16 @@ export async function syncCalendar(opts: { daysBack?: number; daysAhead?: number
   // CalendarEvent table and mean opposite things for availability.
   await markSyncSucceeded();
 
+  // POST-SESSION DEBRIEF NUDGE (completeness wave): a person-shaped event just
+  // ended → one 20-second ask on the phone, while the session is still warm.
+  // The reply rides the normal Telegram capture/voice path and lands where the
+  // next session prep reads. Non-fatal, deduped per event.
+  try {
+    await nudgePostSessionDebriefs();
+  } catch (err) {
+    console.warn("[calendar] post-session nudge failed (non-fatal):", (err as any)?.message ?? err);
+  }
+
   return { ok: true as const, upserted, removed, window: { from: timeMin, to: timeMax } };
 }
 
@@ -479,6 +489,107 @@ export async function detectAndSurfaceConflicts(timeMax: Date): Promise<number> 
   }
   if (surfaced > 0) console.log(`[calendar] surfaced ${surfaced} focus-time conflict(s)`);
   return surfaced;
+}
+
+// ── Post-session debrief nudge ───────────────────────────────────────
+//
+// THE LOOP THE CALENDAR CLOSES: "4pm — Sarah" ends, and within one sync tick
+// Cole's phone asks how it went. Whatever he answers (text or voice note)
+// files through the normal Telegram capture path — which is exactly what the
+// next session prep for Sarah reads. Rule 5 kept: the nudge goes to COLE
+// only, records notes inward, and never contacts the athlete.
+//
+// Person-shaped = the title carries a roster first name (clients + live
+// leads) or reads like a session (/session|call|check-?in/). System blocks
+// (deep work, briefing, holds) are excluded via planning/sessionPrep's
+// prepCandidates — the same filter the briefing prep uses.
+//
+// Dedup: one LogEntry marker per event externalId; the marker is only
+// written when the Telegram send actually succeeded, so a dormant bridge
+// (rule 4) skips silently and doesn't burn the nudge.
+
+const SESSION_TITLE_RE = /session|call|check-?in/i;
+
+/** Only events that ended within this window get a nudge — a sync catching up
+ *  after downtime must not spray nudges for yesterday's sessions. */
+const NUDGE_WINDOW_MS = 45 * 60_000;
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// In-process second line of dedup defence: if the LogEntry marker can't be
+// written (no global operator yet), the 15-min ticks of THIS process still
+// won't re-send. Bounded — cleared on restart, which is outside the window.
+const nudgedThisProcess = new Set<string>();
+
+export async function nudgePostSessionDebriefs(): Promise<number> {
+  const now = new Date();
+  const ended = await prisma.calendarEvent.findMany({
+    where: { endAt: { gt: new Date(now.getTime() - NUDGE_WINDOW_MS), lte: now } },
+    orderBy: { endAt: "asc" },
+    take: 10,
+  });
+  if (ended.length === 0) return 0;
+
+  // Roster first names — clients and not-dead leads. Best-effort: an empty
+  // roster still lets /session|call|check-in/ titles through.
+  let roster: string[] = [];
+  try {
+    const [clients, leads] = await Promise.all([
+      prisma.client.findMany({ select: { name: true }, take: 200 }),
+      prisma.lead.findMany({ where: { status: { notIn: ["lost", "dormant"] } }, select: { name: true }, take: 200 }),
+    ]);
+    roster = [...clients, ...leads]
+      .map((r) => (r.name ?? "").trim().split(/\s+/)[0] ?? "")
+      .filter((n) => n.length >= 3);
+  } catch {
+    /* roster is a bonus filter */
+  }
+
+  const { prepCandidates } = await import("../planning/sessionPrep.ts");
+  const { sendToCole } = await import("../telegram/bot.ts");
+  const { resolveOperatorId } = await import("../knowledge/store.ts");
+  const opId = await resolveOperatorId("global").catch(() => null);
+
+  let sent = 0;
+  for (const e of ended) {
+    const title = e.title ?? "";
+    if ((e.raw as any)?.allDay) continue;
+    // System blocks never nudge — same filter as pre-session prep.
+    if (prepCandidates([{ title, startAt: e.startAt }]).length === 0) continue;
+    const rosterHit = roster.find((n) => new RegExp(`\\b${escapeRe(n)}\\b`, "i").test(title));
+    if (!rosterHit && !SESSION_TITLE_RE.test(title)) continue;
+
+    const marker = `session_debrief:${e.externalId}`;
+    if (nudgedThisProcess.has(marker)) continue;
+    const already = await prisma.logEntry.findFirst({
+      where: { type: "session_debrief_nudge", message: marker },
+      select: { id: true },
+    });
+    if (already) continue;
+
+    const name =
+      rosterHit ?? (title.replace(SESSION_TITLE_RE, "").replace(/[-–—:·]/g, " ").trim().slice(0, 40) || "them");
+    const ok = await sendToCole(
+      `20 seconds — how did it go with ${name}? A voice note works. Whatever you say lands in the file and feeds the next session prep.`
+    );
+    if (!ok) continue; // bridge dormant/half-wired — no marker, no false "nudged"
+    nudgedThisProcess.add(marker);
+    sent++;
+    if (opId) {
+      const { createLogEntry } = await import("../repositories/logRepository.ts");
+      await createLogEntry({
+        operatorId: opId,
+        type: "session_debrief_nudge",
+        level: "info",
+        message: marker,
+        context: { eventId: e.externalId, title, endedAt: e.endAt.toISOString() },
+      }).catch(() => {});
+    }
+  }
+  if (sent > 0) console.log(`[calendar] sent ${sent} post-session debrief nudge(s)`);
+  return sent;
 }
 
 // ── Boot + background sync ───────────────────────────────────────────

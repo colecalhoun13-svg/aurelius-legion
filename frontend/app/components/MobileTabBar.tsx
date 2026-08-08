@@ -3,8 +3,9 @@
 // MOBILE TAB BAR — the phone chrome. Five thumb-reach destinations (iOS
 // convention caps at five); everything else stays reachable through these
 // pages. Targets ≥44px; safe-area padded for gesture-nav phones.
-// v2 ruling: Goals takes tab 4 — "+1" logging is a daily thumb gesture,
-// while Brain's ask is already Home's chat box; Brain leads the More list.
+// ELEVATED IMPERIAL ruling: Chat takes tab 2 (the voice is the spine) and
+// Business takes tab 4 (promoted per council — the funnel is the campaign);
+// Calendar and Goals lead the More list and keep their sub-route highlights.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -12,10 +13,10 @@ import { useNeedsYou } from "../../lib/useNeedsYou";
 
 const TABS: Array<{ label: string; path: string; glyph: string; also?: string[] }> = [
   { label: "Home", path: "/home", glyph: "❂" },
+  { label: "Chat", path: "/chat", glyph: "❧" },
   { label: "Decisions", path: "/decisions", glyph: "⇄" },
-  { label: "Calendar", path: "/calendar", glyph: "◷" },
-  { label: "Goals", path: "/goals", glyph: "◎", also: ["/projects"] },
-  { label: "More", path: "/more", glyph: "⋯", also: ["/brain", "/business", "/aurelius", "/autonomy", "/tools", "/engines", "/traces", "/settings"] },
+  { label: "Business", path: "/business", glyph: "◈" },
+  { label: "More", path: "/more", glyph: "⋯", also: ["/calendar", "/goals", "/athletes", "/projects", "/brain", "/aurelius", "/autonomy", "/tools", "/engines", "/traces", "/settings"] },
 ];
 
 export default function MobileTabBar() {

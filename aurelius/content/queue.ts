@@ -204,6 +204,144 @@ export async function discardDraft(id: string): Promise<{ ok: boolean; error?: s
   return { ok: true };
 }
 
+// ── cadence: the schedule that survives the tab closing ──────────────
+//
+// scheduledFor existed on the model with nothing that ever set it in bulk —
+// so "posting twice a week" lived in Cole's head, which is where cadences go
+// to die. planSlots turns intent into dates; cadenceTruth is the sentence
+// that refuses to let a silent feed pass unremarked. Both INWARD: a slot is
+// a plan on a draft, and publishing still stops for Cole's confirm.
+
+/** The posting days a 2/week cadence means: Monday and Thursday, 9am local. */
+const SLOT_DAYS_TWO_PER_WEEK = [1, 4]; // getDay(): Mon=1, Thu=4
+
+/**
+ * Assign scheduledFor dates to READY drafts that lack one — next open Mon/Thu
+ * 9am slots (server-local time; the Mini lives in Cole's timezone). "Open"
+ * means no other live draft already holds that day. Drafts still in "draft"
+ * status are deliberately skipped: planning schedules readiness, it can't
+ * create it — slotting an unreviewed draft would schedule words Cole hasn't
+ * approved as his.
+ */
+export async function planSlots(perWeek = 2): Promise<{
+  ok: boolean; assigned: number; slots: string[]; note: string;
+}> {
+  const pw = Math.max(1, Math.min(Math.floor(Number(perWeek) || 2), 2));
+  const days = pw === 1 ? [SLOT_DAYS_TWO_PER_WEEK[0]!] : SLOT_DAYS_TWO_PER_WEEK;
+
+  const unslotted = await prisma.contentDraft.findMany({
+    where: { status: "ready", scheduledFor: null },
+    orderBy: { updatedAt: "asc" },
+  });
+  if (unslotted.length === 0) {
+    const readyCount = await prisma.contentDraft.count({ where: { status: "ready" } });
+    return {
+      ok: true,
+      assigned: 0,
+      slots: [],
+      note:
+        readyCount > 0
+          ? "Every ready draft already has a slot. Nothing to plan."
+          : "No ready drafts to slot — mark a draft ready first. Planning schedules readiness; it can't create it.",
+    };
+  }
+
+  // Days already claimed by any live scheduled draft — one post per slot day.
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const taken = await prisma.contentDraft.findMany({
+    where: { status: { in: ["draft", "ready", "staged"] }, scheduledFor: { gte: today } },
+    select: { scheduledFor: true },
+  });
+  const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+  const takenDays = new Set(taken.map((t) => dayKey(t.scheduledFor!)));
+
+  // Walk forward from now, collecting the next open Mon/Thu 9am slots.
+  const slots: Date[] = [];
+  const cursor = new Date();
+  cursor.setHours(9, 0, 0, 0);
+  let guard = 0;
+  while (slots.length < unslotted.length && guard < 366) {
+    if (days.includes(cursor.getDay()) && cursor.getTime() > Date.now() && !takenDays.has(dayKey(cursor))) {
+      slots.push(new Date(cursor));
+      takenDays.add(dayKey(cursor));
+    }
+    cursor.setDate(cursor.getDate() + 1);
+    guard++;
+  }
+
+  let assigned = 0;
+  for (let i = 0; i < unslotted.length && i < slots.length; i++) {
+    await prisma.contentDraft.update({
+      where: { id: unslotted[i]!.id },
+      data: { scheduledFor: slots[i]! },
+    });
+    assigned++;
+  }
+
+  const iso = slots.slice(0, assigned).map((s) => s.toISOString());
+  const first = slots[0];
+  return {
+    ok: true,
+    assigned,
+    slots: iso,
+    note:
+      `${assigned} draft${assigned === 1 ? "" : "s"} slotted (Mon/Thu 9am` +
+      `${first ? `, next ${first.toISOString().slice(0, 10)}` : ""}). ` +
+      `A slot is a plan, not a post — publishing still stops for your confirm.`,
+  };
+}
+
+/**
+ * The honest cadence sentence, for the briefing and the Business page.
+ * `line` is empty when there's nothing worth saying (published within a week,
+ * or nothing written at all — queueState already tells that story); it speaks
+ * only when the feed has gone quiet, because "nothing published in N days"
+ * is the fact an encouraging dashboard would omit.
+ */
+export async function cadenceTruth(): Promise<{
+  lastPublishedAt: Date | null;
+  daysSince: number | null;
+  plannedThisWeek: number;
+  line: string;
+}> {
+  const last = await prisma.contentDraft.findFirst({
+    where: { status: "published", publishedAt: { not: null } },
+    orderBy: { publishedAt: "desc" },
+    select: { publishedAt: true },
+  });
+  const lastPublishedAt = last?.publishedAt ?? null;
+  const daysSince = lastPublishedAt
+    ? Math.floor((Date.now() - lastPublishedAt.getTime()) / 86_400_000)
+    : null;
+
+  // This calendar week, Monday 00:00 local through the following Monday.
+  const weekStart = new Date();
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 7);
+  const plannedThisWeek = await prisma.contentDraft.count({
+    where: { status: { in: ["ready", "staged"] }, scheduledFor: { gte: weekStart, lt: weekEnd } },
+  });
+
+  let line = "";
+  if (lastPublishedAt === null) {
+    const everWritten = await prisma.contentDraft.count({ where: { status: { not: "discarded" } } });
+    if (everWritten > 0) {
+      line = `Nothing has ever been published — ${everWritten} draft${everWritten === 1 ? "" : "s"} in the queue, zero out the door${plannedThisWeek > 0 ? `; ${plannedThisWeek} slotted this week, still your tap` : ""}.`;
+    }
+  } else if (daysSince !== null && daysSince >= 7) {
+    line =
+      `Nothing published in ${daysSince} days` +
+      (plannedThisWeek > 0
+        ? ` — ${plannedThisWeek} slot${plannedThisWeek === 1 ? "" : "s"} planned this week, still your tap to publish.`
+        : " — and no slots planned this week either.");
+  }
+
+  return { lastPublishedAt, daysSince, plannedThisWeek, line };
+}
+
 /**
  * The honest state of the content pipeline, for the Business page and the
  * risk line. Reports zero as zero: a queue full of unpublished drafts is not

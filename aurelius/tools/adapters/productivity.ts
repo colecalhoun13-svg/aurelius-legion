@@ -76,6 +76,28 @@ export const productivityAdapter: ToolAdapter = {
       dataSchema: '{ focus: string }',
       example: '[TOOL: productivity.set_focus {"focus": "Ship the athlete program page"}]',
     },
+    {
+      name: "promise",
+      description:
+        "File a promise on the ledger. Use when Cole commits to someone ('I told Mara I'd send the quote Friday' → owed_by_cole) or someone commits to him ('Jake said he'll send his log' → waiting_on). Give counterpart+text directly when you can; raw text alone is extracted (honestly — nothing filed if no commitment is found).",
+      dataSchema:
+        '{ text: string, counterpart?: string, direction?: "owed_by_cole"|"waiting_on", due?: string (ISO date) }',
+      example: '[TOOL: productivity.promise {"counterpart": "Mara", "text": "send the quote", "direction": "owed_by_cole", "due": "2026-08-14"}]',
+    },
+    {
+      name: "promises",
+      description:
+        "The promise ledger: list what's open/lapsed, or resolve one. To resolve, pass resolve (id or a text/counterpart fragment) + status kept|dropped.",
+      dataSchema: '{ resolve?: string, status?: "kept"|"dropped" }',
+      example: '[TOOL: productivity.promises {"resolve": "quote", "status": "kept"}]',
+    },
+    {
+      name: "quiet",
+      description:
+        "Quiet mode — Cole is away/sick. Pauses the pushy rituals (briefing, midday, debrief, outreach sweep), shifts lead follow-ups past the window, auto-restores when it ends. Use for '/quiet 3d sick', 'go quiet until Monday', 'end quiet'.",
+      dataSchema: '{ for?: string ("3d"|"12h"|days number), until?: string (ISO), reason?: string, end?: boolean }',
+      example: '[TOOL: productivity.quiet {"for": "3d", "reason": "sick"}]',
+    },
   ],
 
   async run(action, data): Promise<ToolAdapterResult> {
@@ -212,6 +234,131 @@ export const productivityAdapter: ToolAdapter = {
         if (!data?.focus) return { ok: false, output: null, error: "focus required" };
         await upsertTodayPlan({ date: operatorToday(), focus: String(data.focus), generatedBy: "cole_manual" });
         return { ok: true, output: { summary: `Today's focus set: "${String(data.focus)}".` } };
+      }
+
+      case "promise": {
+        const { addPromise, extractPromisesFromText } = await import("../../productivity/promises.ts");
+        const text = data?.text ? String(data.text).trim() : "";
+        const counterpart = data?.counterpart ? String(data.counterpart).trim() : "";
+        if (!text && !counterpart) return { ok: false, output: null, error: "text (and ideally counterpart) required" };
+
+        if (counterpart && text) {
+          // Structured — file directly.
+          const dueChk = (() => {
+            if (!data?.due) return { iso: undefined as string | undefined };
+            const d = new Date(String(data.due));
+            if (Number.isNaN(d.getTime()) || d.getFullYear() < 2020 || d.getFullYear() > 2100) {
+              return { error: `couldn't read "${data.due}" as a due date — use YYYY-MM-DD.` };
+            }
+            return { iso: d.toISOString() };
+          })();
+          if (dueChk.error) return { ok: false, output: null, error: dueChk.error };
+          const p = await addPromise({
+            direction: data?.direction === "waiting_on" ? "waiting_on" : "owed_by_cole",
+            counterpart,
+            text,
+            dueAt: dueChk.iso,
+            sourceType: "chat",
+          });
+          const who = p.direction === "owed_by_cole" ? `you → ${p.counterpart}` : `waiting on ${p.counterpart}`;
+          return { ok: true, output: { summary: `On the ledger: ${who} — "${p.text}"${p.dueAt ? ` (due ${p.dueAt.toISOString().slice(0, 10)})` : ""}.`, id: p.id } };
+        }
+
+        // Raw text only — extract honestly (no engine / no commitment → nothing filed).
+        const extracted = await extractPromisesFromText(text, "chat");
+        if (extracted.length === 0) {
+          return {
+            ok: false,
+            output: null,
+            error:
+              "couldn't extract a commitment from that (no engine configured, or nothing commitment-shaped was said) — give me counterpart + text directly and I'll file it.",
+          };
+        }
+        const filed: string[] = [];
+        for (const e of extracted) {
+          const p = await addPromise({ ...e, dueAt: e.due ?? undefined, sourceType: "chat" });
+          filed.push(`${p.direction === "owed_by_cole" ? `you → ${p.counterpart}` : `waiting on ${p.counterpart}`}: "${p.text}"`);
+        }
+        return { ok: true, output: { summary: `On the ledger: ${filed.join(" · ")}.`, count: filed.length } };
+      }
+
+      case "promises": {
+        const { listOpenPromises, resolvePromise } = await import("../../productivity/promises.ts");
+        const open = await listOpenPromises();
+
+        if (data?.resolve) {
+          const status = data?.status === "dropped" ? "dropped" : data?.status === "kept" ? "kept" : null;
+          if (!status) return { ok: false, output: null, error: 'status must be "kept" or "dropped"' };
+          const q = String(data.resolve).toLowerCase().trim();
+          // Exact id first; else a unique text/counterpart substring among open —
+          // never guess between two matches (same discipline as complete_task).
+          const byId = open.find((p) => p.id === data.resolve);
+          const pool = byId
+            ? [byId]
+            : open.filter((p) => p.text.toLowerCase().includes(q) || p.counterpart.toLowerCase().includes(q));
+          if (pool.length === 0) return { ok: false, output: null, error: `no open promise matching "${data.resolve}"` };
+          if (pool.length > 1) {
+            return {
+              ok: false,
+              output: null,
+              error: `"${data.resolve}" matches ${pool.length} open promises: ${pool.slice(0, 4).map((p) => `"${p.text}" (${p.counterpart})`).join(", ")}. Be more specific or pass the id.`,
+            };
+          }
+          const done = await resolvePromise(pool[0].id, status);
+          if (!done) return { ok: false, output: null, error: "that promise was already resolved" };
+          return { ok: true, output: { summary: `${status === "kept" ? "Kept" : "Dropped"}: "${done.text}" (${done.counterpart}).`, id: done.id } };
+        }
+
+        if (open.length === 0) return { ok: true, output: { summary: "The promise ledger is clear — nothing owed, nothing waited on.", promises: [] } };
+        return {
+          ok: true,
+          output: {
+            summary: `${open.length} on the ledger`,
+            promises: open.map((p) => ({
+              id: p.id,
+              direction: p.direction,
+              counterpart: p.counterpart,
+              text: p.text,
+              dueAt: p.dueAt,
+              status: p.status,
+            })),
+          },
+        };
+      }
+
+      case "quiet": {
+        const { quietUntil, endQuietNow, ensureQuietState, parseQuietWindow } = await import("../../planning/quiet.ts");
+        if (data?.end === true || data?.end === "true") {
+          const state = await endQuietNow();
+          return {
+            ok: true,
+            output: { summary: state.restored ? `Back. ${state.summary ?? ""}`.trim() : "Quiet wasn't on — nothing to end." },
+          };
+        }
+        let untilISO: string | null = null;
+        if (data?.until) {
+          const d = new Date(String(data.until));
+          if (!Number.isNaN(d.getTime())) untilISO = d.toISOString();
+        } else {
+          const ms = parseQuietWindow(data?.for ?? data?.days);
+          if (ms) untilISO = new Date(Date.now() + ms).toISOString();
+        }
+        if (!untilISO) {
+          const state = await ensureQuietState();
+          return state.active
+            ? { ok: true, output: { summary: `Quiet is on until ${state.until?.slice(0, 10)}${state.reason ? ` (${state.reason})` : ""}.` } }
+            : { ok: false, output: null, error: 'how long? pass for ("3d", "12h") or until (ISO date) — e.g. {"for":"3d","reason":"sick"}' };
+        }
+        const r = await quietUntil(untilISO, data?.reason ? String(data.reason) : "away");
+        if (!r.ok) return { ok: false, output: null, error: r.error };
+        return {
+          ok: true,
+          output: {
+            summary:
+              `Quiet until ${r.until!.slice(0, 10)}. Briefing, midday check, debrief and outreach sweep are holding; ` +
+              `${r.leadsShifted} lead follow-up${r.leadsShifted === 1 ? "" : "s"} shifted past the window. Everything resumes itself.`,
+          },
+        };
       }
 
       default:

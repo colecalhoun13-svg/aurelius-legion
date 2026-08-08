@@ -5,6 +5,7 @@
 // is what came in; this is the synthesis. Every page also feeds recall.
 
 import { useCallback, useEffect, useState } from "react";
+import { SectionLabel } from "../kit";
 
 type PageMeta = { slug: string; title: string; domain: string; revision: number; updatedAt: string };
 type FullPage = PageMeta & {
@@ -89,16 +90,16 @@ export default function WikiPage() {
   };
 
   return (
-    <main className="text-aurelius-text max-w-5xl mx-auto space-y-6 aurelius-stagger">
-      <header className="flex items-baseline justify-between aurelius-rule">
-        <h1 className="aurelius-heading text-4xl">The Wiki</h1>
-        <span className={`text-sm ${failed ? "text-amber-300/90" : "text-neutral-500"}`}>
+    <main className="max-w-5xl mx-auto space-y-6 relative" style={{ color: "var(--ink)" }}>
+      <header className="flex items-baseline justify-between gap-3 flex-wrap">
+        <SectionLabel row>The Wiki — living syntheses</SectionLabel>
+        <span className="au-kicker" style={{ color: failed ? "var(--attn)" : "var(--ink3)" }}>
           {failed ? "couldn't reach the brain" : pages === null ? "…" : `${pages.length} living pages`}
         </span>
       </header>
 
       {pages !== null && pages.length === 0 && (
-        <p className="text-neutral-600 italic text-center py-16">
+        <p className="au-kicker text-center py-16" style={{ display: "block" }}>
           No syntheses yet. Feed the second brain — Aurelius writes a living page
           per domain as material arrives, and rewrites it as understanding grows.
         </p>
@@ -110,14 +111,21 @@ export default function WikiPage() {
             <button
               key={p.slug}
               onClick={() => open(p.slug)}
-              className={`w-full text-left border rounded-lg px-4 py-3 bg-black/30 transition-colors ${
+              className={`w-full text-left border rounded-[2px] px-4 py-3 bg-black/30 transition-colors ${
                 active?.slug === p.slug
                   ? "border-aurelius-gold/60"
                   : "border-aurelius-gold/15 hover:border-aurelius-gold/40"
               }`}
             >
-              <span className="text-sm text-aurelius-gold block">{p.domain}</span>
-              <span className="text-[11px] text-neutral-600">
+              <span className="block text-sm" style={{
+                fontFamily: "var(--font-body),Georgia,serif", fontWeight: 600,
+                letterSpacing: ".16em", textTransform: "uppercase",
+                color: active?.slug === p.slug ? "var(--gold)" : "var(--ink2)",
+              }}>{p.domain}</span>
+              <span className="text-[11px]" style={{
+                fontFamily: "var(--font-data),Arial,sans-serif", color: "var(--ink3)",
+                fontVariantNumeric: "tabular-nums",
+              }}>
                 rev {p.revision} · {new Date(p.updatedAt).toLocaleDateString()}
               </span>
             </button>
@@ -125,16 +133,12 @@ export default function WikiPage() {
         </aside>
 
         {active && (
-          <section className={`lg:col-span-3 aurelius-panel-frame p-6 ${rebuilding ? "aurelius-working" : ""}`}>
+          <section className={`lg:col-span-3 au-card p-6 ${rebuilding ? "aurelius-working" : ""}`}>
             <div className="flex items-baseline justify-between mb-4 pb-3 border-b border-aurelius-gold/15">
-              <span className="text-xs text-neutral-500">
+              <span className="au-kicker" style={{ fontSize: 12.5 }}>
                 revision {active.revision} · maintained by Aurelius · feeds recall
               </span>
-              <button
-                onClick={rebuild}
-                disabled={rebuilding}
-                className="text-xs text-aurelius-gold/80 border border-aurelius-gold/30 rounded px-2.5 py-1 hover:border-aurelius-gold/60 disabled:opacity-40"
-              >
+              <button onClick={rebuild} disabled={rebuilding} className="au-undo" style={{ marginLeft: 0 }}>
                 {rebuilding ? "Synthesizing…" : "Rewrite now"}
               </button>
             </div>

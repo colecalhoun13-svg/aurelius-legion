@@ -14,7 +14,7 @@ type SpineFeed = { days: string[]; jobs: SpineJob[]; runs: SpineRun[] };
 
 const DOT = {
   done: "bg-aurelius-gold/90",
-  failed: "bg-red-400/90",
+  failed: "bg-[#c96b5a]", // terracotta — the imperial danger ink
   running: "bg-aurelius-gold/40 animate-pulse",
   missed: "border border-neutral-600 bg-transparent",
   blank: "bg-transparent",
@@ -56,12 +56,12 @@ export default function SpineHealth({ onPick }: { onPick?: (job: string) => void
   };
 
   return (
-    <section className="aurelius-panel-frame p-4">
-      <div className="flex items-baseline justify-between mb-3">
-        <h2 className="aurelius-heading text-lg">The spine, this week</h2>
-        <span className="text-[10px] text-neutral-500">
-          <span className="text-aurelius-gold">●</span> fired · <span className="text-red-400">●</span> failed ·{" "}
-          <span className="text-neutral-500">○</span> missed
+    <section className="au-card p-4">
+      <div className="flex items-baseline justify-between mb-3 gap-3 flex-wrap">
+        <span className="au-label-row">The spine, this week</span>
+        <span className="text-[10px]" style={{ color: "var(--ink3)" }}>
+          <span style={{ color: "var(--gold)" }}>●</span> fired · <span style={{ color: "var(--danger)" }}>●</span> failed ·{" "}
+          <span>○</span> missed
         </span>
       </div>
       <div className="overflow-x-auto">

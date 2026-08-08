@@ -1,13 +1,22 @@
 import { NextResponse } from "next/server";
-import { saveDraft, listDrafts, updateDraft, discardDraft, stageForPublish, queueState } from "../../../../../aurelius/content/queue";
+import {
+  saveDraft,
+  listDrafts,
+  updateDraft,
+  discardDraft,
+  stageForPublish,
+  queueState,
+  planSlots,
+  cadenceTruth,
+} from "../../../../../aurelius/content/queue";
 
 export const dynamic = "force-dynamic";
 
-/** The queue, and whether any of it has actually gone out. */
+/** The queue, whether any of it has actually gone out, and the cadence truth. */
 export async function GET() {
   try {
-    const [drafts, state] = await Promise.all([listDrafts({}), queueState()]);
-    return NextResponse.json({ drafts, state });
+    const [drafts, state, cadence] = await Promise.all([listDrafts({}), queueState(), cadenceTruth()]);
+    return NextResponse.json({ drafts, state, cadence });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message ?? "Failed to load the queue" }, { status: 500 });
   }
@@ -44,8 +53,15 @@ export async function POST(request: Request) {
         if (!out.ok) throw new Error(out.error ?? "Could not stage");
         return NextResponse.json(out);
       }
+      // INWARD: assigns Mon/Thu 9am scheduledFor dates to ready drafts that
+      // lack one. A slot is a plan on a draft — publishing still stages on
+      // the Bridge for Cole's confirm, always.
+      case "plan_slots": {
+        const out = await planSlots(body.perWeek != null ? Number(body.perWeek) : undefined);
+        return NextResponse.json(out);
+      }
       default:
-        throw new Error(`Unknown kind: ${body?.kind}. Expected keep, edit, discard, or publish.`);
+        throw new Error(`Unknown kind: ${body?.kind}. Expected keep, edit, discard, publish, or plan_slots.`);
     }
   } catch (error: any) {
     return NextResponse.json({ error: error?.message ?? "Content action failed" }, { status: 400 });

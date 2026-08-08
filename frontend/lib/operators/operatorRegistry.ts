@@ -1,9 +1,13 @@
 // ================================
 // AURELIUS OS — NAVIGATION REGISTRY
-// The 2026-07 v2 ruling: grouping IS the streamlining. Desktop shows the
-// whole map — nine destinations under four whisper-cap headers — because a
-// sidebar is a table of contents, not a thumb. (Mobile keeps its own five;
-// MobileTabBar is deliberately independent of this registry.)
+// The 2026-08 ELEVATED IMPERIAL ruling (docs/REDESIGN_PLAN.md): ten tabs —
+// Morning · Chat · Decisions · Business · Athletes · Goals · Brain ·
+// Calendar · Machine · Tuning. Machine and Tuning point at the
+// pages that hold their content TODAY (/engines and /aurelius); when the real
+// Machine/Tuning pages land, only the paths change. Nothing is deleted:
+// /tools and /settings stay listed under Setup so every live route keeps a
+// door on desktop, and /more still lists everything on the phone.
+// (Mobile keeps its own five; MobileTabBar is deliberately independent.)
 // Standing rules: at most 12 items in at most 5 groups; a new page joins an
 // existing group or replaces an item. Anything Cole acts on weekly lives here.
 // ================================
@@ -17,9 +21,15 @@ export type OperatorDefinition = {
 
 export const operatorRegistry: Record<string, OperatorDefinition> = {
   home: {
-    name: "Home",
+    name: "Morning",
     path: "/home",
-    description: "The day, what needs you, and the conversation — one screen",
+    description: "The day, what needs you, and the confrontation — one screen",
+    group: "The day",
+  },
+  chat: {
+    name: "Chat",
+    path: "/chat",
+    description: "One box, the whole mind — the room itself",
     group: "The day",
   },
   decisions: {
@@ -28,14 +38,20 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     description: "Everything awaiting your ruling — one queue, one badge",
     group: "The day",
   },
-  calendar: {
-    name: "Calendar",
-    path: "/calendar",
-    description: "The week as a resource",
-    group: "The day",
+  business: {
+    name: "Business",
+    path: "/business",
+    description: "The remote coaching business — leads, clients, and the money",
+    group: "Direction",
+  },
+  athletes: {
+    name: "Athletes",
+    path: "/athletes",
+    description: "Every athlete against the standard — the radar and the ledger of bests",
+    group: "Direction",
   },
   goals: {
-    name: "Goals & Projects",
+    name: "Goals",
     path: "/goals",
     description: "Big and small, with runway — the numbers that must move",
     group: "Direction",
@@ -46,28 +62,28 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     description: "The shelves, ask-anything, and the syntheses",
     group: "Direction",
   },
-  business: {
-    name: "Business",
-    path: "/business",
-    description: "The remote coaching business — leads, clients, and the money",
+  calendar: {
+    name: "Calendar",
+    path: "/calendar",
+    description: "The week as a resource",
     group: "Direction",
   },
-  aurelius: {
-    name: "Aurelius",
+  machine: {
+    name: "Machine",
+    path: "/engines",
+    description: "Which minds answer which calls — the engine room",
+    group: "The machine",
+  },
+  tuning: {
+    name: "Tuning",
     path: "/aurelius",
     description: "Missions, the autonomy dial, and traces — the trust story",
-    group: "Aurelius",
+    group: "The machine",
   },
   tools: {
     name: "Tools",
     path: "/tools",
     description: "Integrations and what unlocks them",
-    group: "Setup",
-  },
-  engines: {
-    name: "Engines",
-    path: "/engines",
-    description: "Which minds answer which calls",
     group: "Setup",
   },
   settings: {

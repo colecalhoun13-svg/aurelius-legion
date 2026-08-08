@@ -162,10 +162,11 @@ const API_KEY = process.env.AURELIUS_API_KEY?.trim();
 // matched the old regex — Express doesn't collapse dot-segments pre-route).
 const AUTH_EXEMPT = new Set([
   "/health", "/",
-  // Payment/SMS webhooks — a provider (Stripe, Twilio) has no API key. Each is
-  // verified by SIGNATURE instead (Stripe HMAC, Twilio X-Twilio-Signature), so
-  // an unsigned or forged POST is refused inside the handler, not here.
-  "/webhooks/stripe", "/webhooks/twilio",
+  // Payment/SMS/DM webhooks — a provider (Stripe, Twilio, Meta) has no API
+  // key. Each is verified by SIGNATURE instead (Stripe HMAC, Twilio
+  // X-Twilio-Signature, Meta X-Hub-Signature-256), so an unsigned or forged
+  // POST is refused inside the handler, not here.
+  "/webhooks/stripe", "/webhooks/twilio", "/webhooks/instagram",
   // Public lead intake. A prospect has no API key; a funnel that demands one
   // captures nobody. Narrow by construction (creates a Lead, nothing else),
   // input-sanitised, and rate-limited per IP at the route.
@@ -317,6 +318,47 @@ app.post("/webhooks/twilio", async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error("[twilio] webhook failed:", err?.message ?? err);
     res.status(500).send("handler failed");
+  }
+});
+
+// INSTAGRAM DM WEBHOOK — the capture-only DM door (instagram/messages.ts).
+// GET is Meta's subscription handshake (echo hub.challenge when the verify
+// token matches); POST is signature-verified over the RAW body. Dormant-honest
+// without config: 503 with the fix, never a silent 200. Inbound only — an
+// inbound DM becomes a Lead + a Bridge opportunity; replying is Cole, in the
+// Instagram app, always.
+app.get("/webhooks/instagram", (req: Request, res: Response) => {
+  const verifyToken = process.env.META_VERIFY_TOKEN?.trim();
+  if (!verifyToken) {
+    return res
+      .status(503)
+      .send("instagram messages not configured — set META_VERIFY_TOKEN (and INSTAGRAM_APP_SECRET) in .env");
+  }
+  if (req.query["hub.mode"] === "subscribe" && req.query["hub.verify_token"] === verifyToken) {
+    return res.status(200).send(String(req.query["hub.challenge"] ?? ""));
+  }
+  return res.status(403).send("verify token mismatch");
+});
+app.post("/webhooks/instagram", async (req: Request, res: Response) => {
+  const secret = (process.env.INSTAGRAM_APP_SECRET ?? process.env.META_APP_SECRET)?.trim();
+  if (!secret) {
+    return res
+      .status(503)
+      .send("instagram messages not configured — set INSTAGRAM_APP_SECRET (and META_VERIFY_TOKEN) in .env");
+  }
+  try {
+    const { verifyMetaSignature, handleInstagramMessages } = await import("./instagram/messages.ts");
+    const raw = (req as any).rawBody as Buffer | undefined;
+    if (!verifyMetaSignature(raw, req.get("x-hub-signature-256"), secret)) {
+      return res.status(403).send("invalid signature");
+    }
+    const out = await handleInstagramMessages(req.body);
+    // Always 200 a verified delivery — Meta retries non-200s, and a capture
+    // hiccup shouldn't earn a redelivery storm.
+    return res.json({ received: true, ...out });
+  } catch (err: any) {
+    console.error("[instagram-dm] webhook failed:", err?.message ?? err);
+    return res.status(500).send("handler failed");
   }
 });
 

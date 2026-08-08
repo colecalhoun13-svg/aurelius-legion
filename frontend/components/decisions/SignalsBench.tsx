@@ -4,8 +4,17 @@
 // Top: the review bench — knowledge proposals awaiting his ruling.
 // Nothing enters Living Knowledge without passing this (or an explicit
 // in-chat confirmation). Below: every signal, full body, inline actions.
+//
+// ELEVATED IMPERIAL re-dress (docs/REDESIGN_PLAN.md): the first pending
+// card wears the inscription tablet (glass — rank, max ~2/page), the rest
+// stand as stone slabs. A ruling slides the card off the bench (opacity +
+// translateX + max-height collapse, template-faithful, inline transition)
+// before the existing refetch removes it; the page hero's numeral ticks on
+// the count we report up. Every handler, API call, and busy-guard from the
+// working page survives unchanged.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Btn, LedgerRow, Panel, SectionLabel } from "../kit";
 
 type SignalAction = { label: string; action: string; payload?: any };
 type Signal = {
@@ -45,16 +54,19 @@ function showValue(v: any): string {
   return s.length > 160 ? s.slice(0, 160) + "…" : s;
 }
 
-const SEV: Record<string, string> = {
-  critical: "text-red-400 border-red-400/50",
-  attention: "text-amber-400 border-amber-400/50",
-  notice: "text-aurelius-gold border-aurelius-gold/50",
-  info: "text-neutral-400 border-aurelius-gold/25",
+// Severity keeps its voice in the new dress: the kind-chip text color.
+const SEV_TEXT: Record<string, string> = {
+  critical: "var(--danger)",
+  attention: "var(--attn)",
+  notice: "var(--gold)",
+  info: "var(--ink3)",
 };
 
 type RecentAction = { id: string; title: string; createdAt: string; actionClass: string | null };
 
-export default function BridgePage() {
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+export default function BridgePage({ onPendingCount }: { onPendingCount?: (n: number) => void }) {
   const [signals, setSignals] = useState<Signal[] | null>(null);
   const [receipts, setReceipts] = useState<Signal[]>([]);
   const [receiptsOpen, setReceiptsOpen] = useState(false);
@@ -88,6 +100,47 @@ export default function BridgePage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const pendingCount = (signals?.length ?? 0) + (proposals?.length ?? 0);
+
+  // The hero numeral upstairs is this same count — the badge endpoint splits
+  // on the same predicate as the deck, so the two can never disagree.
+  useEffect(() => {
+    if (signals !== null || proposals !== null) onPendingCount?.(pendingCount);
+  }, [signals, proposals, pendingCount, onPendingCount]);
+
+  /* ── the ruling exit: card slides off the bench before the refetch drops it.
+       Template-faithful (measure scrollHeight → double-rAF → collapse), all
+       inline so no stylesheet is touched. Reduced-motion rules instantly. ── */
+  const cardRefs = useRef(new Map<string, HTMLElement>());
+  const setCardRef = (id: string) => (node: HTMLElement | null) => {
+    if (node) cardRefs.current.set(id, node);
+    else cardRefs.current.delete(id);
+  };
+  const animateAway = async (id: string) => {
+    const el = cardRefs.current.get(id);
+    if (!el) return;
+    if (typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    el.style.overflow = "hidden";
+    el.style.transition =
+      "opacity .5s var(--au-ease), transform .5s var(--au-ease), max-height .55s var(--au-ease), margin .55s var(--au-ease)";
+    el.style.maxHeight = el.scrollHeight + "px";
+    await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+    el.style.opacity = "0";
+    el.style.transform = "translateX(28px)";
+    el.style.maxHeight = "0";
+    el.style.marginTop = "0";
+    el.style.marginBottom = "0";
+    await sleep(560);
+  };
+  // If the refetch brings the card back (the ruling failed server-side), the
+  // same DOM node survives keyed — clear the exit styles so it stands again.
+  const resetCard = (id: string) => {
+    const el = cardRefs.current.get(id);
+    if (!el) return;
+    for (const p of ["overflow", "transition", "opacity", "transform", "max-height", "margin-top", "margin-bottom"])
+      el.style.removeProperty(p);
+  };
+
   const undo = async (id: string) => {
     if (busy) return;
     setBusy(id);
@@ -100,20 +153,25 @@ export default function BridgePage() {
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         window.alert(`Couldn't undo: ${j.error ?? res.status}`);
+      } else {
+        await animateAway(id);
       }
       await load();
+      resetCard(id);
     } finally {
       setBusy(null);
     }
   };
 
   const act = async (id: string, status: string) => {
-    await fetch("/api/today/actions", {
+    const res = await fetch("/api/today/actions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "ackSignal", id, status, date: localDate() }),
     });
+    if (res.ok) await animateAway(id);
     await load();
+    resetCard(id);
   };
 
   // The trust loop: "that's wrong" + why → Correction row, memory,
@@ -144,8 +202,11 @@ export default function BridgePage() {
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         window.alert(`Couldn't do that: ${j.error ?? res.status}`);
+      } else {
+        await animateAway(id);
       }
       await load();
+      resetCard(id);
     } finally {
       setBusy(null);
     }
@@ -160,80 +221,98 @@ export default function BridgePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, decision }),
       });
+      await animateAway(id);
       await load();
+      resetCard(id);
     } finally {
       setBusy(null);
     }
   };
 
-  const pendingCount = (signals?.length ?? 0) + (proposals?.length ?? 0);
+  // The FIRST pending card — proposal if any stand, else the first signal —
+  // wears the inscription tablet; the rest are stone.
+  const firstGlassProposal = (proposals?.length ?? 0) > 0;
+
+  const kindChip = (text: string, color: string) => (
+    <span
+      style={{
+        fontFamily: "var(--font-body),Georgia,serif",
+        fontWeight: 600,
+        fontSize: 12,
+        letterSpacing: ".28em",
+        textTransform: "uppercase",
+        color,
+      }}
+      className="shrink-0"
+    >
+      {text}
+    </span>
+  );
 
   return (
-    <main className="text-aurelius-text max-w-3xl mx-auto space-y-6 aurelius-stagger">
-      <header className="flex items-baseline justify-between aurelius-rule">
-        {/* One name per surface (alignment council): the nav calls this
-            "From Aurelius" — the h1 must not answer to a different name. */}
-        <h1 className="aurelius-heading text-4xl">From Aurelius</h1>
-        <span className="text-sm text-neutral-500">
-          {signals === null && proposals === null ? "…" : `${pendingCount} pending`}
-        </span>
+    <main className="text-aurelius-text max-w-3xl mx-auto space-y-6">
+      {/* One name per surface (alignment council): the nav chip calls this
+          "From Aurelius" — the header must not answer to a different name.
+          The big count lives in the page hero now; this row keeps the words. */}
+      <header>
+        <div className="flex items-baseline justify-between gap-4 flex-wrap">
+          <SectionLabel row>From Aurelius</SectionLabel>
+          <span className="au-kicker">
+            {signals === null && proposals === null ? "…" : `${pendingCount} pending`}
+          </span>
+        </div>
+        <div className="au-rule" />
       </header>
 
       {/* THE REVIEW BENCH — proposals await Cole's ruling */}
       {proposals && proposals.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="aurelius-heading text-lg">Awaiting your ruling</h2>
-          {proposals.map((p) => (
-            <div key={p.id} className="aurelius-panel-frame p-5 border border-sky-400/40">
-              {/* Plain English leads; machine identifiers demote to metadata —
-                  Cole rules on a sentence, not on scope.key · intent_class_id. */}
-              <div className="flex items-start justify-between gap-3">
-                <span className="font-medium text-sm text-neutral-100">
-                  {p.rationale || p.coleNaturalLanguage || `${p.scope}.${p.key}`}
-                </span>
-                <span className="text-[10px] uppercase tracking-wider text-sky-300 border border-sky-400/40 rounded px-1.5 py-0.5 shrink-0">
-                  proposal
-                </span>
-              </div>
+        <section className="space-y-4">
+          <SectionLabel>Awaiting your ruling</SectionLabel>
+          {proposals.map((p, i) => (
+            <div key={p.id} ref={setCardRef(p.id)}>
+              <Panel tier={firstGlassProposal && i === 0 ? "glass" : "card"}>
+                {/* Plain English leads; machine identifiers demote to metadata —
+                    Cole rules on a sentence, not on scope.key · intent_class_id. */}
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-sm" style={{ color: "var(--ink)" }}>
+                    {p.rationale || p.coleNaturalLanguage || `${p.scope}.${p.key}`}
+                  </span>
+                  {kindChip("Proposal", "var(--gold)")}
+                </div>
 
-              <div className="mt-3 text-sm space-y-1.5">
-                {p.priorValue !== null && (
-                  <p className="text-neutral-500">
-                    <span className="text-[11px] uppercase tracking-wider mr-2">now</span>
-                    <span className="line-through decoration-neutral-600">{showValue(p.priorValue)}</span>
+                <div className="mt-3 text-sm space-y-1.5">
+                  {p.priorValue !== null && (
+                    <p style={{ color: "var(--ink3)" }}>
+                      <span className="text-[11px] uppercase tracking-wider mr-2">now</span>
+                      <span className="line-through decoration-neutral-600">{showValue(p.priorValue)}</span>
+                    </p>
+                  )}
+                  <p style={{ color: "var(--ink2)" }}>
+                    <span className="text-[11px] uppercase tracking-wider mr-2" style={{ color: "var(--gold-dim)" }}>
+                      proposed
+                    </span>
+                    {showValue(p.proposedValue)}
                   </p>
-                )}
-                <p className="text-neutral-200">
-                  <span className="text-[11px] uppercase tracking-wider text-aurelius-gold/70 mr-2">proposed</span>
-                  {showValue(p.proposedValue)}
-                </p>
-                {p.rationale && p.coleNaturalLanguage && !p.coleNaturalLanguage.startsWith("(") && (
-                  <p className="text-xs text-neutral-600 italic">from: “{p.coleNaturalLanguage}”</p>
-                )}
-                <p className="text-[11px] text-neutral-600 mt-2">
-                  {p.scope}.{p.key} · {p.operatorName} · {p.intentClassId.replace(/_/g, " ")}
-                </p>
-              </div>
+                  {p.rationale && p.coleNaturalLanguage && !p.coleNaturalLanguage.startsWith("(") && (
+                    <p className="au-kicker" style={{ fontSize: 13 }}>from: “{p.coleNaturalLanguage}”</p>
+                  )}
+                  <p className="text-[11px] mt-2" style={{ color: "var(--ink3)" }}>
+                    {p.scope}.{p.key} · {p.operatorName} · {p.intentClassId.replace(/_/g, " ")}
+                  </p>
+                </div>
 
-              <div className="flex gap-2 mt-4">
-                <button
-                  onClick={() => rule(p.id, "confirmed")}
-                  disabled={busy === p.id}
-                  className="text-sm border border-emerald-500/40 rounded-lg px-4 py-1 hover:bg-emerald-500/15 text-emerald-400 disabled:opacity-40"
-                >
-                  Confirm
-                </button>
-                <button
-                  onClick={() => rule(p.id, "denied")}
-                  disabled={busy === p.id}
-                  className="text-sm border border-red-500/40 rounded-lg px-4 py-1 hover:bg-red-500/15 text-red-400 disabled:opacity-40"
-                >
-                  Deny
-                </button>
-                <span className="text-[11px] text-neutral-600 self-center ml-2">
-                  applies to Living Knowledge only on confirm
-                </span>
-              </div>
+                <div className="flex items-center gap-2 mt-4 flex-wrap">
+                  <Btn onClick={() => rule(p.id, "confirmed")} disabled={busy === p.id}>
+                    Confirm
+                  </Btn>
+                  <Btn ghost onClick={() => rule(p.id, "denied")} disabled={busy === p.id}>
+                    Deny
+                  </Btn>
+                  <span className="au-kicker" style={{ fontSize: 12.5, marginLeft: ".5rem" }}>
+                    applies to Living Knowledge only on confirm
+                  </span>
+                </div>
+              </Panel>
             </div>
           ))}
         </section>
@@ -242,7 +321,7 @@ export default function BridgePage() {
       {err && <p className="text-sm text-amber-300/90">{err}</p>}
 
       {signals && signals.length === 0 && (proposals?.length ?? 0) === 0 && (
-        <p className="text-neutral-600 italic text-center py-16">
+        <p className="au-kicker text-center py-16" style={{ display: "block", fontSize: "1.05rem" }}>
           Quiet. When Aurelius finishes something in the background — a research pass,
           a closed-out day, a pattern worth confirming — it lands here.
         </p>
@@ -251,57 +330,64 @@ export default function BridgePage() {
       {/* DONE ON ITS OWN — executed under a granted keyhole, still reversible.
           The receipts reach the ruling surface, not just the Autonomy tab. */}
       {recentActions.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="aurelius-heading text-sm text-aurelius-gold/70 tracking-widest">Done on its own — reversible</h2>
+        <section>
+          <SectionLabel gold>Done on its own — reversible</SectionLabel>
+          <div style={{ height: ".4rem" }} />
           {recentActions.map((a) => (
-            <div key={a.id} className="flex items-start gap-3 aurelius-panel-frame border border-aurelius-gold/15 px-4 py-2.5">
-              <span className="text-aurelius-gold/60 mt-px">✦</span>
-              <span className="flex-1 min-w-0">
-                <span className="block text-sm text-neutral-300 truncate">{a.title}</span>
-                <span className="block text-[11px] text-neutral-600 mt-0.5">
-                  {a.actionClass ?? "autonomous"} ·{" "}
-                  {new Date(a.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                </span>
-              </span>
-              <button
-                onClick={() => undo(a.id)}
-                disabled={busy === a.id}
-                className="text-xs border border-amber-500/50 rounded-lg px-3 py-1 hover:bg-amber-500/15 text-amber-300 disabled:opacity-50 shrink-0"
-              >
-                {busy === a.id ? "Undoing…" : "Undo"}
-              </button>
+            <div key={a.id} ref={setCardRef(a.id)}>
+              <LedgerRow
+                tick="em"
+                verb={a.title}
+                obj={`${a.actionClass ?? "autonomous"} · ${new Date(a.createdAt).toLocaleString([], {
+                  month: "short",
+                  day: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}`}
+                right={
+                  <button className="au-undo" onClick={() => undo(a.id)} disabled={busy === a.id}>
+                    {busy === a.id ? "undoing…" : "undo"}
+                  </button>
+                }
+              />
             </div>
           ))}
         </section>
       )}
 
       <ul className="space-y-4">
-        {(signals ?? []).map((s) => (
-          <li key={s.id} className={`aurelius-panel-frame p-5 border ${SEV[s.severity] ?? SEV.info}`}>
-            <div className="flex items-start justify-between gap-3">
-              <span className="font-medium">{s.title}</span>
-              <span className="text-[10px] uppercase tracking-wider opacity-70 shrink-0 border border-current rounded px-1.5 py-0.5">
-                {s.kind.replace(/_/g, " ")}
-              </span>
-            </div>
-            {s.body && <p className="text-sm text-neutral-400 mt-2 whitespace-pre-line">{s.body}</p>}
-            <div className="flex gap-2 mt-4 flex-wrap">
-              {confirmableAction(s) && s.status !== "acted" && (
-                <button onClick={() => confirmAndDo(s.id)} disabled={busy === s.id}
-                  className="text-sm border border-emerald-500/60 rounded-lg px-3 py-1 hover:bg-emerald-500/25 text-emerald-300 font-medium disabled:opacity-50">
-                  {busy === s.id ? "Doing it…" : `Confirm & do it`}
-                </button>
+        {(signals ?? []).map((s, i) => (
+          <li key={s.id} ref={setCardRef(s.id)}>
+            <Panel tier={!firstGlassProposal && i === 0 ? "glass" : "card"}>
+              <div className="flex items-start justify-between gap-3">
+                <span className="font-medium" style={{ color: "var(--ink)" }}>{s.title}</span>
+                {kindChip(s.kind.replace(/_/g, " "), SEV_TEXT[s.severity] ?? SEV_TEXT.info)}
+              </div>
+              {s.body && (
+                <p className="text-sm mt-2 whitespace-pre-line" style={{ color: "var(--ink2)" }}>
+                  {s.body}
+                </p>
               )}
-              <button onClick={() => act(s.id, "acknowledged")}
-                className="text-sm border border-aurelius-gold/40 rounded-lg px-3 py-1 hover:bg-aurelius-gold/20 text-aurelius-gold">Got it</button>
-              <button onClick={() => act(s.id, "acted")}
-                className="text-sm border border-emerald-500/40 rounded-lg px-3 py-1 hover:bg-emerald-500/15 text-emerald-400">Acted on it</button>
-              <button onClick={() => act(s.id, "dismissed")}
-                className="text-sm border border-neutral-600 rounded-lg px-3 py-1 hover:bg-neutral-800 text-neutral-400">Dismiss</button>
-              <button onClick={() => correct(s.id)}
-                className="text-sm border border-red-500/30 rounded-lg px-3 py-1 hover:bg-red-500/10 text-red-400/80 ml-auto"
-                title="Record a correction — Aurelius learns from what it gets wrong">That’s wrong</button>
-            </div>
+              <div className="flex gap-2 mt-4 flex-wrap">
+                {confirmableAction(s) && s.status !== "acted" && (
+                  <Btn onClick={() => confirmAndDo(s.id)} disabled={busy === s.id}>
+                    {busy === s.id ? "Doing it…" : "Confirm & do it"}
+                  </Btn>
+                )}
+                <Btn ghost onClick={() => act(s.id, "acknowledged")}>Got it</Btn>
+                <Btn ghost onClick={() => act(s.id, "acted")}>Acted on it</Btn>
+                <Btn ghost onClick={() => act(s.id, "dismissed")}>Dismiss</Btn>
+                <Btn
+                  ghost
+                  onClick={() => correct(s.id)}
+                  className="ml-auto"
+                  style={{ color: "var(--danger)", borderColor: "rgba(201,107,90,.4)" }}
+                  title="Record a correction — Aurelius learns from what it gets wrong"
+                >
+                  That’s wrong
+                </Btn>
+              </div>
+            </Panel>
           </li>
         ))}
       </ul>
@@ -312,23 +398,28 @@ export default function BridgePage() {
         <section className="space-y-2">
           <button
             onClick={() => setReceiptsOpen((o) => !o)}
-            className="aurelius-heading text-sm text-neutral-500 hover:text-aurelius-gold tracking-widest"
+            className="au-kicker hover:text-aurelius-gold"
+            style={{ background: "none", border: 0, cursor: "pointer", padding: 0 }}
           >
             {receipts.length} update{receipts.length === 1 ? "" : "s"}, nothing to decide {receiptsOpen ? "· hide" : "· see"}
           </button>
           {receiptsOpen && (
-            <ul className="space-y-2">
+            <ul>
               {receipts.map((s) => (
-                <li key={s.id} className="flex items-start gap-3 aurelius-panel-frame border border-aurelius-gold/15 px-4 py-2.5">
+                <li key={s.id} ref={setCardRef(s.id)} className="au-lrow" style={{ alignItems: "flex-start" }}>
                   <span className="flex-1 min-w-0">
-                    <span className="block text-sm text-neutral-300">{s.title}</span>
-                    {s.body && <span className="block text-xs text-neutral-500 mt-1 whitespace-pre-line line-clamp-2">{s.body}</span>}
+                    <span className="block text-sm au-verb">{s.title}</span>
+                    {s.body && (
+                      <span
+                        className="block text-xs mt-1 whitespace-pre-line line-clamp-2"
+                        style={{ color: "var(--ink3)" }}
+                      >
+                        {s.body}
+                      </span>
+                    )}
                   </span>
-                  <button
-                    onClick={() => act(s.id, "acknowledged")}
-                    className="text-xs border border-aurelius-gold/40 rounded-lg px-3 py-1 hover:bg-aurelius-gold/20 text-aurelius-gold shrink-0"
-                  >
-                    Got it
+                  <button className="au-undo" onClick={() => act(s.id, "acknowledged")}>
+                    got it
                   </button>
                 </li>
               ))}
