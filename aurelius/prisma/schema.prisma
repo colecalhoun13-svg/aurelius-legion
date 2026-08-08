@@ -819,6 +819,14 @@ model Client {
   parentPhone String?
   isMinor     Boolean @default(false) // gates sharing results publicly — consent for a minor is the parent's to give
 
+  // THE GYM BOUNDARY, IN THE SCHEMA. "client" = a paying (or signing) client of
+  // Cole's own remote business — full business machinery applies. "training_only"
+  // = an athlete Cole records training for (e.g. gym athletes — his employer's
+  // book) who must NEVER enter business machinery: no referral asks, no proof
+  // content, no check-in/renewal drafts, no analytics. Excluded at the query,
+  // not filtered at display. Promotion to "client" is Cole's explicit action.
+  kind String @default("client") // "client" | "training_only"
+
   status      String    @default("active") // "active" | "paused" | "ended"
   startedAt   DateTime  @default(now())
   endedAt     DateTime?

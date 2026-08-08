@@ -20,6 +20,11 @@ import { fromCents } from "./service.ts";
 // Times/sprints improve DOWNWARD; strength/jumps improve UPWARD. Getting this
 // wrong would call a slower 40 a "PR", so it's explicit.
 const LOWER_IS_BETTER = /dash|sprint|\btime\b|\b40\b|10-?yard|5-?10-?5|agility|mile|:/i;
+/** Times/sprints improve downward — exported so the performance/trends view
+ *  agrees with PR detection about which direction is "better". */
+export function lowerIsBetter(label: string): boolean {
+  return LOWER_IS_BETTER.test(label);
+}
 function beats(label: string, value: number, prior: number): boolean {
   return LOWER_IS_BETTER.test(label) ? value < prior : value > prior;
 }
@@ -66,8 +71,26 @@ export async function logMetric(input: {
  *  surface the win. Deduped per client per day so a session with three PRs asks
  *  once, not three times. */
 async function onPeak(clientId: string, pr: { label: string; value: number; unit?: string }): Promise<void> {
-  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { name: true, isMinor: true } });
+  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { name: true, isMinor: true, kind: true } });
   if (!client) return;
+
+  // THE GYM BOUNDARY: a training-only athlete's PR is a coaching win, not a
+  // business moment. No referral ask, no proof-content pitch — those aim
+  // Cole's business at an athlete who isn't his business (often his
+  // employer's). The win still surfaces, in the training domain.
+  if (client.kind !== "client") {
+    const { surfaceSignal } = await import("../core/bridge.ts");
+    await surfaceSignal({
+      kind: "background_result",
+      domain: "training",
+      sourceType: "pr_peak",
+      sourceId: `peak:${clientId}:${new Date().toISOString().slice(0, 10)}`,
+      severity: "notice",
+      title: `${client.name} just hit a PR — ${pr.label} ${pr.value}${pr.unit ?? ""}`,
+      body: `Logged on the training roster. (Training-only athlete — no business machinery fires.)`,
+    }).catch(() => {});
+    return;
+  }
 
   // One referral proposal per client per open window — never nag.
   const open = await prisma.referral.count({ where: { referrerClientId: clientId, status: "proposed" } });
@@ -100,14 +123,16 @@ export async function retentionSweep(now = new Date()): Promise<{
   checkInsDue: number;
   renewalsDue: number;
 }> {
-  const activeClients = await prisma.client.count({ where: { status: "active" } });
+  // kind: "client" everywhere in this sweep — training-only athletes never get
+  // business check-ins or renewal drafts (the gym boundary, in the query).
+  const activeClients = await prisma.client.count({ where: { status: "active", kind: "client" } });
   if (activeClients === 0) {
     return { ran: false, reason: "no active clients — retention dormant", checkInsDue: 0, renewalsDue: 0 };
   }
 
   // Overdue check-ins: a client with a cadence whose clock has run out.
   const clients = await prisma.client.findMany({
-    where: { status: "active", checkInEveryDays: { not: null } },
+    where: { status: "active", kind: "client", checkInEveryDays: { not: null } },
     select: { id: true, name: true, checkInEveryDays: true, lastCheckInAt: true, createdAt: true },
   });
   let checkInsDue = 0;
@@ -123,7 +148,7 @@ export async function retentionSweep(now = new Date()): Promise<{
   // Renewals: engagements ending within 21 days are the re-sign conversation.
   const soon = new Date(now.getTime() + 21 * 86400_000);
   const ending = await prisma.engagement.findMany({
-    where: { status: "active", endsAt: { not: null, gte: now, lte: soon } },
+    where: { status: "active", endsAt: { not: null, gte: now, lte: soon }, client: { kind: "client" } },
     select: { id: true, clientId: true, title: true, endsAt: true, priceCents: true },
   });
   for (const e of ending) await surfaceRenewal(e).catch(() => {});
@@ -169,8 +194,10 @@ async function surfaceRenewal(e: { id: string; clientId: string; title: string; 
  * (proposing a thank-you). No match → nothing happens (the lead still stands).
  */
 export async function creditReferral(leadId: string, referrerName: string): Promise<boolean> {
+  // kind: "client" — referral machinery (asks, thank-loops) never attaches to a
+  // training-only athlete, even when a lead names one. The lead still stands.
   const referrer = await prisma.client.findFirst({
-    where: { status: "active", name: { equals: referrerName.trim(), mode: "insensitive" } },
+    where: { status: "active", kind: "client", name: { equals: referrerName.trim(), mode: "insensitive" } },
     select: { id: true, name: true },
   });
   if (!referrer) return false;
@@ -230,8 +257,13 @@ export async function clientRetentionView(clientId: string) {
  * separate outward content.publish confirm. Dormant-honest without an engine.
  */
 export async function draftProofContent(clientId: string): Promise<{ ok: boolean; error?: string; draftId?: string }> {
-  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { name: true, sport: true, isMinor: true } });
+  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { name: true, sport: true, isMinor: true, kind: true } });
   if (!client) return { ok: false, error: "No such client." };
+  // THE GYM BOUNDARY: a training-only athlete's results are not marketing
+  // material for Cole's business — they're frequently his employer's athlete.
+  if (client.kind !== "client") {
+    return { ok: false, error: `${client.name} is on the training roster, not a business client — their results don't become proof content. Promote them first if they've actually signed.` };
+  }
   const prs = await prisma.metric.findMany({ where: { clientId, isPR: true }, orderBy: { achievedAt: "desc" }, take: 3 });
   if (prs.length === 0) return { ok: false, error: "No PRs on record for this client yet — nothing to prove." };
 
@@ -279,9 +311,15 @@ export async function draftClientMessage(
 ): Promise<{ ok: boolean; error?: string; body?: string }> {
   const client = await prisma.client.findUnique({
     where: { id: clientId },
-    select: { name: true, sport: true, isMinor: true, parentName: true },
+    select: { name: true, sport: true, isMinor: true, parentName: true, kind: true },
   });
   if (!client) return { ok: false, error: "No such client." };
+  // THE GYM BOUNDARY: business messaging (check-in cadence, re-sign, referral
+  // asks) never aims at a training-only athlete. Their coaching conversation
+  // happens where Cole coaches them — not through his business's machinery.
+  if (client.kind !== "client") {
+    return { ok: false, error: `${client.name} is training-only — no business messages get drafted at them (check-in, re-sign, referral are client machinery). Promote them first if they've signed.` };
+  }
 
   const [prs, lifetime] = await Promise.all([
     prisma.metric.count({ where: { clientId, isPR: true } }),
@@ -329,7 +367,7 @@ export async function draftClientMessage(
  */
 const MIN_CLIENTS_FOR_ANALYTICS = 5;
 export async function retentionAnalytics(): Promise<{ ready: boolean; note: string; avgLtvCents?: number; churnRiskCount?: number }> {
-  const total = await prisma.client.count();
+  const total = await prisma.client.count({ where: { kind: "client" } });
   if (total < MIN_CLIENTS_FOR_ANALYTICS) {
     return { ready: false, note: `Too early for retention analytics — ${total}/${MIN_CLIENTS_FOR_ANALYTICS} clients. LTV, price confrontation and churn need real numbers to mean anything.` };
   }
@@ -338,7 +376,7 @@ export async function retentionAnalytics(): Promise<{ ready: boolean; note: stri
   // Churn risk: active clients with a cadence who are well past their check-in.
   const now = Date.now();
   const stale = await prisma.client.findMany({
-    where: { status: "active", checkInEveryDays: { not: null } },
+    where: { status: "active", kind: "client", checkInEveryDays: { not: null } },
     select: { checkInEveryDays: true, lastCheckInAt: true, createdAt: true },
   });
   const churnRiskCount = stale.filter((c) => {

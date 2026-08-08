@@ -103,14 +103,28 @@ export const crmAdapter: ToolAdapter = {
     },
     {
       name: "add_client",
-      description: "Add a client directly, skipping the lead stage. Use when someone signs without ever being a lead.",
+      description:
+        "Add someone to the roster directly, skipping the lead stage. kind 'client' (default) = a signed client of Cole's business. kind 'training_only' = an athlete Cole records training for WITHOUT any business machinery (no referral asks, no check-in drafts, no invoices) — use for 'add Jake as a training-only athlete' / 'track Jake but he's not a client'.",
       dataSchema:
-        '{ name: string, email?: string, phone?: string, sport?: string, position?: string, gradYear?: number, timezone?: string, parentName?: string, parentEmail?: string, parentPhone?: string, isMinor?: boolean, notes?: string }',
+        '{ name: string, kind?: "client"|"training_only", email?: string, phone?: string, sport?: string, position?: string, gradYear?: number, timezone?: string, parentName?: string, parentEmail?: string, parentPhone?: string, isMinor?: boolean, notes?: string }',
+      example: '[TOOL: crm.add_client {"name": "Jake Miller", "kind": "training_only", "sport": "football"}]',
     },
     {
       name: "list_clients",
-      description: "The roster, with active engagements attached.",
-      dataSchema: '{ status?: "active"|"paused"|"ended", limit?: number }',
+      description: "The roster, with active engagements attached. kind filters business clients vs training-only athletes.",
+      dataSchema: '{ status?: "active"|"paused"|"ended", kind?: "client"|"training_only", limit?: number }',
+    },
+    {
+      name: "promote_client",
+      description:
+        "Promote a training-only athlete into a full business client — the ONLY door from the training roster into business machinery. Use when a tracked athlete actually signs. History (metrics, PRs) carries over.",
+      dataSchema: '{ client: string (name or id) }',
+    },
+    {
+      name: "athlete_performance",
+      description:
+        "One athlete's performance: every measured lift/test as a time series with trend, PRs, last-logged. Use for 'how are Jake's numbers trending', 'show me Jake's squat progress'. Works for clients AND training-only athletes.",
+      dataSchema: '{ client: string (name or id) }',
     },
     {
       name: "client_detail",
@@ -261,6 +275,29 @@ export const crmAdapter: ToolAdapter = {
         case "list_clients": {
           const clients = await listClients(data as any);
           return { ok: true, output: { count: clients.length, clients } };
+        }
+
+        case "promote_client": {
+          const id = await resolveClientId(data);
+          const { promoteClient } = await import("../../crm/service.ts");
+          const client = await promoteClient(id);
+          return {
+            ok: true,
+            output: {
+              clientId: client.id,
+              name: client.name,
+              kind: client.kind,
+              message: `${client.name} is now a full client — business machinery (check-ins, renewals, referrals) applies from today. Add an engagement to record what they bought.`,
+            },
+          };
+        }
+
+        case "athlete_performance": {
+          const id = await resolveClientId(data);
+          const { athletePerformance } = await import("../../crm/performance.ts");
+          const view = await athletePerformance(id);
+          if (!view) return { ok: false, output: null, error: "No athlete matching that." };
+          return { ok: true, output: view as any };
         }
 
         case "client_detail": {

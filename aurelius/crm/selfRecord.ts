@@ -227,7 +227,9 @@ async function matchClient(
   // on an auto-record path). Two athletes can share a name; money must not guess.
   if (opts.allowName && by.name?.trim()) or.push({ name: { equals: by.name.trim(), mode: "insensitive" } });
   if (or.length === 0) return null;
-  return prisma.client.findFirst({ where: { status: { not: "ended" }, OR: or }, select: { id: true, name: true } });
+  // kind: "client" — auto-recorded money never attaches to a training-only
+  // athlete; an unmatched payment surfaces for Cole's confirm instead.
+  return prisma.client.findFirst({ where: { status: { not: "ended" }, kind: "client", OR: or }, select: { id: true, name: true } });
 }
 
 async function surfaceUnmatchedPayment(input: { amountCents: number; email?: string | null; payerName?: string | null; method: string; externalRef?: string | null }) {

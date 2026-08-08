@@ -144,7 +144,18 @@ crmRouter.post("/leads/:id/convert", async (req: Request, res: Response) => {
 crmRouter.get("/clients", async (req: Request, res: Response) => {
   try {
     const status = typeof req.query.status === "string" ? req.query.status : undefined;
-    res.json({ clients: await listClients({ status }) });
+    const kind = typeof req.query.kind === "string" ? req.query.kind : undefined;
+    res.json({ clients: await listClients({ status, kind }) });
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+// STATIC BEFORE :param (see header) — /clients/roster must precede /clients/:id.
+crmRouter.get("/clients/roster", async (_req: Request, res: Response) => {
+  try {
+    const { athleteRoster } = await import("../crm/performance.ts");
+    res.json({ athletes: await athleteRoster() });
   } catch (err) {
     fail(res, err);
   }
@@ -171,6 +182,28 @@ crmRouter.get("/clients/:id", async (req: Request, res: Response) => {
 crmRouter.patch("/clients/:id", async (req: Request, res: Response) => {
   try {
     res.json(await updateClient(String(req.params.id), req.body ?? {}));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+// The one door from the training roster into the business machinery.
+crmRouter.post("/clients/:id/promote", async (req: Request, res: Response) => {
+  try {
+    const { promoteClient } = await import("../crm/service.ts");
+    const client = await promoteClient(String(req.params.id));
+    res.json({ clientId: client.id, name: client.name, kind: client.kind });
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+crmRouter.get("/clients/:id/performance", async (req: Request, res: Response) => {
+  try {
+    const { athletePerformance } = await import("../crm/performance.ts");
+    const view = await athletePerformance(String(req.params.id));
+    if (!view) return res.status(404).json({ error: "No such athlete." });
+    res.json(view);
   } catch (err) {
     fail(res, err);
   }

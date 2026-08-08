@@ -105,7 +105,13 @@ every 15 min calendar sync · every 10 min Paperless.
 ## Whose business this is (2026-08-05 — read before any business work)
 
 Cole is **employed** by the gym. Those athletes are his employer's — never
-propose an offer, price, campaign, or outreach aimed at them. The business
+propose an offer, price, campaign, or outreach aimed at them. Since 2026-08-08
+they MAY sit on the roster as `Client.kind="training_only"` (one PR ledger for
+everyone Cole coaches) — but business machinery excludes them **in the query**
+(`kind: "client"`): no referral asks, no proof content, no check-in/renewal/SMS
+drafts, no invoices/engagements, no analytics, no auto-attached money.
+`promoteClient` is the only door to full client, and it is Cole's explicit
+action. Any NEW business surface must filter `kind` the same way. The business
 Aurelius exists to build is his **own remote/online coaching business**:
 zero clients today, previously run on Google Sheets and text, sold in three
 billing shapes at once (monthly · 8–12wk block · one-off program). Its

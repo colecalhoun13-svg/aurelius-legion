@@ -139,7 +139,8 @@ export async function stageSms(input: {
     who = l.name;
   }
   if (!to && input.clientId) {
-    const c = await prisma.client.findUnique({ where: { id: input.clientId }, select: { name: true, phone: true } });
+    const c = await prisma.client.findUnique({ where: { id: input.clientId }, select: { name: true, phone: true, kind: true } });
+    if (c && c.kind !== "client") return { ok: false, error: `${c.name} is training-only — business SMS never aims at the training roster.` };
     if (!c?.phone) return { ok: false, error: "That client has no phone number on file." };
     to = c.phone;
     who = c.name;
