@@ -108,25 +108,74 @@ export async function athletePerformance(clientId: string): Promise<AthletePerfo
   };
 }
 
+/** A roster row's trend summary: how many of the athlete's measures are moving
+ *  the right way. Oriented like improvementPct — "improving" always means
+ *  "got better", whichever direction better is for that measure. Null when no
+ *  measure has two points yet: no trend is a fact, not a zero. */
+export type TrendSummary = {
+  improving: number;
+  declining: number;
+  flat: number;
+  avgPct: number; // mean improvementPct across trended measures, 0.1 precision
+};
+
 /** The roster in one read: every athlete (both kinds), their headline numbers,
- *  and when they last logged — what the Athletes page opens on. */
+ *  when they last logged, and whether their numbers are moving — what the
+ *  Athletes page opens on and what "who's trending well" sorts by. */
 export async function athleteRoster() {
-  const [clients, latest, prCounts, metricCounts] = await Promise.all([
+  const [clients, metrics] = await Promise.all([
     prisma.client.findMany({
       select: { id: true, name: true, kind: true, status: true, sport: true, position: true, gradYear: true },
       orderBy: { startedAt: "asc" },
     }),
-    prisma.metric.groupBy({ by: ["clientId"], _max: { achievedAt: true } }),
-    prisma.metric.groupBy({ by: ["clientId"], _count: { _all: true }, where: { isPR: true } }),
-    prisma.metric.groupBy({ by: ["clientId"], _count: { _all: true } }),
+    // One scan serves counts, last-logged AND trends. Same ordering contract
+    // as athletePerformance (tie-broken), same (label|unit) bucketing — the
+    // roster chip must never disagree with the detail panel it opens into.
+    prisma.metric.findMany({
+      orderBy: [{ achievedAt: "asc" }, { createdAt: "asc" }],
+      select: { clientId: true, label: true, value: true, unit: true, isPR: true, achievedAt: true },
+    }),
   ]);
-  const lastBy = new Map(latest.map((r) => [r.clientId, r._max.achievedAt]));
-  const prBy = new Map(prCounts.map((r) => [r.clientId, r._count._all]));
-  const nBy = new Map(metricCounts.map((r) => [r.clientId, r._count._all]));
-  return clients.map((c) => ({
-    ...c,
-    lastLoggedAt: lastBy.get(c.id) ?? null,
-    prCount: prBy.get(c.id) ?? 0,
-    metricCount: nBy.get(c.id) ?? 0,
-  }));
+
+  const byClient = new Map<string, typeof metrics>();
+  for (const m of metrics) {
+    const bucket = byClient.get(m.clientId);
+    if (bucket) bucket.push(m);
+    else byClient.set(m.clientId, [m]);
+  }
+
+  return clients.map((c) => {
+    const mine = byClient.get(c.id) ?? [];
+    const buckets = new Map<string, typeof mine>();
+    for (const m of mine) {
+      const key = `${m.label.trim().toLowerCase()}|${(m.unit ?? "").trim().toLowerCase()}`;
+      const b = buckets.get(key);
+      if (b) b.push(m);
+      else buckets.set(key, [m]);
+    }
+    const pcts: number[] = [];
+    for (const b of buckets.values()) {
+      if (b.length < 2) continue;
+      const first = b[0]!;
+      const latest = b[b.length - 1]!;
+      if (first.value === 0) continue;
+      const raw = ((latest.value - first.value) / Math.abs(first.value)) * 100;
+      pcts.push(Math.round((lowerIsBetter(latest.label) ? -raw : raw) * 10) / 10);
+    }
+    const trend: TrendSummary | null = pcts.length
+      ? {
+          improving: pcts.filter((p) => p > 0).length,
+          declining: pcts.filter((p) => p < 0).length,
+          flat: pcts.filter((p) => p === 0).length,
+          avgPct: Math.round((pcts.reduce((s, p) => s + p, 0) / pcts.length) * 10) / 10,
+        }
+      : null;
+    return {
+      ...c,
+      lastLoggedAt: mine.length ? mine[mine.length - 1]!.achievedAt : null,
+      prCount: mine.filter((m) => m.isPR).length,
+      metricCount: mine.length,
+      trend,
+    };
+  });
 }
