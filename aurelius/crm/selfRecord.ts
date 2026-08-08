@@ -245,6 +245,6 @@ async function surfaceUnmatchedPayment(input: { amountCents: number; email?: str
     body:
       `A payment landed that I couldn't attach to anyone in the roster` +
       `${input.payerName ? ` (from ${input.payerName})` : ""}${input.email ? ` (${input.email})` : ""}. ` +
-      `It's real money — add the client (or fix their email/phone) and I'll match the next one automatically.`,
+      `It's real money — if it's a client, add them (or fix their email/phone) and I'll match the next one automatically. If it's personal or a training-only athlete, record it by hand or let it stand unmatched; I never attach money to the training roster on my own.`,
   }).catch(() => {});
 }

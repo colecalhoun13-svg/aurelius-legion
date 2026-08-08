@@ -50,17 +50,23 @@ export async function athletePerformance(clientId: string): Promise<AthletePerfo
     }),
     prisma.metric.findMany({
       where: { clientId },
-      orderBy: { achievedAt: "asc" },
+      // Secondary key (council catch): bulk session logging can land identical
+      // achievedAt timestamps, and a tie leaves row order unspecified — latest
+      // value/casing/unit would flip between page loads.
+      orderBy: [{ achievedAt: "asc" }, { createdAt: "asc" }],
       select: { label: true, value: true, unit: true, isPR: true, achievedAt: true },
     }),
   ]);
   if (!client) return null;
 
   // Group case-insensitively — "Squat" and "squat" are the same lift — but
-  // display whatever casing was logged most recently.
+  // display whatever casing was logged most recently. Group by UNIT too
+  // (council catch): "squat 100 kg" then "squat 185 lbs" in one bucket would
+  // render 185 as the best and +85% as improvement — a false green arrow. Two
+  // units = two honest series; the page shows the unit beside each label.
   const byLabel = new Map<string, typeof metrics>();
   for (const m of metrics) {
-    const key = m.label.trim().toLowerCase();
+    const key = `${m.label.trim().toLowerCase()}|${(m.unit ?? "").trim().toLowerCase()}`;
     const bucket = byLabel.get(key);
     if (bucket) bucket.push(m);
     else byLabel.set(key, [m]);

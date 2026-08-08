@@ -468,6 +468,14 @@ export async function recordPayment(input: {
     include: { lead: { select: { source: true, angleId: true, refCode: true, trackLinkId: true } } },
   });
   if (!client) throw new Error(`No client with id ${input.clientId}.`);
+  // The gym boundary (council catch): the one money function that skipped the
+  // guard its siblings (raiseInvoice, addEngagement) carry. Without it, "Jake
+  // paid $300" about a gym athlete books into attribution, the treasury, the
+  // scoreboard and the analyst read. Self-record paths already filter kind
+  // before calling here; this closes chat/API/router.
+  if (client.kind !== "client") {
+    throw new Error(`${client.name} is training-only — no payments get recorded against them. Promote them first if they've actually signed.`);
+  }
   const amountCents = toCents(input.amount);
   if (amountCents === 0) throw new Error("A payment of zero isn't a payment.");
 
@@ -528,7 +536,7 @@ export async function recordPayment(input: {
 /** Unpaid invoices, oldest first. `overdue` is derived, never stored. */
 export async function outstandingInvoices(now = new Date()) {
   const rows = await prisma.invoice.findMany({
-    where: { status: { in: ["draft", "sent", "partial"] } },
+    where: { status: { in: ["draft", "sent", "partial"] }, client: { kind: "client" } },
     include: { client: { select: { id: true, name: true } }, payments: true },
     orderBy: [{ dueAt: "asc" }, { issuedAt: "asc" }],
   });
@@ -561,13 +569,17 @@ export async function whatNeedsAttention(days = 14, now = new Date()) {
   const horizon = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
 
   const [endingBlocks, billingDue, staleFollowUps, invoices] = await Promise.all([
+    // client.kind filters here are unreachable-by-construction today (guarded
+    // creation, no demote path) but the policy is exclusion IN THE QUERY —
+    // this feeds the briefing and the deck risk line, the worst places for a
+    // hand-edited row to leak a gym athlete into.
     prisma.engagement.findMany({
-      where: { status: "active", shape: "block", endsAt: { not: null, lte: horizon } },
+      where: { status: "active", shape: "block", endsAt: { not: null, lte: horizon }, client: { kind: "client" } },
       include: { client: { select: { id: true, name: true } } },
       orderBy: { endsAt: "asc" },
     }),
     prisma.engagement.findMany({
-      where: { status: "active", shape: "monthly", nextBillingAt: { not: null, lte: horizon } },
+      where: { status: "active", shape: "monthly", nextBillingAt: { not: null, lte: horizon }, client: { kind: "client" } },
       include: { client: { select: { id: true, name: true } } },
       orderBy: { nextBillingAt: "asc" },
     }),
@@ -624,9 +636,9 @@ export async function pipelineSnapshot(now = new Date()) {
       // training roster (the gym boundary).
       prisma.client.count({ where: { status: "active", kind: "client" } }),
       prisma.client.count({ where: { kind: "client" } }),
-      prisma.engagement.findMany({ where: { status: "active" }, select: { shape: true, priceCents: true } }),
-      prisma.payment.aggregate({ where: { receivedAt: { gte: monthStart } }, _sum: { amountCents: true } }),
-      prisma.payment.aggregate({ _sum: { amountCents: true } }),
+      prisma.engagement.findMany({ where: { status: "active", client: { kind: "client" } }, select: { shape: true, priceCents: true } }),
+      prisma.payment.aggregate({ where: { receivedAt: { gte: monthStart }, client: { kind: "client" } }, _sum: { amountCents: true } }),
+      prisma.payment.aggregate({ where: { client: { kind: "client" } }, _sum: { amountCents: true } }),
       outstandingInvoices(now),
     ]);
 

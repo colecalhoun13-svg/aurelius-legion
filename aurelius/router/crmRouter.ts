@@ -34,7 +34,7 @@ export const crmRouter = Router();
 /** Service errors are Cole-facing validation messages, not server faults. */
 function fail(res: Response, err: any) {
   const message = err?.message ?? String(err);
-  const isValidation = /must be one of|needs a|No client|No lead|No invoice|No engagement|not a valid|already been converted|Be more specific|isn't a payment|cannot be negative/i.test(
+  const isValidation = /must be one of|needs a|No client|No lead|No invoice|No engagement|not a valid|already been converted|already a full client|is training-only|Be more specific|isn't a payment|cannot be negative/i.test(
     message
   );
   res.status(isValidation ? 400 : 500).json({ error: message });
