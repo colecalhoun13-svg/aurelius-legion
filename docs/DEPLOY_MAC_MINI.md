@@ -409,6 +409,15 @@ In rough priority. None are needed to go live.
    the Mac itself — but only classes you grant.
 5. **Restic** — upgrade Part 7's plain gzip dumps to encrypted, deduplicated
    snapshots on the NAS.
+6. **Sentry** (Cole approved 2026-08-08) — error tracking with stack traces on
+   BOTH services (`SENTRY_DSN` each side; free tier). The doctor + Healthchecks
+   dead-man switch already answer "is it up?" — Sentry answers "why did it
+   break?" without ssh'ing into the Mini to read logs.
+7. **MinIO** (Cole approved 2026-08-08, conditional) — S3-compatible object
+   store as a media-host backend (`media/host.ts` is provider-swappable by
+   design). The default remains local disk + NAS backup, which an earlier pass
+   judged sufficient — adopt MinIO only if local-disk serving proves
+   insufficient in practice (durability, multi-box, or NAS-native serving).
 
 ### Media & connectors roadmap (tracked, not yet built)
 - **Multimodal chat — DONE (v1).** Attach a photo/short video in the web chat or
@@ -439,8 +448,9 @@ In rough priority. None are needed to go live.
     the Graph error for an unreachable image is opaque enough to cost an hour.
 
 Rejected (so we stop relitigating): n8n/Huginn (Aurelius *is* the workflow/trigger
-engine), MinIO (Postgres + NAS filesystem suffice), Logseq (the vault is
-Obsidian-format). Parked: Immich (revisit with the athlete-video pipeline).
+engine), Logseq (the vault is Obsidian-format). MinIO moved from rejected to
+conditional (item 7 above) on Cole's 2026-08-08 call. Parked: Immich (revisit
+with the athlete-video pipeline).
 
 ---
 
