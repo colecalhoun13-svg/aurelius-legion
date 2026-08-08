@@ -1078,6 +1078,44 @@ model Payment {
   @@index([receivedAt])
 }
 
+// BUSINESS EXPENSES — the honest negative. A side business at zero revenue is
+// negative, not zero: tools, subscriptions, equipment. Integer cents, category
+// shaped loosely toward Schedule C so the quarterly summary means something.
+// Capture-only: Cole (or the brain-dump splitter) records; nothing is deducted
+// automatically and anything involving the IRS stays Cole's hand.
+model Expense {
+  id         String   @id @default(cuid())
+  amountCents Int
+  currency   String   @default("usd")
+  category   String   @default("other") // "software" | "equipment" | "education" | "marketing" | "fees" | "other"
+  note       String?
+  incurredAt DateTime @default(now())
+  source     String   @default("cole") // "cole" | "capture" | "receipt"
+  createdAt  DateTime @default(now())
+
+  @@index([incurredAt])
+}
+
+// THE LEDGER OF PROMISES — specific commitments, both directions. Extracted
+// from what Cole actually sent/said (never from Aurelius's unsent drafts).
+// "I'll send the program Friday" → owed_by_cole with a due date; "he said he'd
+// decide Tuesday" → waiting_on, surfaced when it lapses. The follow-through
+// number finally gets the promises behind it.
+model Promise {
+  id          String    @id @default(cuid())
+  direction   String // "owed_by_cole" | "waiting_on"
+  counterpart String // who the promise involves
+  text        String // the commitment, verbatim-ish
+  dueAt       DateTime?
+  status      String    @default("open") // "open" | "kept" | "lapsed" | "dropped"
+  sourceType  String    @default("chat") // "gmail_sent" | "chat" | "cole"
+  sourceId    String?
+  createdAt   DateTime  @default(now())
+  resolvedAt  DateTime?
+
+  @@index([status, dueAt])
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // THE MARKETING ENGINE — evidence, not guesses.
 //
