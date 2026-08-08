@@ -8,6 +8,21 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SparkLine } from "../viz/Spark";
+import { Btn, Divider, SectionLabel } from "../kit";
+
+/* ── the shelfrow voices (rendering: Cormorant caps field · italic latest ·
+      Barlow count) — shared across the shelf headers and the teaser row ── */
+const shelfField: React.CSSProperties = {
+  fontFamily: "var(--font-body),Georgia,serif", fontWeight: 600, fontSize: 13,
+  letterSpacing: ".2em", textTransform: "uppercase", color: "var(--ink2)",
+};
+const shelfLatest: React.CSSProperties = {
+  fontFamily: "var(--font-body),Georgia,serif", fontStyle: "italic", fontSize: 14.5, color: "var(--ink3)",
+};
+const shelfCount: React.CSSProperties = {
+  fontFamily: "var(--font-data),Arial,sans-serif", fontWeight: 500, fontSize: 12,
+  color: "var(--ink3)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
+};
 
 type Shelf = { domain: string; label: string; read: number; total: number; discovered: number; cycles: number };
 type Recent = { id: string; title: string; domain: string; createdAt: string };
@@ -73,16 +88,19 @@ function ResearchDrop({ onIngested }: { onIngested: () => void }) {
       onDragOver={(e) => { e.preventDefault(); setOver(true); }}
       onDragLeave={() => setOver(false)}
       onDrop={(e) => { e.preventDefault(); setOver(false); if (e.dataTransfer.files.length) upload(e.dataTransfer.files); }}
-      className={`aurelius-panel-frame border rounded-lg p-5 text-center transition-colors ${
+      className={`au-card border rounded-[2px] p-5 text-center transition-colors ${
         over ? "border-aurelius-gold bg-aurelius-gold/10" : "border-aurelius-gold/25"
       }`}
     >
-      <p className="text-sm text-aurelius-gold aurelius-heading tracking-widest">Research Drop</p>
+      <p className="text-sm" style={{
+        fontFamily: "var(--font-body),Georgia,serif", fontWeight: 600,
+        letterSpacing: ".28em", textTransform: "uppercase", color: "var(--gold)",
+      }}>Research Drop</p>
       <p className="mt-1 text-xs text-neutral-500">
         Drop PDFs, notes, or books here (.pdf / .md / .txt, ≤20MB — split books by chapter) and they enter the second
         brain: recall, memory, the Bridge. Scanned PDFs wait for the Mini&apos;s OCR.
       </p>
-      <label className="mt-3 inline-block cursor-pointer text-xs border border-aurelius-gold/40 rounded-lg px-3 py-1.5 hover:bg-aurelius-gold/15 text-aurelius-gold">
+      <label className="mt-3 inline-block cursor-pointer text-xs border border-aurelius-gold/40 rounded-[2px] px-3 py-1.5 hover:bg-aurelius-gold/15 text-aurelius-gold">
         or choose files
         <input
           type="file"
@@ -174,25 +192,31 @@ function Shelf({
   onOpen: (id: string) => void;
 }) {
   const shown = books.slice(0, 40);
+  // The latest volume on this shelf — the shelfrow's italic middle voice.
+  const latest = books.reduce<Doc | null>(
+    (m, b) => (b.createdAt && (!m || (b.createdAt > (m.createdAt ?? ""))) ? b : m),
+    null
+  );
   return (
     <div>
-      <div className="flex items-baseline justify-between gap-3 mb-1 px-1">
-        <span className="aurelius-heading text-sm text-aurelius-gold/80">{label}</span>
-        <span className="flex items-center gap-3 shrink-0 text-[11px] text-neutral-500">
-          {typeof read === "number" && typeof total === "number" && (
-            <span>
-              {read}/{total} studied{(cycles ?? 0) > 0 && <span> · {cycles}× deepened</span>}
-            </span>
-          )}
-          {books.length > 40 && <span>+{books.length - 40} more</span>}
+      {/* the shelfrow: Cormorant caps field · italic latest · Barlow count */}
+      <div className="flex items-baseline gap-4 mb-1 px-1 flex-wrap">
+        <span style={shelfField}>{label}</span>
+        <span className="flex-1 truncate min-w-[120px]" style={shelfLatest}>
+          {latest ? `latest: ${latest.title.replace(/^Curriculum · /, "")}` : "awaiting its first volume"}
+        </span>
+        <span className="flex items-baseline gap-3 shrink-0">
+          <span style={shelfCount}>
+            {books.length} {books.length === 1 ? "doc" : "docs"}
+            {typeof read === "number" && typeof total === "number" && (
+              <> · {read}/{total} studied{(cycles ?? 0) > 0 && <> · {cycles}× deepened</>}</>
+            )}
+            {books.length > 40 && <> · +{books.length - 40} more</>}
+          </span>
           {studyable && onStudy && (
-            <button
-              onClick={onStudy}
-              disabled={busy}
-              className="text-xs border border-aurelius-gold/40 rounded-lg px-3 py-1 hover:bg-aurelius-gold/15 text-aurelius-gold disabled:opacity-50"
-            >
+            <Btn ghost onClick={onStudy} disabled={busy} style={{ padding: ".2rem .6rem", fontSize: 11 }}>
               {busy ? "Studying…" : "Study now"}
-            </button>
+            </Btn>
           )}
         </span>
       </div>
@@ -276,7 +300,7 @@ function ReaderView({ id, onClose, onForgotten }: { id: string; onClose: () => v
       {doc && (
         <article>
           <header className="aurelius-rule pb-4">
-            <h1 className="aurelius-heading text-3xl">{doc.title.replace(/^Curriculum · /, "")}</h1>
+            <h1 className="au-title" style={{ fontSize: "1.9rem", lineHeight: 1.2 }}>{doc.title.replace(/^Curriculum · /, "")}</h1>
             <p className="text-xs text-neutral-500 mt-2">
               {doc.domain.replace(/_/g, " ")} · {doc.sourceType}
               {doc.createdAt && (
@@ -466,10 +490,10 @@ export default function ShelvesPanel() {
   );
 
   return (
-    <div className="text-aurelius-text max-w-3xl mx-auto space-y-8 aurelius-stagger">
-      <header className="flex items-baseline justify-between aurelius-rule">
-        <h1 className="aurelius-heading text-4xl">The Shelves</h1>
-        <span className="flex items-center gap-3 text-sm text-neutral-500">
+    <div className="max-w-3xl mx-auto space-y-8 relative" style={{ color: "var(--ink)" }}>
+      <header className="flex items-baseline justify-between gap-3 flex-wrap">
+        <SectionLabel row>The Library</SectionLabel>
+        <span className="flex items-center gap-3 text-sm flex-wrap" style={{ color: "var(--ink3)" }}>
           {/* Visible at 390px too — the phone-first app was hiding its only
               library-growth graphic on the phone (final council). */}
           {growth.length > 1 && (growth[growth.length - 1] ?? 0) > (growth[0] ?? 0) && (
@@ -477,33 +501,47 @@ export default function ShelvesPanel() {
               <SparkLine values={growth} width={110} height={30} />
             </span>
           )}
-          <span>{lib === null ? "…" : `${totalBooks} volumes · ${totalRead} studied`}</span>
-          <span className="flex border border-aurelius-gold/30 rounded-lg overflow-hidden text-xs">
+          <span style={shelfCount}>{lib === null ? "…" : `${totalBooks} volumes · ${totalRead} studied`}</span>
+          <span className="flex overflow-hidden text-xs" style={{ border: "1px solid var(--gold-line)", borderRadius: 2 }}>
             <button
               onClick={() => setView("shelves")}
-              className={`px-3 py-1 ${view === "shelves" ? "bg-aurelius-gold/15 text-aurelius-gold" : "text-neutral-500 hover:text-aurelius-gold"}`}
+              className="px-3 py-1"
+              style={{
+                fontFamily: "var(--font-body),Georgia,serif", fontWeight: 600,
+                letterSpacing: ".14em", textTransform: "uppercase", cursor: "pointer", border: 0,
+                color: view === "shelves" ? "var(--gold)" : "var(--ink3)",
+                background: view === "shelves" ? "rgba(212,175,55,.12)" : "none",
+              }}
             >
               Shelves
             </button>
             <button
               onClick={() => setView("catalog")}
-              className={`px-3 py-1 ${view === "catalog" ? "bg-aurelius-gold/15 text-aurelius-gold" : "text-neutral-500 hover:text-aurelius-gold"}`}
+              className="px-3 py-1"
+              style={{
+                fontFamily: "var(--font-body),Georgia,serif", fontWeight: 600,
+                letterSpacing: ".14em", textTransform: "uppercase", cursor: "pointer", border: 0,
+                color: view === "catalog" ? "var(--gold)" : "var(--ink3)",
+                background: view === "catalog" ? "rgba(212,175,55,.12)" : "none",
+              }}
             >
               Catalog
             </button>
           </span>
         </span>
       </header>
-      <p className="text-sm text-neutral-500">
+      <p className="au-kicker" style={{ display: "block", fontSize: 14 }}>
         Every volume on these shelves is real — gold-leafed spines are the canon Aurelius has studied; darker
         bindings are what you&apos;ve fed it. Click any spine to open it and read. It reads the next unit every
         Sunday and grows its own list.
       </p>
 
-      {err && <p className="text-red-400 text-sm">Couldn&apos;t load: {err}</p>}
+      {err && <p className="text-sm" style={{ color: "var(--danger)" }}>Couldn&apos;t load: {err}</p>}
 
       {/* Research Drop — feed the brain from the browser */}
       <ResearchDrop onIngested={load} />
+
+      <Divider />
 
       {view === "shelves" ? (
         /* The bookcase */
@@ -525,6 +563,18 @@ export default function ShelvesPanel() {
           {extraShelves.map(([domain, books]) => (
             <Shelf key={domain} label={domain.replace(/_/g, " ")} books={books} busy={false} studyable={false} onOpen={openDoc} />
           ))}
+
+          {/* HOW I THINK — an honest teaser, no fake data, no dead route:
+              the confirmed-heuristics shelf ships in the next phase. */}
+          <div
+            className="flex items-baseline gap-4 px-1 flex-wrap"
+            style={{ borderTop: "1px solid var(--gold-line)", paddingTop: "1rem", borderBottom: "1px solid var(--line1)", paddingBottom: ".7rem" }}
+          >
+            <span style={{ ...shelfField, color: "var(--gold)" }}>How I think</span>
+            <span className="flex-1" style={shelfLatest}>
+              confirmed rules ground every answer — the rules shelf lands in the next phase
+            </span>
+          </div>
         </section>
       ) : (
         /* The catalog — findability beside the charm */
@@ -533,7 +583,7 @@ export default function ShelvesPanel() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Find a volume by title or field…"
-            className="w-full bg-black/40 border border-aurelius-gold/25 rounded-lg px-3 py-2 text-sm outline-none focus:border-aurelius-gold/60"
+            className="w-full bg-black/40 border border-aurelius-gold/25 rounded-[2px] px-3 py-2 text-sm outline-none focus:border-aurelius-gold/60"
           />
           <div className="flex items-center gap-4 px-1">
             {sortBtn("createdAt", "Added")}
@@ -541,7 +591,7 @@ export default function ShelvesPanel() {
             {sortBtn("domain", "Field")}
             <span className="ml-auto text-[11px] text-neutral-600">{catalog.length} shown</span>
           </div>
-          <ul className="divide-y divide-aurelius-gold/10 border border-aurelius-gold/20 rounded-lg overflow-hidden">
+          <ul className="divide-y divide-aurelius-gold/10 border border-aurelius-gold/20 rounded-[2px] overflow-hidden">
             {catalog.map((d) => (
               <li key={d.id}>
                 <button

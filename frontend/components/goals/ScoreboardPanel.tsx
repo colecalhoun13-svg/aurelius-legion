@@ -6,9 +6,14 @@
 // Aurelius's own week (work handled alone, and how much thinking is
 // compiled vs rented). Charts start sparse and fill in as weeks accrue —
 // short lines are honest lines.
+//
+// ELEVATED IMPERIAL re-dress: same fetch, same metrics — every one of them
+// (follow-through, earned, llmDependence, patterns, corrections, autonomy,
+// habits, goal pace) survives; only the dress changed to kit surfaces.
 
 import { useEffect, useState } from "react";
 import { SparkLine, SparkBars, DotRow } from "../viz/Spark";
+import { Divider, Panel, Stat, Tick } from "../kit";
 
 type Week = {
   weekStart: string;
@@ -25,7 +30,6 @@ type Week = {
   leadsThisWeek: number;
 };
 
-const money = (cents: number) => `$${(cents / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 type Habit = { id: string; name: string; streak: number; doneToday: boolean };
 type Goal = { id: string; name: string; horizon: string; progressPct: number; measure: any; targetDate?: string | null; createdAt?: string };
 type Feed = {
@@ -52,6 +56,12 @@ function lastDays(n: number): { key: string; label: string }[] {
   });
 }
 
+const kickerSm: React.CSSProperties = { fontSize: 12.5 };
+const rowLabel: React.CSSProperties = {
+  fontFamily: "var(--font-body),Georgia,serif", fontWeight: 600, fontSize: 12,
+  letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink3)",
+};
+
 export default function ScoreboardPanel() {
   const [feed, setFeed] = useState<Feed | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -63,8 +73,8 @@ export default function ScoreboardPanel() {
       .catch(() => setErr("Aurelius couldn't load the scoreboard — try again in a moment."));
   }, []);
 
-  if (err) return <p className="text-sm text-amber-300/90">{err}</p>;
-  if (!feed) return <p className="text-sm text-neutral-500">…</p>;
+  if (err) return <p className="au-kicker max-w-3xl mx-auto relative" style={{ display: "block", color: "var(--attn)" }}>{err}</p>;
+  if (!feed) return <p className="au-kicker max-w-3xl mx-auto relative" style={{ display: "block" }}>…</p>;
 
   const days = lastDays(14);
   const doneByDay = new Map(days.map((d) => [d.key, 0]));
@@ -87,28 +97,19 @@ export default function ScoreboardPanel() {
   const llm = feed.weeks.map((w) => w.llmDependenceRate);
 
   return (
-    <div className="text-aurelius-text max-w-3xl mx-auto space-y-8 aurelius-stagger">
-      <header className="aurelius-rule flex items-baseline justify-between">
-        <h1 className="aurelius-heading text-4xl">Scoreboard</h1>
-        <span className="text-sm text-neutral-500">did the number go up</span>
-      </header>
+    <div className="max-w-3xl mx-auto space-y-8 relative" style={{ color: "var(--ink)" }}>
+      <p className="au-kicker text-center" style={{ display: "block" }}>did the number go up</p>
 
-      {/* Hero tiles — this stretch, in three numbers */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="aurelius-panel-frame p-5 text-center">
-          <div className="text-3xl text-aurelius-gold font-semibold">{doneTotal14}</div>
-          <div className="text-[11px] uppercase tracking-widest text-neutral-500 mt-1.5">done · 14 days</div>
-        </div>
-        <div className="aurelius-panel-frame p-5 text-center">
-          <div className="text-3xl text-aurelius-gold font-semibold">
-            {latest?.followThrough != null ? `${latest.followThrough}%` : "—"}
-          </div>
-          <div className="text-[11px] uppercase tracking-widest text-neutral-500 mt-1.5">follow-through</div>
-        </div>
-        <div className="aurelius-panel-frame p-5 text-center">
-          <div className="text-3xl text-aurelius-gold font-semibold">{feed.autonomy.acted7}</div>
-          <div className="text-[11px] uppercase tracking-widest text-neutral-500 mt-1.5">handled alone · 7d</div>
-        </div>
+      {/* Hero — this stretch, in three numbers */}
+      <div className="au-lit grid grid-cols-3 gap-6">
+        <Stat value={doneTotal14} pct={100} label="done · 14 days" />
+        <Stat
+          value={latest?.followThrough != null ? latest.followThrough : "—"}
+          unit={latest?.followThrough != null ? "%" : undefined}
+          pct={latest?.followThrough ?? 0}
+          label="follow-through"
+        />
+        <Stat value={feed.autonomy.acted7} pct={100} label="handled alone · 7d" />
       </div>
 
       {/* Money — earned is real (arrived); leads is motion. Shown only once
@@ -116,133 +117,135 @@ export default function ScoreboardPanel() {
           not a paid one. Rendered when any money has ever arrived OR a lead
           moved this week. */}
       {(latest && (latest.earnedAllTimeCents > 0 || latest.leadsThisWeek > 0)) && (
-        <section className="aurelius-panel-frame p-5">
-          <div className="flex items-baseline justify-between mb-3">
-            <h2 className="aurelius-heading text-lg">Money</h2>
-            <span className="text-[11px] text-neutral-500">earned is what arrived · leads is motion, not money</span>
-          </div>
-          <div className="grid grid-cols-3 gap-4 text-center">
-            <div>
-              <div className="text-2xl text-emerald-300/90 font-semibold">{money(latest.earnedThisWeekCents)}</div>
-              <div className="text-[11px] uppercase tracking-widest text-neutral-500 mt-1">earned · this week</div>
+        <>
+          <Divider />
+          <Panel label="Money"
+            headerRight={<span className="au-kicker" style={kickerSm}>earned is what arrived · leads is motion, not money</span>}>
+            <div className="au-lit grid grid-cols-3 gap-6">
+              <Stat tone="money" countUpCents={latest.earnedThisWeekCents} pct={100} label="earned · this week" />
+              <Stat tone="money" countUpCents={latest.earnedAllTimeCents} pct={100} label="earned · all-time" />
+              <Stat value={latest.leadsThisWeek} pct={100} label="leads · this week" />
             </div>
-            <div>
-              <div className="text-2xl text-emerald-300/90 font-semibold">{money(latest.earnedAllTimeCents)}</div>
-              <div className="text-[11px] uppercase tracking-widest text-neutral-500 mt-1">earned · all-time</div>
-            </div>
-            <div>
-              <div className="text-2xl text-aurelius-gold font-semibold">{latest.leadsThisWeek}</div>
-              <div className="text-[11px] uppercase tracking-widest text-neutral-500 mt-1">leads · this week</div>
-            </div>
-          </div>
-        </section>
+          </Panel>
+        </>
       )}
 
+      <Divider />
+
       {/* Follow-through across weeks */}
-      <section className="aurelius-panel-frame p-5">
-        <div className="flex items-baseline justify-between mb-2">
-          <h2 className="aurelius-heading text-lg">Follow-through</h2>
-          <span className="text-[11px] text-neutral-500">of what you said you'd do, what % got done — weekly</span>
-        </div>
+      <Panel label="Follow-through"
+        headerRight={<span className="au-kicker" style={kickerSm}>of what you said you&apos;d do, what % got done — weekly</span>}>
         <SparkLine values={ft} width={520} height={56} min={0} max={100} suffix="%" />
-      </section>
+      </Panel>
 
       {/* The last fourteen days */}
-      <section className="aurelius-panel-frame p-5">
-        <div className="flex items-baseline justify-between mb-2">
-          <h2 className="aurelius-heading text-lg">The last fourteen days</h2>
-          <span className="text-[11px] text-neutral-500">tasks done per day</span>
-        </div>
+      <Panel label="The last fourteen days"
+        headerRight={<span className="au-kicker" style={kickerSm}>tasks done per day</span>}>
         <SparkBars values={doneBars} labels={days.map((d) => d.label)} width={520} height={72} />
-      </section>
+      </Panel>
 
       {/* Habit consistency */}
       {feed.habits.length > 0 && (
-        <section className="aurelius-panel-frame p-5 space-y-3">
-          <div className="flex items-baseline justify-between">
-            <h2 className="aurelius-heading text-lg">Habits</h2>
-            <span className="text-[11px] text-neutral-500">14-day grid · streaks</span>
-          </div>
-          {feed.habits.map((h) => (
-            <div key={h.id} className="flex items-center justify-between gap-3">
-              <span className="text-sm text-neutral-200 flex-1 truncate">{h.name}</span>
-              <DotRow days={days.map((d) => habitDays.get(h.id)?.has(d.key) ?? false)} />
-              <span className="text-xs text-aurelius-gold/80 w-12 text-right">
-                {h.streak > 0 ? `${h.streak}✦` : "—"}
-              </span>
+        <>
+          <Divider />
+          <Panel label="The habits"
+            headerRight={<span className="au-kicker" style={kickerSm}>14-day grid · streaks</span>}>
+            <div className="space-y-3">
+              {feed.habits.map((h) => (
+                <div key={h.id} className="flex items-center justify-between gap-3">
+                  <Tick em />
+                  <span className="text-sm flex-1 truncate" style={{ color: "var(--ink)" }}>{h.name}</span>
+                  <DotRow days={days.map((d) => habitDays.get(h.id)?.has(d.key) ?? false)} />
+                  <span className="w-12 text-right au-kicker" style={{ color: h.streak > 0 ? "var(--gold)" : "var(--ink3)", fontSize: 14 }}>
+                    {h.streak > 0 ? `${h.streak}d` : "—"}
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
-        </section>
+          </Panel>
+        </>
       )}
 
       {/* Goal pace — progress vs the clock */}
       {feed.goals.length > 0 && (
-        <section className="aurelius-panel-frame p-5 space-y-4">
-          <div className="flex items-baseline justify-between">
-            <h2 className="aurelius-heading text-lg">Goal pace</h2>
-            <span className="text-[11px] text-neutral-500">progress vs time elapsed</span>
-          </div>
-          {feed.goals.map((g) => {
-            const pct = g.progressPct ?? 0;
-            let paceNote: { text: string; cls: string } | null = null;
-            if (g.targetDate && g.createdAt) {
-              const total = new Date(g.targetDate).getTime() - new Date(g.createdAt).getTime();
-              const gone = Date.now() - new Date(g.createdAt).getTime();
-              if (total > 0) {
-                const timePct = Math.min(100, Math.round((gone / total) * 100));
-                paceNote =
-                  pct >= timePct
-                    ? { text: `on pace (${pct}% done, ${timePct}% of time)`, cls: "text-emerald-400" }
-                    : { text: `behind (${pct}% done, ${timePct}% of time)`, cls: "text-amber-300" };
+        <Panel label="Goal pace"
+          headerRight={<span className="au-kicker" style={kickerSm}>progress vs time elapsed</span>}>
+          <div className="space-y-4">
+            {feed.goals.map((g) => {
+              const pct = g.progressPct ?? 0;
+              let paceNote: { text: string; color: string } | null = null;
+              if (g.targetDate && g.createdAt) {
+                const total = new Date(g.targetDate).getTime() - new Date(g.createdAt).getTime();
+                const gone = Date.now() - new Date(g.createdAt).getTime();
+                if (total > 0) {
+                  const timePct = Math.min(100, Math.round((gone / total) * 100));
+                  paceNote =
+                    pct >= timePct
+                      ? { text: `on pace (${pct}% done, ${timePct}% of time)`, color: "var(--money)" }
+                      : { text: `behind (${pct}% done, ${timePct}% of time)`, color: "var(--attn)" };
+                }
               }
-            }
-            return (
-              <div key={g.id}>
-                <div className="flex items-baseline justify-between mb-1">
-                  <span className="text-sm">{g.name}</span>
-                  <span className="text-xs text-neutral-500">
-                    {(g.measure?.current ?? 0)}/{(g.measure?.target ?? 1)} · <span className="text-aurelius-gold">{pct}%</span>
-                  </span>
+              return (
+                <div key={g.id}>
+                  <div className="flex items-baseline justify-between mb-1 gap-3">
+                    <span className="text-sm" style={{ color: "var(--ink)" }}>{g.name}</span>
+                    <span style={{
+                      fontFamily: "var(--font-data),Arial,sans-serif", fontSize: 12,
+                      color: "var(--ink3)", fontVariantNumeric: "tabular-nums",
+                    }}>
+                      {(g.measure?.current ?? 0)}/{(g.measure?.target ?? 1)} ·{" "}
+                      <span style={{ color: "var(--gold)" }}>{pct}%</span>
+                    </span>
+                  </div>
+                  <div style={{ height: 5, background: "var(--line1)", borderRadius: 1, overflow: "hidden" }}>
+                    <div style={{
+                      height: "100%", width: `${pct}%`,
+                      background: "linear-gradient(90deg,var(--gold-dim),var(--gold-bright))",
+                      transition: "width .5s var(--au-ease)",
+                    }} />
+                  </div>
+                  {paceNote && (
+                    <p className="au-kicker" style={{ display: "block", marginTop: 4, fontSize: 12.5, color: paceNote.color }}>
+                      {paceNote.text}
+                    </p>
+                  )}
                 </div>
-                <div className="h-2 bg-black/60 rounded-full overflow-hidden border border-aurelius-gold/15">
-                  <div className="h-full rounded-full aurelius-bar-fill transition-all duration-500" style={{ width: `${pct}%` }} />
-                </div>
-                {paceNote && <p className={`text-[11px] mt-1 ${paceNote.cls}`}>{paceNote.text}</p>}
-              </div>
-            );
-          })}
-        </section>
+              );
+            })}
+          </div>
+        </Panel>
       )}
 
+      <Divider />
+
       {/* Aurelius's lane */}
-      <section className="aurelius-panel-frame p-5 space-y-3">
-        <div className="flex items-baseline justify-between">
-          <h2 className="aurelius-heading text-lg">Aurelius's week</h2>
-          <span className="text-[11px] text-neutral-500">the trust loop, counted</span>
+      <Panel label="Aurelius's week"
+        headerRight={<span className="au-kicker" style={kickerSm}>the trust loop, counted</span>}>
+        <div className="space-y-3">
+          <p className="text-sm" style={{ color: "var(--ink2)" }}>
+            <span style={{ color: "var(--gold)", fontWeight: 600 }}>{feed.autonomy.acted7}</span> handled alone ·{" "}
+            <span style={{ color: feed.autonomy.undone7 > 0 ? "var(--attn)" : "var(--ink3)" }}>
+              {feed.autonomy.undone7} undone
+            </span>{" "}
+            · <span style={{ color: "var(--ink3)" }}>{feed.autonomy.pendingNow} awaiting you</span>
+          </p>
+          <div className="flex items-center gap-3">
+            <span className="w-44 shrink-0" style={rowLabel}>LLM dependence <span className="au-kicker" style={{ textTransform: "none", letterSpacing: 0 }}>(lower = smarter)</span></span>
+            <SparkLine values={llm} width={300} height={40} min={0} max={100} suffix="%" />
+          </div>
+          {/* The learning metrics — computed every Sunday, finally drawn
+              (final council): patterns rising + corrections falling is the
+              compounding-intelligence thesis, falsifiable at a glance. */}
+          <div className="flex items-center gap-3">
+            <span className="w-44 shrink-0" style={rowLabel}>Compiled patterns <span className="au-kicker" style={{ textTransform: "none", letterSpacing: 0 }}>(rising = learning)</span></span>
+            <SparkLine values={feed.weeks.map((w) => w.patternsActive)} width={300} height={40} min={0} />
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="w-44 shrink-0" style={rowLabel}>Corrections <span className="au-kicker" style={{ textTransform: "none", letterSpacing: 0 }}>(falling = it&apos;s sticking)</span></span>
+            <SparkLine values={feed.weeks.map((w) => w.corrections)} width={300} height={40} min={0} />
+          </div>
         </div>
-        <p className="text-sm text-neutral-300">
-          <span className="text-aurelius-gold font-semibold">{feed.autonomy.acted7}</span> handled alone ·{" "}
-          <span className={feed.autonomy.undone7 > 0 ? "text-amber-300" : "text-neutral-400"}>
-            {feed.autonomy.undone7} undone
-          </span>{" "}
-          · <span className="text-neutral-400">{feed.autonomy.pendingNow} awaiting you</span>
-        </p>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-neutral-500 w-44">LLM dependence (lower = smarter)</span>
-          <SparkLine values={llm} width={300} height={40} min={0} max={100} suffix="%" />
-        </div>
-        {/* The learning metrics — computed every Sunday, finally drawn
-            (final council): patterns rising + corrections falling is the
-            compounding-intelligence thesis, falsifiable at a glance. */}
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-neutral-500 w-44">Compiled patterns (rising = learning)</span>
-          <SparkLine values={feed.weeks.map((w) => w.patternsActive)} width={300} height={40} min={0} />
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-neutral-500 w-44">Corrections (falling = it's sticking)</span>
-          <SparkLine values={feed.weeks.map((w) => w.corrections)} width={300} height={40} min={0} />
-        </div>
-      </section>
+      </Panel>
     </div>
   );
 }
