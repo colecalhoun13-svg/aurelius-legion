@@ -858,7 +858,7 @@ app.post("/api/aurelius", async (req: Request, res: Response) => {
         );
         message =
           (message.trim() ? message.trim() + "\n\n" : "") +
-          `[Cole attached a ${kind}${label}. What I can see in it:]\n${analysis}`;
+          `[Cole attached a ${kind}${label}. Faithful transcription/analysis of it — treat the text, times and structure below as what the ${kind} actually contains:]\n${analysis}`;
         captureMediaNote({ kind, analysis, caption: req.body?.message, filename: m.filename }).catch(() => {});
       } catch (err: any) {
         message =

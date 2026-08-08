@@ -39,12 +39,13 @@ export function visionConfigured(): boolean {
 }
 
 const IMAGE_PROMPT = (caption?: string) =>
-  `You are Aurelius's eyes. Describe this image so it becomes a useful, searchable note in Cole's second brain.\n` +
+  `You are Aurelius's eyes. Convert this image into text so faithful that the original image is no longer needed.\n` +
   `- Transcribe ALL visible text verbatim (whiteboards, documents, screenshots, handwriting).\n` +
-  `- Summarize what the image shows in 1-2 lines.\n` +
+  `- If it shows a schedule, calendar, table, spreadsheet, or grid: PRESERVE THE STRUCTURE. Reproduce it as a markdown table or a day-by-day / row-by-row list, keeping every time, name, and label attached to its correct day, row, and column. Never collapse a grid into a prose summary — a flattened schedule is useless.\n` +
+  `- Then summarize what the image shows in 1-2 lines.\n` +
   `- Note anything actionable (a task, date, name, number).\n` +
   (caption ? `Cole's caption: "${caption}". Weigh it.\n` : "") +
-  `Be concise. Plain text, no preamble.`;
+  `For text content, completeness beats brevity; keep only the scene description brief. Plain text or markdown, no preamble.`;
 
 const VIDEO_PROMPT = (caption?: string) =>
   `You are Aurelius's eyes and ears. Turn this video into a useful, searchable note.\n` +
@@ -67,7 +68,12 @@ async function callGemini(inlineData: InlineData, prompt: string): Promise<strin
     const res = await fetch(`${GEMINI_BASE}/${model}:generateContent?key=${key}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, { inlineData }] }] }),
+      // Explicit output ceiling — a full weekly-schedule transcription needs
+      // room; some model defaults are small enough to truncate mid-table.
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }, { inlineData }] }],
+        generationConfig: { maxOutputTokens: 8192 },
+      }),
     });
 
     // A 404 means this model is gone/renamed — try the next candidate.
@@ -138,7 +144,9 @@ async function callAnthropicVision(inlineData: InlineData, prompt: string): Prom
     headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model,
-      max_tokens: 1024,
+      // 1024 truncated dense screenshots mid-transcription (a week's schedule
+      // doesn't fit) — that's where "flattened" images came from on failover.
+      max_tokens: 4096,
       messages: [
         {
           role: "user",
