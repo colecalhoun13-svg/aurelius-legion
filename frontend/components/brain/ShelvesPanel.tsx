@@ -564,17 +564,18 @@ export default function ShelvesPanel() {
             <Shelf key={domain} label={domain.replace(/_/g, " ")} books={books} busy={false} studyable={false} onOpen={openDoc} />
           ))}
 
-          {/* HOW I THINK — an honest teaser, no fake data, no dead route:
-              the confirmed-heuristics shelf ships in the next phase. */}
-          <div
-            className="flex items-baseline gap-4 px-1 flex-wrap"
+          {/* HOW I THINK — the rules shelf is real now (the Mind tab); this
+              row is its door from the bookcase. */}
+          <a
+            href="/brain?tab=mind"
+            className="flex items-baseline gap-4 px-1 flex-wrap no-underline"
             style={{ borderTop: "1px solid var(--gold-line)", paddingTop: "1rem", borderBottom: "1px solid var(--line1)", paddingBottom: ".7rem" }}
           >
             <span style={{ ...shelfField, color: "var(--gold)" }}>How I think</span>
             <span className="flex-1" style={shelfLatest}>
-              confirmed rules ground every answer — the rules shelf lands in the next phase
+              confirmed rules ground every answer — browse, confirm, retire under Mind
             </span>
-          </div>
+          </a>
         </section>
       ) : (
         /* The catalog — findability beside the charm */

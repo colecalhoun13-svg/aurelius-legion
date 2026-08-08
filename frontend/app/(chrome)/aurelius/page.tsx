@@ -25,10 +25,13 @@ const TABS = [
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
 
-// THE RITUALS — the scheduled spine as built (core/schedules). No frontend
-// route exposes listSchedules yet, so this list is STATIC and says so: no
-// fake re-time buttons, no dead API calls. Re-timing happens through chat;
-// whether each job actually fired is the live spine grid under Traces.
+// THE RITUALS — the scheduled spine. /api/tuning/rituals asks the schedule
+// registry for the live rows; the registry is per-process and the scheduler
+// runs in the BACKEND, so from this process the route honestly answers
+// { live: false } and this STATIC list stays, with the kicker saying where
+// the live dial actually is. If the route ever answers live (merged process
+// or a future backend proxy), the rows grow real re-time and pause controls.
+// No fake buttons: controls render only when a write would reach a scheduler.
 const SPINE: Array<{ t: string; name: string; note: string }> = [
   { t: "02:00", name: "Database backup", note: "verified nightly" },
   { t: "05:30", name: "Inbox triage", note: "drafts only — never sends" },
@@ -50,7 +53,106 @@ const SPINE: Array<{ t: string; name: string; note: string }> = [
   { t: "Sun 22", name: "Curriculum ingest", note: "two units, seven fields" },
 ];
 
+type LiveRitual = { name: string; label: string; time: string; cadence: string; enabled: boolean };
+
 function RitualsPanel() {
+  // null = registry unreachable from this process → honest static list.
+  const [live, setLive] = useState<LiveRitual[] | null>(null);
+  const [times, setTimes] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState("");
+
+  const load = async () => {
+    try {
+      const res = await fetch("/api/tuning/rituals");
+      const j = await res.json();
+      setLive(res.ok && j?.live && Array.isArray(j.rituals) && j.rituals.length > 0 ? j.rituals : null);
+    } catch {
+      setLive(null);
+    }
+  };
+  useEffect(() => {
+    load();
+  }, []);
+
+  const post = async (body: any, key: string) => {
+    setBusy(key);
+    setMsg("");
+    try {
+      const res = await fetch("/api/tuning/rituals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error ?? `HTTP ${res.status}`);
+      setMsg(
+        body.op === "retime"
+          ? `${j.label} → ${j.time} (${j.cadence})`
+          : `${j.label} ${j.enabled ? "resumed" : "paused"}`
+      );
+      await load();
+    } catch (e: any) {
+      setMsg(e?.message ?? "that dial didn't turn");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (live) {
+    // The live dial — the registry answered from this process, so a write here
+    // reaches the real node-schedule jobs.
+    return (
+      <div className="max-w-3xl mx-auto space-y-6 aurelius-reveal">
+        <div className="au-label">The rituals — the scheduled spine, live</div>
+        {msg && (
+          <p className="au-kicker text-center" style={{ display: "block", color: "var(--gold)" }} role="status">
+            {msg}
+          </p>
+        )}
+        <div>
+          {live.map((r) => (
+            <div key={r.name} className="au-rit flex-wrap" style={{ alignItems: "center" }}>
+              <span className="au-rt" style={r.enabled ? undefined : { color: "var(--ink3)" }}>{r.time}</span>
+              <span className="au-rn flex-1" style={r.enabled ? undefined : { color: "var(--ink3)" }}>
+                {r.label}
+                {r.cadence === "Sundays" ? " (Sun)" : ""}
+                {!r.enabled && " — paused"}
+              </span>
+              <span className="flex items-center gap-2 shrink-0">
+                <input
+                  type="time"
+                  value={times[r.name] ?? r.time}
+                  onChange={(e) => setTimes((t) => ({ ...t, [r.name]: e.target.value }))}
+                  aria-label={`new time for ${r.label}`}
+                  className="bg-black/40 rounded-[2px] px-2 py-1 text-sm"
+                  style={{ border: "1px solid var(--line2)", color: "var(--ink2)", colorScheme: "dark" }}
+                />
+                <button
+                  className="au-btn-ghost"
+                  disabled={busy === `retime:${r.name}` || (times[r.name] ?? r.time) === r.time}
+                  onClick={() => post({ op: "retime", name: r.name, time: times[r.name] ?? r.time }, `retime:${r.name}`)}
+                >
+                  re-time
+                </button>
+                <button
+                  className="au-btn-ghost"
+                  disabled={busy === `toggle:${r.name}`}
+                  onClick={() => post({ op: r.enabled ? "pause" : "resume", name: r.name }, `toggle:${r.name}`)}
+                >
+                  {r.enabled ? "pause" : "resume"}
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+        <p className="au-kicker text-center" style={{ display: "block" }}>
+          changes take effect immediately and persist. Whether each one actually fired is the spine grid, under Traces.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl mx-auto space-y-6 aurelius-reveal">
       <div className="au-label">The rituals — the scheduled spine</div>
@@ -74,7 +176,7 @@ function RitualsPanel() {
         </div>
       </div>
       <p className="au-kicker text-center" style={{ display: "block" }}>
-        re-time from chat — “move my brief to 6:30” works from any page.
+        re-time from chat — “move my brief to 6:30” works from any page; the live dial rides the backend.
         Whether each one actually fired is the spine grid, under Traces.
       </p>
     </div>

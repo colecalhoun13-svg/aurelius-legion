@@ -15,11 +15,13 @@ import { useSearchParams } from "next/navigation";
 import ShelvesPanel from "../../../components/brain/ShelvesPanel";
 import AskPanel from "../../../components/brain/AskPanel";
 import WikiPanel from "../../../components/brain/WikiPanel";
+import MindPanel from "../../../components/brain/MindPanel";
 
 const TABS = [
   { key: "ask", label: "Ask" },
   { key: "shelves", label: "Shelves" },
   { key: "wiki", label: "Syntheses" },
+  { key: "mind", label: "Mind" },
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
 
@@ -68,7 +70,7 @@ function BrainInner() {
           everything read, kept, and connected — ask it anything
         </p>
       </header>
-      <nav className="flex justify-center gap-2 max-w-3xl mx-auto relative">
+      <nav className="flex justify-center gap-2 max-w-3xl mx-auto relative flex-wrap">
         {TABS.map((t) => (
           <TabChip key={t.key} on={tab === t.key} onClick={() => setTab(t.key)}>{t.label}</TabChip>
         ))}
@@ -76,6 +78,7 @@ function BrainInner() {
       {tab === "ask" && <AskPanel />}
       {tab === "shelves" && <ShelvesPanel />}
       {tab === "wiki" && <WikiPanel />}
+      {tab === "mind" && <MindPanel />}
     </div>
   );
 }

@@ -20,7 +20,8 @@
 // This is a soft abuse guard, not a security boundary — the only thing these
 // routes write is a reviewed Lead — but it must not be trivially bypassable.
 export function clientIp(request: Request): string {
-  const hops = Math.max(0, Number(process.env.TRUST_PROXY ?? "0") || 0);
+  const raw = (process.env.TRUST_PROXY ?? "0").trim();
+  const hops = raw === "true" ? 1 : Math.max(0, Number(raw) || 0); // "true" = 1 hop, matching the Express side
   const xff = request.headers.get("x-forwarded-for");
   if (hops > 0 && xff) {
     const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);

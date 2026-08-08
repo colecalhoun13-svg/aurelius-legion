@@ -165,7 +165,7 @@ export async function surfaceSignal(input: SurfaceSignalInput): Promise<{ id: st
           const hasAsk = Array.isArray(nextActions) && (nextActions as any[]).some((a) => a?.action === "confirm_action");
           const bot = await import("../telegram/bot.ts");
           pushed = hasAsk
-            ? await bot.pushBridgeAsk({ id: existing.id, title: data.title, body: data.body, status: existing.status, actions: nextActions })
+            ? await bot.pushBridgeAsk({ id: existing.id, title: data.title, body: data.body, status: nextStatus, actions: nextActions })
             : await bot.sendToCole(`${data.title}\n\n${data.body}`.slice(0, 3500));
           if (pushed) await prisma.bridgeSignal.update({ where: { id: existing.id }, data: { pushedAt: new Date() } }).catch(() => {});
         } catch (err) {
