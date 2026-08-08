@@ -2,9 +2,15 @@
 //
 // THE CLIENT ENGINE — the remote coaching business as data.
 //
-// Scope (2026-08-05): this is the business Cole OWNS. He is employed at the
-// gym, so in-person athletes there belong to his employer and never enter this
-// table. Every function below is INWARD and reversible — it records, links,
+// Scope (2026-08-05, amended 2026-08-08): this is the business Cole OWNS. He
+// is employed at the gym, so in-person athletes there belong to his employer.
+// Cole's call on 2026-08-08: they may enter this TABLE as kind="training_only"
+// (so he has one roster and one PR ledger for everyone he coaches) but they
+// NEVER enter the business MACHINERY — no referral asks, no proof content, no
+// check-in/renewal drafts, no analytics, no outreach. The exclusion lives in
+// the queries (kind: "client"), not in display filters, so a new business
+// surface can't accidentally include them. Every function below is INWARD and
+// reversible — it records, links,
 // and reports. Nothing here sends an email, charges a card, or messages an
 // athlete; those are outward actions and stop for Cole's confirm by
 // construction (NORTH_STAR §2.5).
@@ -47,6 +53,9 @@ export function fromCents(cents: number, currency = "usd"): string {
 export const LEAD_STATUSES = ["new", "contacted", "conversing", "proposed", "won", "lost", "dormant"] as const;
 export const LEAD_SOURCES = ["manual", "referral", "instagram", "email", "word_of_mouth", "website", "assessment", "other"] as const;
 export const CLIENT_STATUSES = ["active", "paused", "ended"] as const;
+// "client" = Cole's own business, full machinery. "training_only" = recorded
+// athlete (e.g. the gym's), business machinery excluded by construction.
+export const CLIENT_KINDS = ["client", "training_only"] as const;
 export const ENGAGEMENT_SHAPES = ["monthly", "block", "program"] as const;
 export const ENGAGEMENT_STATUSES = ["active", "completed", "cancelled", "pending"] as const;
 export const SESSION_KINDS = ["check_in", "call", "video_review", "test", "session"] as const;
@@ -195,6 +204,7 @@ export async function convertLead(
 
 export async function addClient(input: {
   name: string;
+  kind?: string; // "client" (default) | "training_only" — see CLIENT_KINDS
   email?: string;
   phone?: string;
   sport?: string;
@@ -212,6 +222,7 @@ export async function addClient(input: {
   return prisma.client.create({
     data: {
       name,
+      kind: must(input.kind, CLIENT_KINDS, "kind"),
       email: input.email?.trim() || null,
       phone: input.phone?.trim() || null,
       sport: input.sport?.trim() || null,
@@ -227,9 +238,23 @@ export async function addClient(input: {
   });
 }
 
-export async function listClients(opts: { status?: string; limit?: number } = {}) {
+/** Promote a training-only athlete into a real client — Cole's explicit action,
+ *  the ONLY door from the training roster into the business machinery. History
+ *  (metrics, PRs) carries over; business surfaces pick them up from today
+ *  forward (they have no engagements/invoices to backdate). */
+export async function promoteClient(id: string) {
+  const existing = await prisma.client.findUnique({ where: { id }, select: { id: true, name: true, kind: true } });
+  if (!existing) throw new Error("No client with that id.");
+  if (existing.kind === "client") throw new Error(`${existing.name} is already a full client.`);
+  return prisma.client.update({ where: { id }, data: { kind: "client" } });
+}
+
+export async function listClients(opts: { status?: string; kind?: string; limit?: number } = {}) {
   return prisma.client.findMany({
-    where: opts.status ? { status: must(opts.status, CLIENT_STATUSES, "status") } : {},
+    where: {
+      ...(opts.status ? { status: must(opts.status, CLIENT_STATUSES, "status") } : {}),
+      ...(opts.kind ? { kind: must(opts.kind, CLIENT_KINDS, "kind") } : {}),
+    },
     include: { engagements: { where: { status: "active" } } },
     orderBy: { createdAt: "desc" },
     take: Math.min(opts.limit ?? 100, 500),
@@ -270,6 +295,11 @@ export type AddEngagementInput = {
 export async function addEngagement(input: AddEngagementInput) {
   const client = await prisma.client.findUnique({ where: { id: input.clientId } });
   if (!client) throw new Error(`No client with id ${input.clientId}.`);
+  // An engagement is something they BOUGHT — training-only athletes can't hold
+  // one (it would pull them into renewal/treasury machinery). Promote first.
+  if (client.kind !== "client") {
+    throw new Error(`${client.name} is training-only — they can't hold an engagement. If they've actually signed, promote them to a client first.`);
+  }
   const shape = must(input.shape, ENGAGEMENT_SHAPES, "shape");
   const title = (input.title ?? "").trim();
   if (!title) throw new Error("An engagement needs a title.");
@@ -395,6 +425,10 @@ export async function raiseInvoice(input: {
 }) {
   const client = await prisma.client.findUnique({ where: { id: input.clientId } });
   if (!client) throw new Error(`No client with id ${input.clientId}.`);
+  // Money never aims at the training roster (the gym boundary).
+  if (client.kind !== "client") {
+    throw new Error(`${client.name} is training-only — no invoices get raised at them. Promote them to a client first if they've signed.`);
+  }
   return prisma.invoice.create({
     data: {
       clientId: input.clientId,
@@ -434,6 +468,14 @@ export async function recordPayment(input: {
     include: { lead: { select: { source: true, angleId: true, refCode: true, trackLinkId: true } } },
   });
   if (!client) throw new Error(`No client with id ${input.clientId}.`);
+  // The gym boundary (council catch): the one money function that skipped the
+  // guard its siblings (raiseInvoice, addEngagement) carry. Without it, "Jake
+  // paid $300" about a gym athlete books into attribution, the treasury, the
+  // scoreboard and the analyst read. Self-record paths already filter kind
+  // before calling here; this closes chat/API/router.
+  if (client.kind !== "client") {
+    throw new Error(`${client.name} is training-only — no payments get recorded against them. Promote them first if they've actually signed.`);
+  }
   const amountCents = toCents(input.amount);
   if (amountCents === 0) throw new Error("A payment of zero isn't a payment.");
 
@@ -494,7 +536,7 @@ export async function recordPayment(input: {
 /** Unpaid invoices, oldest first. `overdue` is derived, never stored. */
 export async function outstandingInvoices(now = new Date()) {
   const rows = await prisma.invoice.findMany({
-    where: { status: { in: ["draft", "sent", "partial"] } },
+    where: { status: { in: ["draft", "sent", "partial"] }, client: { kind: "client" } },
     include: { client: { select: { id: true, name: true } }, payments: true },
     orderBy: [{ dueAt: "asc" }, { issuedAt: "asc" }],
   });
@@ -527,13 +569,17 @@ export async function whatNeedsAttention(days = 14, now = new Date()) {
   const horizon = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
 
   const [endingBlocks, billingDue, staleFollowUps, invoices] = await Promise.all([
+    // client.kind filters here are unreachable-by-construction today (guarded
+    // creation, no demote path) but the policy is exclusion IN THE QUERY —
+    // this feeds the briefing and the deck risk line, the worst places for a
+    // hand-edited row to leak a gym athlete into.
     prisma.engagement.findMany({
-      where: { status: "active", shape: "block", endsAt: { not: null, lte: horizon } },
+      where: { status: "active", shape: "block", endsAt: { not: null, lte: horizon }, client: { kind: "client" } },
       include: { client: { select: { id: true, name: true } } },
       orderBy: { endsAt: "asc" },
     }),
     prisma.engagement.findMany({
-      where: { status: "active", shape: "monthly", nextBillingAt: { not: null, lte: horizon } },
+      where: { status: "active", shape: "monthly", nextBillingAt: { not: null, lte: horizon }, client: { kind: "client" } },
       include: { client: { select: { id: true, name: true } } },
       orderBy: { nextBillingAt: "asc" },
     }),
@@ -586,11 +632,13 @@ export async function pipelineSnapshot(now = new Date()) {
   const [leadsByStatus, activeClients, totalClients, activeEngagements, monthPayments, allTimePayments, outstanding] =
     await Promise.all([
       prisma.lead.groupBy({ by: ["status"], _count: { _all: true } }),
-      prisma.client.count({ where: { status: "active" } }),
-      prisma.client.count(),
-      prisma.engagement.findMany({ where: { status: "active" }, select: { shape: true, priceCents: true } }),
-      prisma.payment.aggregate({ where: { receivedAt: { gte: monthStart } }, _sum: { amountCents: true } }),
-      prisma.payment.aggregate({ _sum: { amountCents: true } }),
+      // kind: "client" — the business snapshot counts the business, not the
+      // training roster (the gym boundary).
+      prisma.client.count({ where: { status: "active", kind: "client" } }),
+      prisma.client.count({ where: { kind: "client" } }),
+      prisma.engagement.findMany({ where: { status: "active", client: { kind: "client" } }, select: { shape: true, priceCents: true } }),
+      prisma.payment.aggregate({ where: { receivedAt: { gte: monthStart }, client: { kind: "client" } }, _sum: { amountCents: true } }),
+      prisma.payment.aggregate({ where: { client: { kind: "client" } }, _sum: { amountCents: true } }),
       outstandingInvoices(now),
     ]);
 

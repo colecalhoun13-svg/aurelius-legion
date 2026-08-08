@@ -22,7 +22,9 @@ export async function GET() {
       await Promise.all([
         pipelineSnapshot(),
         whatNeedsAttention(14),
-        listClients({}),
+        // kind: "client" — the Business page roster is the BUSINESS roster;
+        // training-only athletes live on the Athletes page (the gym boundary).
+        listClients({ kind: "client" }),
         listLeads({ limit: 200 }),
         anglePerformance(),
         listOffers(),

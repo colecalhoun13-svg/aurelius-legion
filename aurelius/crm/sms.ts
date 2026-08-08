@@ -56,11 +56,11 @@ export async function handleInboundSms(input: { from: string; body: string }): P
     take: 25,
   });
   const lead = leadCandidates.find((l) => matches(l.phone)) ?? null;
-  let client: { id: string; name: string } | null = null;
+  let client: { id: string; name: string; kind: string } | null = null;
   if (!lead) {
     const clientCandidates = await prisma.client.findMany({
       where: { OR: [{ phone: { contains: last4 } }, { parentPhone: { contains: last4 } }] },
-      select: { id: true, name: true, phone: true, parentPhone: true },
+      select: { id: true, name: true, kind: true, phone: true, parentPhone: true },
       take: 25,
     });
     client = clientCandidates.find((c) => matches(c.phone) || matches(c.parentPhone)) ?? null;
@@ -87,13 +87,17 @@ export async function handleInboundSms(input: { from: string; body: string }): P
     return { matched: true, reason: "matched a lead" };
   }
   if (client) {
-    await recordAttribution({ kind: "inbound", channel: "sms", clientId: client.id });
+    // The gym boundary (council catch): a training-only athlete's text still
+    // reaches Cole — but it is not a business event. No attribution write
+    // (funnel analytics stay honest), and the signal files under training.
+    const isBusiness = client.kind === "client";
+    if (isBusiness) await recordAttribution({ kind: "inbound", channel: "sms", clientId: client.id });
     await surfaceSignal({
-      kind: "opportunity", domain: "business", sourceType: "sms_inbound", sourceId: `sms:${client.id}:${Date.now()}`,
+      kind: "opportunity", domain: isBusiness ? "business" : "training", sourceType: "sms_inbound", sourceId: `sms:${client.id}:${Date.now()}`,
       severity: "notice", title: `${client.name} texted you`,
       body: `"${input.body.slice(0, 300)}"`,
     }).catch(() => {});
-    return { matched: true, reason: "matched a client" };
+    return { matched: true, reason: isBusiness ? "matched a client" : "matched a training-only athlete" };
   }
 
   // Unknown number — capture as an inbound touch so it isn't lost, and notify.
@@ -139,7 +143,8 @@ export async function stageSms(input: {
     who = l.name;
   }
   if (!to && input.clientId) {
-    const c = await prisma.client.findUnique({ where: { id: input.clientId }, select: { name: true, phone: true } });
+    const c = await prisma.client.findUnique({ where: { id: input.clientId }, select: { name: true, phone: true, kind: true } });
+    if (c && c.kind !== "client") return { ok: false, error: `${c.name} is training-only — business SMS never aims at the training roster.` };
     if (!c?.phone) return { ok: false, error: "That client has no phone number on file." };
     to = c.phone;
     who = c.name;
