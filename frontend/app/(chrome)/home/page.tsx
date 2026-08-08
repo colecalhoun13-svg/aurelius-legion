@@ -7,10 +7,17 @@
 // read; overnight receipts collapse to a count; tasks/habits live one
 // scroll down. When nothing needs Cole, this screen is nearly empty —
 // that calm IS the product.
+//
+// ELEVATED IMPERIAL re-dress (docs/REDESIGN_PLAN.md): same verbs, same
+// fetches, same handlers — re-skinned in the engraving grammar, plus one
+// new instrument: the Day Dial (components/kit/DayDial), fed from the
+// calendar mirror, /api/upnext, and /api/spine. Re-dress, never delete.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AureliusChat } from "../../../components/AureliusChat";
 import { QUOTES } from "../../../lib/quotes";
+import { Panel, SectionLabel, Divider, Tick, LedgerRow, Btn, useCountUp } from "../../../components/kit";
+import { DayDial, type DialEvent, type SpineTick } from "../../../components/kit/DayDial";
 
 type SignalAction = { label: string; action: string; payload?: any };
 type Signal = {
@@ -59,12 +66,38 @@ function greeting(): string {
   return "Evening";
 }
 
-const SEV: Record<string, string> = {
-  critical: "border-red-400/50",
-  attention: "border-amber-400/50",
-  notice: "border-aurelius-gold/50",
-  info: "border-aurelius-gold/25",
+// Severity → ink for the needs-you tablet (the tablet itself is THE surface;
+// severity lives in the title's color, not a border zoo).
+const SEV_INK: Record<string, string> = {
+  critical: "var(--danger)",
+  attention: "var(--attn)",
+  notice: "var(--ink)",
+  info: "var(--ink)",
 };
+
+// Roman count for the tablet label — "Needs you · Ⅱ".
+const ROMAN = ["", "Ⅰ", "Ⅱ", "Ⅲ", "Ⅳ", "Ⅴ", "Ⅵ", "Ⅶ", "Ⅷ", "Ⅸ", "Ⅹ", "Ⅺ", "Ⅻ"];
+const roman = (n: number) => ROMAN[n] ?? String(n);
+
+// The scheduled spine mapped onto the dial face (jobName → local hour).
+// Mirrors the cron roster in aurelius/index.ts; unknown names simply skip.
+const JOB_HOURS: Record<string, number> = {
+  db_backup: 2,
+  inbox_triage: 5.5,
+  rss_ingest: 6,
+  market_pulse: 6.5,
+  schedule_protection: 6.75,
+  morning_briefing: 7,
+  outreach_sweep: 7.5,
+  initiative_pulse: 8,
+  midday_check: 13,
+  queue_sweep: 21.25,
+  nightly_debrief: 21.5,
+};
+
+const BODY_FONT = "var(--font-body), Georgia, serif";
+const SERIF_FONT = "var(--font-serif), Georgia, serif";
+const DATA_FONT = "var(--font-data), 'Arial Narrow', sans-serif";
 
 export default function HomePage() {
   const [deck, setDeck] = useState<Deck | null>(null);
@@ -104,6 +137,57 @@ export default function HomePage() {
       .catch(() => {});
     const t = setInterval(() => setTick((n) => n + 1), 60_000);
     return () => clearInterval(t);
+  }, []);
+
+  // ── The Day Dial's feeds — best-effort, never load-bearing ──
+  // Today's events from the CalendarEvent mirror (/api/calendar) and the
+  // spine's day (/api/spine → ticks on the inner band + clean-nights streak).
+  const [calEvents, setCalEvents] = useState<DialEvent[]>([]);
+  const [calConfigured, setCalConfigured] = useState(false);
+  const [spineTicks, setSpineTicks] = useState<SpineTick[]>([]);
+  const [cleanNights, setCleanNights] = useState<number | null>(null);
+  useEffect(() => {
+    const d = new Date();
+    const start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const end = new Date(start.getTime() + 24 * 3600_000);
+    fetch(`/api/calendar?from=${encodeURIComponent(start.toISOString())}&to=${encodeURIComponent(end.toISOString())}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j || j.error) return;
+        setCalConfigured(!!j.configured);
+        const evs: DialEvent[] = (Array.isArray(j.events) ? j.events : [])
+          .filter((e: any) => e?.startAt && e?.endAt && !(e?.raw?.allDay))
+          .map((e: any) => ({
+            startISO: String(e.startAt),
+            endISO: String(e.endAt),
+            title: String(e.title ?? ""),
+            protected: /deep\s*work|focus|training/i.test(String(e.title ?? "")),
+          }));
+        setCalEvents(evs);
+      })
+      .catch(() => {});
+    fetch("/api/spine")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j || j.error || !Array.isArray(j.days) || !Array.isArray(j.runs)) return;
+        const todayKey = j.days[j.days.length - 1];
+        const status = new Map<string, string>();
+        for (const r of j.runs) if (r?.day === todayKey && r?.jobName) status.set(r.jobName, r.status);
+        const ticks: SpineTick[] = Object.entries(JOB_HOURS).map(([name, hour]) => {
+          const st = status.get(name);
+          return { hour, state: st === "done" ? "ran" : st === "failed" ? "fail" : "due" };
+        });
+        setSpineTicks(ticks);
+        // Clean nights: consecutive days (newest back) that ran without a failure.
+        let streak = 0;
+        for (let i = j.days.length - 1; i >= 0; i--) {
+          const runs = j.runs.filter((r: any) => r?.day === j.days[i]);
+          if (runs.length > 0 && runs.every((r: any) => r.status !== "failed")) streak++;
+          else break;
+        }
+        setCleanNights(streak);
+      })
+      .catch(() => {});
   }, []);
 
   const load = useCallback(async () => {
@@ -236,315 +320,387 @@ export default function HomePage() {
     return true;
   });
 
+  // The runway beside the dial — follow-through was fetched and unrendered.
+  const followThrough = deck?.hero?.followThrough ?? null;
+  const ft = useCountUp(followThrough ?? 0, 1100);
+
+  // The dial's center + next-event line, from the windshield feed.
+  const dialFreeHours = calConfigured ? upnext?.freeHours ?? null : null;
+  const nextLabel = useMemo(() => {
+    if (!upnext) return null;
+    if (!upnext.nextEvent) return "CALENDAR CLEAR AHEAD";
+    const when = upnext.nextEvent.allDay ? "ALL DAY" : untilLabel(upnext.nextEvent.startAt).toUpperCase();
+    return `NEXT · ${upnext.nextEvent.title.slice(0, 24).toUpperCase()} · ${when}`;
+  }, [upnext]);
+
+  // The risk line may carry a fix on its own lines — main line burns amber,
+  // the fix sits smaller beneath (same string, same builder, re-set in type).
+  const riskCalm = deck?.biggestRisk?.startsWith("Nothing's on fire") ?? false;
+  const riskLines = (deck?.biggestRisk ?? "").split("\n").filter((l) => l.trim().length > 0);
+
   return (
-    <div className="max-w-2xl mx-auto text-aurelius-text aurelius-stagger flex flex-col min-h-full">
-      {/* ── Above the fold: the day, in one breath ── */}
-      <header className="text-center pt-2">
-        <h1 className="aurelius-heading text-4xl md:text-5xl">{hello}, Operator</h1>
-        {deck?.biggestRisk && (
-          <p
-            className={`mt-3 text-base leading-snug ${
-              deck.biggestRisk.startsWith("Nothing's on fire") ? "text-neutral-400" : "text-amber-300"
-            }`}
-          >
-            {deck.biggestRisk}
-          </p>
-        )}
-        {deck?.plan?.focus && (
-          <p className="mt-2 text-sm text-neutral-300">
-            <span className="text-aurelius-gold/70 aurelius-heading text-xs mr-2">Focus</span>
-            {deck.plan.focus}
-          </p>
-        )}
-        {/* Up next — the windshield: position is everywhere, this is trajectory */}
-        {upnext && (
-          <p className="mt-2.5 text-xs text-neutral-500">
-            {upnext.nextEvent ? (
-              <>
-                ◷ <span className="text-neutral-300">{upnext.nextEvent.title}</span>{" "}
-                {upnext.nextEvent.allDay ? "(all day)" : untilLabel(upnext.nextEvent.startAt)}
-              </>
-            ) : (
-              <>◷ calendar clear ahead</>
-            )}
-            {" · "}~{upnext.freeHours}h free today{" · "}
-            <span title="Aurelius's next scheduled move">
-              ♛ {upnext.nextMove.tomorrow ? "tomorrow " : ""}{upnext.nextMove.time} {upnext.nextMove.label}
-            </span>
-          </p>
-        )}
-        {/* The day's quote — the ritual survives the merge */}
-        {quote && (
-          <blockquote className="mt-4 max-w-xl mx-auto">
-            <p className="text-sm italic text-neutral-400 leading-relaxed">“{quote[0]}”</p>
-            <footer className="aurelius-heading text-xs text-aurelius-gold/60 mt-1.5">— {quote[1]}</footer>
-          </blockquote>
-        )}
-      </header>
-
-      {/* No briefing yet (fresh boot, mid-day deploy) → offer to summon one */}
-      {ritualsLoaded && !briefing && (
-        <section className="mt-5">
-          <button
-            onClick={briefMe}
-            disabled={briefingBusy}
-            className="w-full text-left text-xs text-neutral-500 hover:text-aurelius-gold px-1 disabled:opacity-60"
-          >
-            {briefingBusy ? "✦ Composing the briefing…" : "✦ No briefing yet today — brief me now"}
-          </button>
-        </section>
-      )}
-
-      {/* Briefing — open when fresh, one quiet line once read */}
-      {briefing && (
-        <section className="mt-5">
-          {briefingOpen ? (
-            <div className="aurelius-panel-frame border border-aurelius-gold/25 p-4">
-              <div className="flex items-baseline justify-between">
-                <span className="aurelius-heading text-sm text-aurelius-gold/80">Morning briefing</span>
-                <button onClick={() => setBriefingOpen(false)} className="text-xs text-neutral-500 hover:text-aurelius-gold">
-                  collapse
-                </button>
-              </div>
-              <p className="mt-2 text-sm text-neutral-300 whitespace-pre-wrap leading-relaxed">{briefing.text}</p>
-            </div>
-          ) : (
-            <button
-              onClick={() => setBriefingOpen(true)}
-              className="w-full text-left text-xs text-neutral-500 hover:text-aurelius-gold px-1"
-            >
-              ✦ Briefing read — tap to reopen
-            </button>
-          )}
-        </section>
-      )}
-
-      {/* Evening debrief — a quiet line after 20:00, opens on tap */}
-      {debrief && (
-        <section className="mt-3">
-          {debriefOpen ? (
-            <div className="aurelius-panel-frame border border-aurelius-gold/25 p-4">
-              <div className="flex items-baseline justify-between">
-                <span className="aurelius-heading text-sm text-aurelius-gold/80">Evening debrief</span>
-                <button onClick={() => setDebriefOpen(false)} className="text-xs text-neutral-500 hover:text-aurelius-gold">
-                  collapse
-                </button>
-              </div>
-              <p className="mt-2 text-sm text-neutral-300 whitespace-pre-wrap leading-relaxed">{debrief}</p>
-            </div>
-          ) : (
-            <button
-              onClick={() => setDebriefOpen(true)}
-              className="w-full text-left text-xs text-neutral-500 hover:text-aurelius-gold px-1"
-            >
-              ☾ The day's debrief is in — tap to read
-            </button>
-          )}
-        </section>
-      )}
-
-      {/* Needs-you strip — renders NOTHING when nothing needs him */}
-      {bridge.length > 0 && (
-        <section className="mt-5 space-y-2">
-          <span className="aurelius-heading text-sm text-aurelius-gold/70 px-1">Needs you</span>
-          {bridge.slice(0, 3).map((s) => (
-            <div key={s.id} className={`aurelius-panel-frame border p-3.5 ${SEV[s.severity] ?? SEV.info}`}>
-              <p className="text-sm font-medium">{s.title}</p>
-              {s.body && <p className="text-xs text-neutral-400 mt-1 line-clamp-3 whitespace-pre-wrap">{s.body}</p>}
-              <div className="flex gap-2 mt-2.5">
-                {confirmable(s) && (
-                  <button
-                    onClick={() => rule("/api/autonomy/confirm", s.id)}
-                    disabled={busy === s.id}
-                    className="text-xs bg-aurelius-gold text-black font-semibold rounded-lg px-3 py-1.5 disabled:opacity-50"
-                  >
-                    {busy === s.id ? "…" : "Confirm & do it"}
-                  </button>
-                )}
-                {undoable(s) && (
-                  <button
-                    onClick={() => rule("/api/autonomy/undo", s.id)}
-                    disabled={busy === s.id}
-                    className="text-xs border border-amber-400/60 text-amber-300 rounded-lg px-3 py-1.5 disabled:opacity-50"
-                  >
-                    Undo
-                  </button>
-                )}
-                <button
-                  onClick={() => act({ action: "ackSignal", id: s.id, status: "acknowledged" })}
-                  className="text-xs border border-aurelius-gold/40 text-aurelius-gold rounded-lg px-3 py-1.5"
-                >
-                  Got it
-                </button>
-                <button
-                  onClick={() => act({ action: "ackSignal", id: s.id, status: "dismissed" })}
-                  className="text-xs text-neutral-500 hover:text-neutral-300 px-2"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          ))}
-          {bridge.length > 3 && (
-            <a href="/decisions" className="block text-xs text-neutral-500 hover:text-aurelius-gold px-1">
-              +{bridge.length - 3} more on Decisions →
-            </a>
-          )}
-        </section>
-      )}
-
-      {/* Overnight receipts — proof of the night shift, collapsed to a count */}
-      {overnight.length > 0 && (
-        <section className="mt-5">
-          <button
-            onClick={() => setOvernightOpen((o) => !o)}
-            className="text-xs text-neutral-500 hover:text-aurelius-gold px-1"
-          >
-            ✓ {overnight.length} thing{overnight.length === 1 ? "" : "s"} handled while you were away{" "}
-            {overnightOpen ? "· hide" : "· see"}
-          </button>
-          {overnightOpen && (
-            <div className="mt-2 space-y-1.5">
-              {overnight.map((s) => (
-                <div key={s.id} className="flex items-start gap-2 text-xs px-1">
-                  <span className="text-aurelius-gold/60 mt-px">✦</span>
-                  <span className="text-neutral-400 flex-1">
-                    {s.title}
-                    <span className="text-neutral-600"> · {s.kind.replace(/_/g, " ")}</span>
-                  </span>
-                  {undoable(s) && (
-                    <button
-                      onClick={() => rule("/api/autonomy/undo", s.id)}
-                      className="text-amber-300/80 hover:text-amber-300 shrink-0"
-                    >
-                      undo
-                    </button>
-                  )}
-                </div>
-              ))}
-              <a href="/aurelius?tab=autonomy" className="block text-[11px] text-neutral-600 hover:text-aurelius-gold px-1 pt-1">
-                all autonomous actions →
-              </a>
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* Receipts that landed "pending" but need no ruling — kept OUT of the
-          needs-you strip and off the bell, collapsed to a count of their own. */}
-      {receipts.length > 0 && (
-        <section className="mt-3">
-          <button
-            onClick={() => setReceiptsOpen((o) => !o)}
-            className="text-xs text-neutral-500 hover:text-aurelius-gold px-1"
-          >
-            ℹ {receipts.length} update{receipts.length === 1 ? "" : "s"}, nothing to decide{" "}
-            {receiptsOpen ? "· hide" : "· see"}
-          </button>
-          {receiptsOpen && (
-            <div className="mt-2 space-y-1.5">
-              {receipts.map((s) => (
-                <div key={s.id} className="flex items-start gap-2 text-xs px-1">
-                  <span className="text-neutral-600 mt-px">·</span>
-                  <span className="text-neutral-400 flex-1">
-                    {s.title}
-                    <span className="text-neutral-600"> · {s.kind.replace(/_/g, " ")}</span>
-                  </span>
-                  <button
-                    onClick={() => act({ action: "ackSignal", id: s.id, status: "acknowledged" })}
-                    className="text-neutral-500 hover:text-aurelius-gold shrink-0"
-                  >
-                    got it
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* ── One scroll down: the day's work ── */}
-      <section className="mt-6">
-        <div className="flex items-baseline justify-between px-1 mb-2">
-          <span className="aurelius-heading text-sm text-aurelius-gold/70">Today</span>
-          <span className="text-[11px] text-neutral-500">
-            {today ? `${today.doneToday} done · ${tasks.length} open` : ""}
-          </span>
-        </div>
-        <ul className="space-y-1.5">
-          {tasks.map((t) => (
-            <li key={t.id} className="flex items-center gap-3 px-1">
-              <button
-                onClick={() => act({ action: "completeTask", id: t.id })}
-                className={`relative after:absolute after:-inset-3 after:content-[''] w-4 h-4 border rounded-sm shrink-0 ${
-                  t.status === "overdue" || (today?.overdue ?? []).some((o) => o.id === t.id)
-                    ? "border-red-400 hover:bg-red-400/30"
-                    : "border-aurelius-gold hover:bg-aurelius-gold/40"
-                }`}
-                title="Done"
-              />
-              <span className="text-sm text-neutral-200 flex-1 truncate">
-                {t.priority === "high" && <span className="text-aurelius-gold mr-1.5">!</span>}
-                {t.title}
-                {t.domain && <span className="text-[10px] text-neutral-600 ml-2">{t.domain}</span>}
-              </span>
-            </li>
-          ))}
-          {tasks.length === 0 && (
-            <li className={`italic text-sm px-1 ${unreachable ? "text-amber-300/90" : "text-neutral-500"}`}>
-              {unreachable ? "Couldn't reach the brain — this may not be the whole picture." : "Nothing on deck."}
-            </li>
-          )}
-        </ul>
-        <div className="flex gap-2 mt-3">
-          <input
-            ref={taskInputRef}
-            value={newTask}
-            onChange={(e) => setNewTask(e.target.value)}
-            onKeyDown={async (e) => {
-              if (e.key === "Enter" && newTask.trim() && !capturing) {
-                // Clear ONLY on confirmed save — a failed capture keeps the
-                // text; the in-flight guard stops double-Enter on a slow
-                // network from filing the task twice (post-sweep council).
-                setCapturing(true);
-                try {
-                  const title = newTask.trim();
-                  if (await act({ action: "createTask", title, status: "today" })) setNewTask("");
-                } finally {
-                  setCapturing(false);
-                }
-              }
+    <div className="au-horizon min-h-full">
+      <div className="max-w-2xl mx-auto aurelius-reveal flex flex-col min-h-full relative" style={{ color: "var(--ink)" }}>
+        {/* ── Above the fold: the day, in one breath ── */}
+        <header className="text-center pt-2">
+          {/* The engraved inscription — the greeting as carved letterform */}
+          <h1
+            style={{
+              fontFamily: BODY_FONT, fontWeight: 600, fontSize: 14,
+              letterSpacing: ".38em", textTransform: "uppercase",
+              color: "var(--ink2)", margin: 0, paddingLeft: ".38em",
             }}
-            placeholder="Add a task for today…"
-            className="flex-1 bg-black/40 border border-aurelius-gold/25 rounded-lg px-3 py-2 text-sm outline-none focus:border-aurelius-gold/60"
-          />
-        </div>
-        {flash && <p className="text-xs text-amber-300 mt-2 px-1">{flash}</p>}
-        {(today?.habits ?? []).length > 0 && (
-          <div className="flex flex-wrap gap-2 mt-3">
-            {(today?.habits ?? []).map((h) => (
-              <button
-                key={h.id}
-                onClick={() => !h.doneToday && act({ action: "completeHabit", id: h.id })}
-                className={`text-xs rounded-full px-3 py-1.5 border min-h-[32px] ${
-                  h.doneToday
-                    ? "border-aurelius-gold bg-aurelius-gold/20 text-aurelius-gold"
-                    : "border-aurelius-gold/30 text-neutral-400 hover:border-aurelius-gold/60"
-                }`}
+          >
+            {hello}, Operator
+          </h1>
+          {/* The day's quote — the ritual survives the re-dress, directly beneath */}
+          {quote && (
+            <blockquote className="mt-4 max-w-xl mx-auto">
+              <p className="au-kicker" style={{ display: "block", fontSize: "1.05rem", textAlign: "center" }}>
+                “{quote[0]}”
+              </p>
+              <footer
+                style={{
+                  fontFamily: BODY_FONT, fontWeight: 600, fontSize: 11,
+                  letterSpacing: ".26em", textTransform: "uppercase",
+                  color: "var(--gold-dim)", marginTop: ".45rem",
+                }}
               >
-                {h.doneToday ? "✓ " : ""}
-                {h.name}
-                {h.streak > 1 && <span className="opacity-70"> · {h.streak}</span>}
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
+                — {quote[1]}
+              </footer>
+            </blockquote>
+          )}
+          {deck?.plan?.focus && (
+            <p className="mt-3 text-sm" style={{ color: "var(--ink2)" }}>
+              <span className="au-kicker" style={{ color: "var(--gold)", marginRight: 8 }}>focus —</span>
+              {deck.plan.focus}
+            </p>
+          )}
+        </header>
 
-      {/* ── The spine: talk to Aurelius (One Box lands fully in UX-PR6) ── */}
-      <section className="mt-8 flex-1 flex flex-col">
-        <AureliusChat />
-      </section>
+        {/* ── THE DAY DIAL + the runway ── */}
+        <div className="flex justify-center items-center gap-10 flex-wrap mt-6">
+          <DayDial events={calEvents} freeHours={dialFreeHours} nextLabel={nextLabel} spineTicks={spineTicks} />
+          <div className="grid gap-4" style={{ minWidth: 200 }}>
+            {followThrough != null && (
+              <div>
+                <b style={{ fontFamily: SERIF_FONT, fontWeight: 700, fontSize: "1.5rem", color: "var(--ink)", fontVariantNumeric: "tabular-nums" }}>
+                  {Math.round(ft)}
+                  <span style={{ fontFamily: BODY_FONT, fontSize: ".6em", color: "var(--gold)", letterSpacing: ".1em", fontWeight: 600 }}>%</span>
+                </b>
+                <span className="au-kicker" style={{ display: "block", marginTop: ".1rem" }}>follow-through</span>
+              </div>
+            )}
+            <div>
+              <b style={{ fontFamily: SERIF_FONT, fontWeight: 700, fontSize: "1.5rem", color: "var(--ink)", fontVariantNumeric: "tabular-nums" }}>
+                {today?.doneToday ?? 0}
+                <span style={{ fontFamily: BODY_FONT, fontSize: ".6em", color: "var(--gold)", letterSpacing: ".1em", fontWeight: 600 }}> done</span>
+              </b>
+              <span className="au-kicker" style={{ display: "block", marginTop: ".1rem" }}>
+                {tasks.length} open on the board
+              </span>
+            </div>
+            {upnext && (
+              <span className="au-kicker" title="Aurelius's next scheduled move">
+                ♛ {upnext.nextMove.tomorrow ? "tomorrow " : ""}{upnext.nextMove.time} {upnext.nextMove.label}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* ── The risk line — the one confrontation, resolving from blur ── */}
+        {riskLines.length > 0 && (
+          <p
+            className="au-resolve"
+            style={{
+              maxWidth: 640, margin: "2.2rem auto 0", textAlign: "center",
+              fontFamily: BODY_FONT, fontWeight: 500, fontStyle: "italic",
+              fontSize: "clamp(1.2rem, 3vw, 1.5rem)", lineHeight: 1.6, letterSpacing: ".01em",
+              color: riskCalm ? "var(--ink3)" : "var(--attn)",
+            }}
+          >
+            {riskLines[0]}
+            {riskLines.length > 1 && (
+              <span style={{ display: "block", marginTop: ".5rem", fontStyle: "normal", fontSize: ".95rem", color: "var(--ink2)" }}>
+                {riskLines.slice(1).join(" ")}
+              </span>
+            )}
+          </p>
+        )}
+
+        <Divider />
+
+        {/* No briefing yet (fresh boot, mid-day deploy) → offer to summon one */}
+        {ritualsLoaded && !briefing && (
+          <section>
+            <button
+              onClick={briefMe}
+              disabled={briefingBusy}
+              className="w-full text-left text-xs px-1 disabled:opacity-60"
+              style={{ fontFamily: BODY_FONT, fontStyle: "italic", fontSize: 13.5, color: "var(--ink3)" }}
+            >
+              {briefingBusy ? "✦ Composing the briefing…" : "✦ No briefing yet today — brief me now"}
+            </button>
+          </section>
+        )}
+
+        {/* Briefing — open when fresh, one quiet line once read */}
+        {briefing && (
+          <section className="mt-2">
+            {briefingOpen ? (
+              <Panel
+                tier="card"
+                label="Morning briefing"
+                labelGold
+                headerRight={
+                  <button className="au-undo" style={{ marginLeft: 0 }} onClick={() => setBriefingOpen(false)}>
+                    collapse
+                  </button>
+                }
+              >
+                <p className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: "var(--ink2)" }}>{briefing.text}</p>
+              </Panel>
+            ) : (
+              <button
+                onClick={() => setBriefingOpen(true)}
+                className="w-full text-left text-xs px-1"
+                style={{ fontFamily: BODY_FONT, fontStyle: "italic", fontSize: 13.5, color: "var(--ink3)" }}
+              >
+                ✦ Briefing read — tap to reopen
+              </button>
+            )}
+          </section>
+        )}
+
+        {/* Evening debrief — a quiet line after 20:00, opens on tap */}
+        {debrief && (
+          <section className="mt-3">
+            {debriefOpen ? (
+              <Panel
+                tier="card"
+                label="Evening debrief"
+                labelGold
+                headerRight={
+                  <button className="au-undo" style={{ marginLeft: 0 }} onClick={() => setDebriefOpen(false)}>
+                    collapse
+                  </button>
+                }
+              >
+                <p className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: "var(--ink2)" }}>{debrief}</p>
+              </Panel>
+            ) : (
+              <button
+                onClick={() => setDebriefOpen(true)}
+                className="w-full text-left text-xs px-1"
+                style={{ fontFamily: BODY_FONT, fontStyle: "italic", fontSize: 13.5, color: "var(--ink3)" }}
+              >
+                ☾ The day's debrief is in — tap to read
+              </button>
+            )}
+          </section>
+        )}
+
+        {/* Needs-you — THE inscription tablet; renders NOTHING when nothing needs him */}
+        {bridge.length > 0 && (
+          <Panel tier="glass" labelGold label={<>Needs you · {roman(bridge.length)}</>} className="mt-6">
+            <div className="space-y-5">
+              {bridge.slice(0, 3).map((s) => (
+                <div key={s.id}>
+                  <p className="text-sm font-medium" style={{ color: SEV_INK[s.severity] ?? "var(--ink)" }}>{s.title}</p>
+                  {s.body && (
+                    <p className="text-xs mt-1 line-clamp-3 whitespace-pre-wrap" style={{ color: "var(--ink3)" }}>{s.body}</p>
+                  )}
+                  <div className="flex gap-2 mt-2.5 flex-wrap items-center">
+                    {confirmable(s) && (
+                      <Btn onClick={() => rule("/api/autonomy/confirm", s.id)} disabled={busy === s.id}>
+                        {busy === s.id ? "…" : "Confirm & do it"}
+                      </Btn>
+                    )}
+                    {undoable(s) && (
+                      <Btn ghost onClick={() => rule("/api/autonomy/undo", s.id)} disabled={busy === s.id}>
+                        Undo
+                      </Btn>
+                    )}
+                    <Btn ghost onClick={() => act({ action: "ackSignal", id: s.id, status: "acknowledged" })}>
+                      Got it
+                    </Btn>
+                    <button
+                      onClick={() => act({ action: "ackSignal", id: s.id, status: "dismissed" })}
+                      className="text-xs px-2"
+                      style={{ fontFamily: BODY_FONT, fontWeight: 600, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink3)" }}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {bridge.length > 3 && (
+              <a href="/decisions" className="block text-xs mt-4" style={{ color: "var(--ink3)" }}>
+                +{bridge.length - 3} more on Decisions →
+              </a>
+            )}
+          </Panel>
+        )}
+
+        {/* ── THE NIGHT LEDGER — proof of the night shift, verb-first ── */}
+        {overnight.length > 0 && (
+          <section className="mt-8">
+            <div className="flex items-baseline justify-between gap-4 flex-wrap">
+              <button
+                onClick={() => setOvernightOpen((o) => !o)}
+                className="au-label-row"
+                style={{ color: "var(--gold)", background: "none", border: 0, cursor: "pointer", padding: 0, textAlign: "left" }}
+              >
+                <Tick /> While you slept — {overnight.length} act{overnight.length === 1 ? "" : "s"}, all reversible{" "}
+                <span style={{ color: "var(--ink3)" }}>{overnightOpen ? "· hide" : "· see"}</span>
+              </button>
+              {cleanNights != null && cleanNights >= 2 && (
+                <span className="au-kicker" style={{ color: "var(--gold)" }}>
+                  clean nights · {cleanNights} in a row
+                </span>
+              )}
+            </div>
+            {overnightOpen && (
+              <div>
+                <div className="au-rule" style={{ marginBottom: 0 }} />
+                {overnight.map((s) => (
+                  <LedgerRow
+                    key={s.id}
+                    tick="em"
+                    verb={s.title}
+                    obj={s.kind.replace(/_/g, " ")}
+                    onUndo={undoable(s) ? () => rule("/api/autonomy/undo", s.id) : undefined}
+                  />
+                ))}
+                <a href="/aurelius?tab=autonomy" className="block text-[11px] pt-2" style={{ color: "var(--ink3)" }}>
+                  all autonomous actions →
+                </a>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* Receipts that landed "pending" but need no ruling — kept OUT of the
+            needs-you tablet and off the bell, collapsed to a count of their own. */}
+        {receipts.length > 0 && (
+          <section className="mt-4">
+            <button
+              onClick={() => setReceiptsOpen((o) => !o)}
+              className="text-xs px-1"
+              style={{ fontFamily: BODY_FONT, fontStyle: "italic", fontSize: 13.5, color: "var(--ink3)" }}
+            >
+              ℹ {receipts.length} update{receipts.length === 1 ? "" : "s"}, nothing to decide{" "}
+              {receiptsOpen ? "· hide" : "· see"}
+            </button>
+            {receiptsOpen && (
+              <div className="mt-1">
+                {receipts.map((s) => (
+                  <LedgerRow
+                    key={s.id}
+                    tick="hollow"
+                    verb={s.title}
+                    obj={s.kind.replace(/_/g, " ")}
+                    right={
+                      <button className="au-undo" onClick={() => act({ action: "ackSignal", id: s.id, status: "acknowledged" })}>
+                        got it
+                      </button>
+                    }
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        <Divider />
+
+        {/* ── One scroll down: today's board ── */}
+        <section>
+          <div className="flex items-baseline justify-between gap-4 flex-wrap px-1">
+            <SectionLabel row>Today&apos;s board</SectionLabel>
+            <span style={{ fontFamily: DATA_FONT, fontSize: 11.5, letterSpacing: ".06em", color: "var(--ink3)", fontVariantNumeric: "tabular-nums" }}>
+              {today ? `${today.doneToday} done · ${tasks.length} open` : ""}
+            </span>
+          </div>
+          <ul className="mt-1">
+            {tasks.map((t) => (
+              <li key={t.id} className="au-lrow">
+                <button
+                  onClick={() => act({ action: "completeTask", id: t.id })}
+                  className={`relative after:absolute after:-inset-3 after:content-[''] w-4 h-4 border rounded-sm shrink-0 ${
+                    t.status === "overdue" || (today?.overdue ?? []).some((o) => o.id === t.id)
+                      ? "border-red-400 hover:bg-red-400/30"
+                      : "border-aurelius-gold hover:bg-aurelius-gold/40"
+                  }`}
+                  title="Done"
+                />
+                <span className="au-verb text-sm flex-1 truncate">
+                  {t.priority === "high" && <span style={{ color: "var(--gold)" }} className="mr-1.5">!</span>}
+                  {t.title}
+                </span>
+                {t.domain && <span className="au-obj" style={{ fontSize: 13 }}>{t.domain}</span>}
+              </li>
+            ))}
+            {tasks.length === 0 && (
+              <li className="italic text-sm px-1 py-2" style={{ color: unreachable ? "var(--attn)" : "var(--ink3)", fontFamily: BODY_FONT }}>
+                {unreachable ? "Couldn't reach the brain — this may not be the whole picture." : "Nothing on deck."}
+              </li>
+            )}
+          </ul>
+          <div className="au-chatbar mt-4">
+            <input
+              ref={taskInputRef}
+              value={newTask}
+              onChange={(e) => setNewTask(e.target.value)}
+              onKeyDown={async (e) => {
+                if (e.key === "Enter" && newTask.trim() && !capturing) {
+                  // Clear ONLY on confirmed save — a failed capture keeps the
+                  // text; the in-flight guard stops double-Enter on a slow
+                  // network from filing the task twice (post-sweep council).
+                  setCapturing(true);
+                  try {
+                    const title = newTask.trim();
+                    if (await act({ action: "createTask", title, status: "today" })) setNewTask("");
+                  } finally {
+                    setCapturing(false);
+                  }
+                }
+              }}
+              placeholder="Add a task for today…"
+              aria-label="Add a task for today"
+            />
+          </div>
+          {flash && <p className="text-xs mt-2 px-1" style={{ color: "var(--attn)" }}>{flash}</p>}
+          {(today?.habits ?? []).length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-4 justify-center">
+              {(today?.habits ?? []).map((h) => (
+                <button
+                  key={h.id}
+                  onClick={() => !h.doneToday && act({ action: "completeHabit", id: h.id })}
+                  className="text-xs rounded-full px-3 py-1.5 border min-h-[32px]"
+                  style={
+                    h.doneToday
+                      ? { borderColor: "var(--gold)", background: "rgba(212,175,55,.16)", color: "var(--gold)" }
+                      : { borderColor: "var(--gold-line)", color: "var(--ink2)" }
+                  }
+                >
+                  {h.doneToday ? "✓ " : ""}
+                  {h.name}
+                  {h.streak > 1 && <span style={{ opacity: 0.7 }}> · {h.streak}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <Divider capital />
+
+        {/* ── The spine: talk to Aurelius (One Box lands fully in UX-PR6) ── */}
+        <section className="mt-2 flex-1 flex flex-col">
+          <AureliusChat />
+        </section>
+      </div>
     </div>
   );
 }
