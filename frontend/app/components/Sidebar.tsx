@@ -6,15 +6,16 @@ import AureliusCrest from "../../components/identity/AureliusCrest";
 import { operatorRegistry, OperatorDefinition } from "../../lib/operators/operatorRegistry";
 
 const NAV_GLYPHS: Record<string, string> = {
-  Home: "❂",
+  Morning: "❂",
+  Chat: "❧",
   Decisions: "⇄",
-  Calendar: "◷",
-  "Goals & Projects": "◎",
-  Brain: "❈",
   Business: "◈",
-  Aurelius: "♛",
+  Goals: "◎",
+  Brain: "❈",
+  Calendar: "◷",
+  Machine: "⚙",
+  Tuning: "♛",
   Tools: "⚒",
-  Engines: "⚙",
   Settings: "✦",
 };
 
@@ -54,10 +55,11 @@ export default function Sidebar() {
                     key={item.name}
                     href={item.path}
                     title={item.description}
-                    className={`flex items-center gap-3 px-3 py-2 rounded transition-colors ${
+                    aria-current={active ? "page" : undefined}
+                    className={`flex items-center gap-3 px-3 py-2 rounded-sm transition-colors border-l ${
                       active
-                        ? "bg-gradient-to-r from-aurelius-gold/25 to-transparent text-aurelius-gold font-semibold border-l-2 border-aurelius-gold"
-                        : "text-aurelius-text/90 hover:text-aurelius-gold hover:bg-aurelius-gold/5"
+                        ? "border-aurelius-gold bg-aurelius-gold/10 text-aurelius-gold"
+                        : "border-transparent text-aurelius-text/90 hover:text-aurelius-gold hover:bg-aurelius-gold/5"
                     }`}
                   >
                     <span className={active ? "text-aurelius-gold" : "text-aurelius-gold/50"}>
