@@ -112,6 +112,21 @@ engagement question → (optional partner code)`.
   it strictly as a **visual/content-style reference** — the feel to aim for in how Calhoun's
   content looks and reads. It is NOT a business/funnel/offer to reverse-engineer; do not build
   items around studying their strategy. Aesthetic benchmark only.
+- **2026-08-09, reaffirmed by Cole from a specific Opus ad** ("I like this a lot on the
+  marketing side"). What the look concretely is, read off that ad:
+  - **Editorial black-and-white athlete photography** — moody, documentary, athletic; never
+    neon "fitness-bro" styling, never stock-gym clichés.
+  - **Institutional framing** — "Performance Dept." / "Department of Sports Performance"
+    margin text; the authority of a college weight room, which matches the standard-setter
+    voice exactly.
+  - **The program table IS the creative** — clean, legible sets/reps/intensity tables
+    (phone-mockup or poster-style). For a coach, showing real structured programming is the
+    credibility claim; Calhoun's programs already live in Sheets, so this raw material exists.
+    Any table shown publicly is anonymized (minors: always).
+  - **Checklist slide** — plain rows that kill objections one per line (what's included, how
+    it's delivered, start today). Concrete nouns, no adjectives.
+  - Carousel grammar worth reusing: (1) editorial hero, (2) the actual program table,
+    (3) the checklist + CTA.
 
 ## Brand assets Aurelius should ingest (the ask on Cole)
 
