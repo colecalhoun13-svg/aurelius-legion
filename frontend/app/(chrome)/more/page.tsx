@@ -9,6 +9,17 @@ import Link from "next/link";
 
 const GROUPS: Array<{ title: string; items: Array<{ name: string; path: string; glyph: string; desc: string }> }> = [
   {
+    // The daily coaching surfaces — the tab bar's comment promises these lead
+    // the More list, and Athletes shipped with no mobile door at all (rule 8:
+    // built is not done, done is reachable).
+    title: "The day",
+    items: [
+      { name: "Athletes", path: "/athletes", glyph: "⚔", desc: "The roster — trends, targets, PRs, sheets, session feedback" },
+      { name: "Calendar", path: "/calendar", glyph: "▤", desc: "The week as Aurelius sees it" },
+      { name: "Goals", path: "/goals", glyph: "◎", desc: "Campaigns and the scoreboard" },
+    ],
+  },
+  {
     title: "Direction",
     items: [
       { name: "Brain", path: "/brain", glyph: "❈", desc: "The shelves, ask-anything, and the syntheses" },

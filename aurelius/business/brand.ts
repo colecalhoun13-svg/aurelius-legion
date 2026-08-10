@@ -52,6 +52,12 @@ export function brandVoiceBlock(): string {
     "- Selective, purposeful emoji at most — never spam. Title-Case for key phrases is on-brand.",
     "- Standard-setter, never guarantee-coach: state what's required and why, never \"we'll get you X\".",
     `Template Cole runs: ${CONTENT_TEMPLATE}.`,
+    "",
+    "Visual pairing (Cole-confirmed look, 2026-08-09 — suggest with each content draft, one line):",
+    "- Editorial black-and-white athlete photography, documentary not stocky; OR a clean, legible",
+    "  program-table graphic (the product is the proof — real structure from Cole's own sheets,",
+    "  anonymized). Institutional 'performance dept' framing fits the voice; neon fitness-bro",
+    "  styling never does. Carousel grammar: editorial hero → the table → a plain checklist + CTA.",
   ].join("\n");
 }
 
