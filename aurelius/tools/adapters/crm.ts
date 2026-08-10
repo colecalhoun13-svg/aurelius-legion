@@ -139,6 +139,14 @@ export const crmAdapter: ToolAdapter = {
       dataSchema: '{ targetId: string }',
     },
     {
+      name: "log_battery",
+      description:
+        "Log a testing day in one shot — Cole's battery: 10-yard dash (s), 5-10-5 (s), vertical jump (in), broad jump (in), top speed (mph), trap bar 3RM (lbs), squat 3RM (lbs). Use when Cole reads off test results ('Jake tested: 10 in 1.68, vert 32, trap bar 405'). Map his shorthand to the canonical labels; skip anything he didn't say. Each number runs full PR/target detection.",
+      dataSchema: '{ client: string (name or id), entries: [{ label: string, value: number, unit?: string }] }',
+      example:
+        '[TOOL: crm.log_battery {"client": "Jake Miller", "entries": [{"label": "10-yard dash", "value": 1.68, "unit": "s"}, {"label": "vertical jump", "value": 32, "unit": "in"}, {"label": "trap bar 3RM", "value": 405, "unit": "lbs"}]}]',
+    },
+    {
       name: "client_detail",
       description:
         "Everything about one client: engagements, recent sessions, invoices, payments, lifetime value. Use for 'how's Jake doing', 'what's Jake on'.",
@@ -326,6 +334,13 @@ export const crmAdapter: ToolAdapter = {
           if (!data.targetId) throw new Error("drop_target needs targetId (from athlete_performance's targets).");
           const { dropTarget } = await import("../../crm/targets.ts");
           return { ok: true, output: await dropTarget(String(data.targetId)) as any };
+        }
+
+        case "log_battery": {
+          const clientId = await resolveClientId(data);
+          const { logBattery } = await import("../../training/battery.ts");
+          const out = await logBattery(clientId, Array.isArray(data.entries) ? data.entries : []);
+          return { ok: true, output: out as any };
         }
 
         case "client_detail": {

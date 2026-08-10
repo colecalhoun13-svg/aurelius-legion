@@ -236,6 +236,25 @@ crmRouter.post("/clients/:id/sheet/find", async (req: Request, res: Response) =>
   }
 });
 
+crmRouter.post("/clients/:id/battery", async (req: Request, res: Response) => {
+  try {
+    const { logBattery } = await import("../training/battery.ts");
+    res.json(await logBattery(String(req.params.id), Array.isArray(req.body?.entries) ? req.body.entries : []));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+// STATIC route — but it lives under /battery, not /clients/:id, so order is safe.
+crmRouter.get("/battery/records", async (_req: Request, res: Response) => {
+  try {
+    const { batteryRecords, BATTERY } = await import("../training/battery.ts");
+    res.json({ battery: BATTERY, records: await batteryRecords() });
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
 // The pass-2 review engine, reachable from the Athletes tab: most recent
 // session in their sheet → reasoned feedback → written to the Feedback tab.
 crmRouter.post("/clients/:id/session-feedback", async (req: Request, res: Response) => {
