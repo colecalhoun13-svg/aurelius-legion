@@ -5,11 +5,14 @@
 //
 // The roster comes from /api/athletes (backed by crm/performance.athleteRoster
 // — BOTH kinds: paying clients and training-only athletes, each badged, each
-// carrying a trend summary). The QUICK-LOG BAR up top is the page's primary
-// action for gym use — pick an athlete, type the number, done; it POSTs the
-// same retention kind:"metric" write as everything else, PR detection
-// included. The roster sorts (recent · trending · PRs · name) and filters
-// (all · clients · training) client-side. Selecting a row expands the
+// carrying a trend summary) along with Cole's canonical TEST BATTERY and the
+// roster-wide RECORD WALL (training/battery.ts) — the wall is the page's
+// hero: best mark per test, holder named, empty slots engraved hollow. The
+// QUICK-LOG BAR has two speeds: single metric, or TESTING DAY — the whole
+// battery as one grid, blanks skip, one save, per-test PRs named. Both POST
+// the same retention machinery, PR detection included. The roster sorts
+// (recent · trending · PRs · name) and filters (all · clients · training)
+// client-side. Selecting a row expands the
 // performance view in place (/api/athletes/[id]): per-metric sparkline
 // trends with momentum tags (sliding/stalled/streak) and relative strength,
 // targets with server-derived pace, the radar, the PR ledger, session
@@ -28,7 +31,7 @@
 // (positive always = better, even for sprint times — the server orients).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Panel, Btn, Divider, LedgerRow, SectionLabel, day } from "../../../components/kit";
+import { Panel, Btn, Divider, LedgerRow, SectionLabel, Tick, day } from "../../../components/kit";
 import AthleteRadar, { type RadarAxis } from "../../../components/kit/AthleteRadar";
 
 /* ── types (JSON shapes of crm/performance — dates arrive as ISO strings) ── */
@@ -93,6 +96,18 @@ type SessionRow = {
   happenedAt: string | null;
   durationMin: number | null;
   notes: string | null;
+};
+
+// Cole's canonical test battery (aurelius/training/battery.ts) — served by
+// /api/athletes so the labels/units/order live in exactly one place.
+type BatteryTest = { label: string; unit: string; hint: string; optional?: boolean };
+
+type BatteryRecord = {
+  label: string;
+  unit: string;
+  holder: string | null; // null = no one has a mark yet — an honest empty slot
+  value: number | null;
+  achievedAt: string | null;
 };
 
 type Detail = {
@@ -371,11 +386,18 @@ export default function AthletesPage() {
   // athlete-switching can never wedge the panel or paint the wrong error.
   const detailReqRef = useRef<string | null>(null);
 
+  // The battery + record wall ride the same roster read — one fetch keeps
+  // the wall, the chips, and the testing-day form in perfect step.
+  const [battery, setBattery] = useState<BatteryTest[]>([]);
+  const [records, setRecords] = useState<BatteryRecord[] | null>(null);
+
   const loadRoster = useCallback(async (): Promise<RosterRow[]> => {
     const res = await fetch("/api/athletes");
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error ?? "Failed to load athletes");
     setAthletes(data.athletes);
+    setBattery(data.battery ?? []);
+    setRecords(data.records ?? null);
     return data.athletes as RosterRow[];
   }, []);
 
@@ -506,8 +528,11 @@ export default function AthletesPage() {
             </div>
           ) : (
             <>
+              {/* ── THE RECORD WALL — the monument testing day is played for ── */}
+              {records && records.length > 0 && <RecordWall records={records} />}
+
               {/* ── quick log — THE primary action for gym use ── */}
-              <QuickLogBar athletes={athletes} onLogged={refreshAfterLog} />
+              <QuickLogBar athletes={athletes} battery={battery} onLogged={refreshAfterLog} />
 
               {staleNote && (
                 <p className="au-kicker" style={{ display: "block", textAlign: "center", color: "var(--attn)" }}>
@@ -623,7 +648,7 @@ export default function AthletesPage() {
                         ) : detail == null || detail.id !== a.id ? (
                           <p className="au-kicker" style={{ display: "block", textAlign: "center" }}>reading the ledger…</p>
                         ) : (
-                          <AthleteDetail key={a.id} detail={detail} onChanged={refreshAll} />
+                          <AthleteDetail key={a.id} detail={detail} battery={battery} onChanged={refreshAll} />
                         )}
                       </div>
                     )}
@@ -643,14 +668,162 @@ export default function AthletesPage() {
   );
 }
 
+/* ═════════════ THE RECORD WALL — the roster's monument ═════════════ */
+
+// The best mark on the whole roster, every battery test, engraved. Empty
+// slots stay visible and hollow — a record wall with blank lines is an
+// invitation; a hidden one is nothing. This is what testing day is played
+// for, so it wears more ceremony than anything else on the page.
+const GOLD_ENGRAVE: React.CSSProperties = {
+  background: "linear-gradient(180deg,#f2d377,#d4af37,#8a6f22)",
+  WebkitBackgroundClip: "text",
+  backgroundClip: "text",
+  WebkitTextFillColor: "transparent",
+  color: "var(--gold)", // fallback where background-clip:text is unsupported
+};
+
+function RecordWall({ records }: { records: BatteryRecord[] }) {
+  return (
+    <section className="au-card p-4" style={{ borderColor: "var(--gold-line)" }} aria-label="The record wall">
+      <SectionLabel gold>The Record Wall</SectionLabel>
+      <div style={{ height: "1.1rem" }} />
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))",
+          gap: "1.1rem .8rem",
+        }}
+      >
+        {records.map((r) => {
+          const held = r.holder != null && r.value != null;
+          return (
+            <div
+              key={r.label}
+              className="text-center"
+              style={{ borderTop: `1px solid ${held ? "var(--gold-line)" : "var(--line1)"}`, paddingTop: ".7rem", position: "relative" }}
+            >
+              {/* the tick on the rule: gold laurel when held, hollow when waiting */}
+              <span style={{ position: "absolute", top: 0, left: "50%", transform: "translate(-50%,-55%)", fontSize: 9, lineHeight: 0, background: "var(--bg1)", padding: "0 5px" }}>
+                <Tick hollow={!held} />
+              </span>
+              <div style={{ ...DATA_FONT, fontSize: 9.5, letterSpacing: ".2em", textTransform: "uppercase", color: "var(--ink3)" }}>
+                {r.label}
+              </div>
+              {held ? (
+                <>
+                  <div style={{ ...SERIF_FONT, fontWeight: 700, fontSize: "1.55rem", lineHeight: 1.25, fontVariantNumeric: "tabular-nums", marginTop: 2, ...GOLD_ENGRAVE }}>
+                    {fmtNum(r.value!)}
+                    <span style={{ ...BODY_FONT, fontWeight: 600, fontSize: ".42em", letterSpacing: ".08em", marginLeft: 2 }}>
+                      {r.unit}
+                    </span>
+                  </div>
+                  <div style={{ ...BODY_FONT, fontStyle: "italic", fontSize: 13.5, color: "var(--ink2)", marginTop: 1 }}>
+                    {r.holder}
+                  </div>
+                  <div style={{ ...DATA_FONT, fontSize: 10, color: "var(--ink3)", marginTop: 1 }}>{day(r.achievedAt)}</div>
+                </>
+              ) : (
+                <>
+                  <div style={{ ...SERIF_FONT, fontWeight: 700, fontSize: "1.55rem", lineHeight: 1.25, color: "var(--ink3)", opacity: 0.6, marginTop: 2 }}>
+                    —
+                  </div>
+                  <div className="au-kicker" style={{ display: "block", fontSize: 12 }}>no mark yet</div>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="au-kicker" style={{ display: "block", textAlign: "center", marginTop: "1.1rem", fontSize: 12.5 }}>
+        best on the roster, every test — beat the mark and the name changes
+      </p>
+    </section>
+  );
+}
+
+/* ═════════ the combine card — an athlete's battery, scouting-card style ═════════ */
+
+function CombineCard({ battery, series }: { battery: BatteryTest[]; series: Series[] }) {
+  // Match a battery slot to the athlete's series: label case-insensitive,
+  // preferring the canonical unit when the same label was logged in two.
+  const find = (t: BatteryTest): Series | null => {
+    const label = t.label.trim().toLowerCase();
+    const matches = series.filter((s) => s.label.trim().toLowerCase() === label);
+    if (matches.length === 0) return null;
+    return matches.find((s) => (s.unit ?? "").trim().toLowerCase() === t.unit.toLowerCase()) ?? matches[0];
+  };
+  return (
+    <div>
+      <SectionLabel row>Combine card</SectionLabel>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(104px, 1fr))",
+          gap: ".9rem .6rem",
+          marginTop: ".8rem",
+        }}
+      >
+        {battery.map((t) => {
+          const s = find(t);
+          const isBest = s != null && s.latest.value === s.best.value;
+          return (
+            <div key={t.label} className="text-center" style={{ borderTop: "1px solid var(--line1)", paddingTop: ".55rem" }}>
+              <div style={{ ...DATA_FONT, fontSize: 9.5, letterSpacing: ".16em", textTransform: "uppercase", color: "var(--ink3)" }}>
+                {t.label}
+              </div>
+              {s ? (
+                <>
+                  <div style={{ ...SERIF_FONT, fontWeight: 700, fontSize: "1.35rem", lineHeight: 1.25, color: "var(--ink)", fontVariantNumeric: "tabular-nums", marginTop: 2 }}>
+                    {fmtNum(s.latest.value)}
+                    <span style={{ ...BODY_FONT, fontWeight: 600, fontSize: ".45em", letterSpacing: ".06em", color: "var(--ink2)", marginLeft: 2 }}>
+                      {s.unit ?? t.unit}
+                    </span>
+                  </div>
+                  <div style={{ ...DATA_FONT, fontSize: 10.5, fontVariantNumeric: "tabular-nums", marginTop: 1, color: isBest ? "var(--gold)" : "var(--ink3)" }}>
+                    {isBest ? "★ " : "best "}
+                    {fmtNum(s.best.value)}
+                    {s.improvementPct != null && s.improvementPct !== 0 && (
+                      <span style={{ color: s.improvementPct > 0 ? "var(--money)" : "var(--danger)", marginLeft: 5 }} aria-label={s.improvementPct > 0 ? "improving" : "declining"}>
+                        {s.improvementPct > 0 ? "▲" : "▼"}
+                      </span>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* honest em-dash — untested is a fact, not a zero */}
+                  <div style={{ ...SERIF_FONT, fontWeight: 700, fontSize: "1.35rem", lineHeight: 1.25, color: "var(--ink3)", opacity: 0.6, marginTop: 2 }}>
+                    —
+                  </div>
+                  <div className="au-kicker" style={{ display: "block", fontSize: 11 }}>untested</div>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ═════════════════════ the expanded athlete ═════════════════════ */
 
 const INITIAL_SERIES = 6;
 
-function AthleteDetail({ detail, onChanged }: { detail: Detail; onChanged: () => Promise<void> }) {
+function AthleteDetail({ detail, battery, onChanged }: { detail: Detail; battery: BatteryTest[]; onChanged: () => Promise<void> }) {
   const [showAll, setShowAll] = useState(false);
   const { axes, priorR } = useMemo(() => deriveAxes(detail.series), [detail.series]);
-  const visible = showAll ? detail.series : detail.series.slice(0, INITIAL_SERIES);
+  // Battery tests lead the Trends list in battery order; everything else
+  // follows in the existing most-recently-trained order.
+  const ordered = useMemo(() => {
+    const idx = new Map(battery.map((t, i) => [t.label.trim().toLowerCase(), i]));
+    const bat: Series[] = [];
+    const rest: Series[] = [];
+    for (const s of detail.series) (idx.has(s.label.trim().toLowerCase()) ? bat : rest).push(s);
+    bat.sort((a, b) => idx.get(a.label.trim().toLowerCase())! - idx.get(b.label.trim().toLowerCase())!);
+    return [...bat, ...rest];
+  }, [detail.series, battery]);
+  const visible = showAll ? ordered : ordered.slice(0, INITIAL_SERIES);
   const centerWord =
     detail.prCount > 0 ? `${detail.prCount} PR${detail.prCount === 1 ? "" : "S"}` : detail.sport ?? undefined;
 
@@ -686,6 +859,13 @@ function AthleteDetail({ detail, onChanged }: { detail: Detail; onChanged: () =>
             .filter(Boolean)
             .join(" · ")}
         </p>
+      )}
+
+      {/* ── the combine card — his battery numbers, scouting-card style ── */}
+      {battery.length > 0 && (
+        <div style={{ marginTop: "1.6rem" }}>
+          <CombineCard battery={battery} series={detail.series} />
+        </div>
       )}
 
       {/* ── trends ── */}
@@ -1297,13 +1477,15 @@ function SheetBlock({ clientId, sheetUrl, onChanged }: {
 
 /* ═════════════════ quick log — the gym-floor write ═════════════════ */
 
-// The fastest thing on the page: pick an athlete, type the number, done.
-// Same POST as the detail-panel form (retention kind:"metric", PR detection
-// included). Athlete + label + unit are STICKY after a save and only the
-// value clears — both gym flows ("three lifts for one athlete", "everyone's
-// 40 today") are one keystroke away from the next entry.
-function QuickLogBar({ athletes, onLogged }: {
+// The fastest thing on the page, two speeds. SINGLE: pick an athlete, type
+// the number, done — athlete + label + unit stay sticky, only the value
+// clears. TESTING DAY: the whole battery as one grid — blanks skip, one
+// save logs every filled test through the full PR/target machinery, and the
+// athlete select stays put so the next kid on the box jump is two taps away
+// (testing day at the gym is 10 athletes in 40 minutes).
+function QuickLogBar({ athletes, battery, onLogged }: {
   athletes: RosterRow[];
+  battery: BatteryTest[];
   onLogged: (clientId: string) => Promise<void>;
 }) {
   // Select is always in recency order (who you just coached is on top),
@@ -1323,12 +1505,19 @@ function QuickLogBar({ athletes, onLogged }: {
     if (!options.some((o) => o.id === clientId)) setClientId(options[0]?.id ?? "");
   }, [options, clientId]);
 
+  const [mode, setMode] = useState<"single" | "battery">("single");
   const [label, setLabel] = useState("");
   const [value, setValue] = useState("");
   const [unit, setUnit] = useState("");
+  const [vals, setVals] = useState<Record<string, string>>({}); // battery grid, keyed by test label
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [prFlash, setPrFlash] = useState(false);
+
+  const flashPR = () => {
+    setPrFlash(true);
+    window.setTimeout(() => setPrFlash(false), 1400);
+  };
 
   const submit = async () => {
     const who = options.find((o) => o.id === clientId);
@@ -1352,10 +1541,7 @@ function QuickLogBar({ athletes, onLogged }: {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "Could not log the metric");
-      if (data.isPR) {
-        setPrFlash(true);
-        window.setTimeout(() => setPrFlash(false), 1400);
-      }
+      if (data.isPR) flashPR();
       setNote({
         ok: true,
         text: `${who.name} — ${label.trim()} ${fmt(v, unit.trim() || null)} logged${data.isPR ? " · a personal best" : ""}`,
@@ -1369,52 +1555,158 @@ function QuickLogBar({ athletes, onLogged }: {
     }
   };
 
+  const submitBattery = async () => {
+    const who = options.find((o) => o.id === clientId);
+    if (!who) {
+      setNote({ ok: false, text: "Pick an athlete." });
+      return;
+    }
+    const entries: Array<{ label: string; value: number; unit: string }> = [];
+    for (const t of battery) {
+      const raw = (vals[t.label] ?? "").trim();
+      if (!raw) continue; // blanks skip — that's the contract
+      const v = Number(raw);
+      if (!Number.isFinite(v)) {
+        setNote({ ok: false, text: `${t.label} needs a number (got "${raw}").` });
+        return;
+      }
+      entries.push({ label: t.label, value: v, unit: t.unit });
+    }
+    if (entries.length === 0) {
+      setNote({ ok: false, text: "Nothing to log — every field is blank." });
+      return;
+    }
+    setBusy(true);
+    setNote(null);
+    try {
+      const res = await fetch("/api/athletes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "battery", clientId, entries }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "Could not log the testing day");
+      const results = (data.results ?? []) as Array<{ label: string; ok: boolean; isPR: boolean; error?: string }>;
+      const okCount = results.filter((r) => r.ok).length;
+      const prs = results.filter((r) => r.isPR).map((r) => r.label);
+      const failed = results.filter((r) => !r.ok);
+      if (prs.length > 0) flashPR();
+      const parts = [`${who.name} — ${okCount} test${okCount === 1 ? "" : "s"} logged`];
+      if (prs.length > 0) parts.push(`${prs.length} PR${prs.length === 1 ? "" : "s"}: ${prs.join(" · ")}`);
+      if (failed.length > 0) parts.push(`failed: ${failed.map((f) => `${f.label} (${f.error ?? "error"})`).join(" · ")}`);
+      setNote({ ok: failed.length === 0, text: parts.join(" — ") });
+      setVals({}); // the athlete stays — next kid is two taps away
+      await onLogged(clientId);
+    } catch (e: any) {
+      setNote({ ok: false, text: e?.message ?? "Could not log the testing day" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const athleteSelect = (
+    <select
+      value={clientId}
+      onChange={(e) => setClientId(e.target.value)}
+      aria-label="Athlete"
+      disabled={busy}
+      className={`${field} min-w-[9rem]`}
+    >
+      {options.map((o) => (
+        <option key={o.id} value={o.id}>{o.name}</option>
+      ))}
+    </select>
+  );
+
   return (
     <div className="au-card p-3">
-      <div className="flex gap-2 flex-wrap items-center">
-        <select
-          value={clientId}
-          onChange={(e) => setClientId(e.target.value)}
-          aria-label="Athlete"
-          disabled={busy}
-          className={`${field} min-w-[9rem]`}
-        >
-          {options.map((o) => (
-            <option key={o.id} value={o.id}>{o.name}</option>
-          ))}
-        </select>
-        <input
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          placeholder="Vertical, squat, 40…"
-          aria-label="Metric label"
-          disabled={busy}
-          className={`${field} flex-1 min-w-[9rem]`}
-        />
-        <input
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !busy) submit(); }}
-          placeholder="Value"
-          aria-label="Value"
-          inputMode="decimal"
-          disabled={busy}
-          className={`${field} w-24`}
-        />
-        <input
-          value={unit}
-          onChange={(e) => setUnit(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !busy) submit(); }}
-          placeholder="in / lbs / s"
-          aria-label="Unit"
-          disabled={busy}
-          className={`${field} w-24`}
-        />
-        <Btn onClick={submit} disabled={busy}>
-          {busy ? "Logging…" : "Log it"}
-        </Btn>
-        <PrFlash on={prFlash} />
+      {/* the two speeds */}
+      <div className="flex items-center justify-between gap-2 flex-wrap" style={{ marginBottom: ".6rem" }}>
+        <div className="flex gap-1.5">
+          <ChipBtn on={mode === "single"} onClick={() => setMode("single")}>Single</ChipBtn>
+          <ChipBtn on={mode === "battery"} onClick={() => setMode("battery")}>Testing day</ChipBtn>
+        </div>
+        {mode === "battery" && (
+          <span className="au-kicker" style={{ fontSize: 12 }}>blanks skip — one save logs the whole battery</span>
+        )}
       </div>
+
+      {mode === "single" ? (
+        <div className="flex gap-2 flex-wrap items-center">
+          {athleteSelect}
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="Vertical, squat, 40…"
+            aria-label="Metric label"
+            disabled={busy}
+            className={`${field} flex-1 min-w-[9rem]`}
+          />
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !busy) submit(); }}
+            placeholder="Value"
+            aria-label="Value"
+            inputMode="decimal"
+            disabled={busy}
+            className={`${field} w-24`}
+          />
+          <input
+            value={unit}
+            onChange={(e) => setUnit(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !busy) submit(); }}
+            placeholder="in / lbs / s"
+            aria-label="Unit"
+            disabled={busy}
+            className={`${field} w-24`}
+          />
+          <Btn onClick={submit} disabled={busy}>
+            {busy ? "Logging…" : "Log it"}
+          </Btn>
+          <PrFlash on={prFlash} />
+        </div>
+      ) : (
+        <>
+          <div className="flex gap-2 flex-wrap items-center">{athleteSelect}</div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+              gap: ".5rem .6rem",
+              marginTop: ".6rem",
+            }}
+          >
+            {battery.map((t) => (
+              <label key={t.label} style={{ display: "block" }}>
+                <span style={{ ...DATA_FONT, fontSize: 9.5, letterSpacing: ".16em", textTransform: "uppercase", color: "var(--ink3)", display: "block", marginBottom: 2 }}>
+                  {t.label} · {t.unit}
+                  {t.optional && (
+                    <em style={{ ...BODY_FONT, fontStyle: "italic", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}> — optional</em>
+                  )}
+                </span>
+                <input
+                  value={vals[t.label] ?? ""}
+                  onChange={(e) => setVals((v) => ({ ...v, [t.label]: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !busy) submitBattery(); }}
+                  placeholder={t.hint}
+                  aria-label={`${t.label} (${t.unit})`}
+                  inputMode="decimal"
+                  disabled={busy}
+                  className={`${field} w-full`}
+                />
+              </label>
+            ))}
+          </div>
+          <div className="flex gap-2 items-center flex-wrap" style={{ marginTop: ".6rem" }}>
+            <Btn onClick={submitBattery} disabled={busy}>
+              {busy ? "Logging…" : "Log testing day"}
+            </Btn>
+            <PrFlash on={prFlash} />
+          </div>
+        </>
+      )}
+
       {note && (
         <p
           className="au-kicker"
