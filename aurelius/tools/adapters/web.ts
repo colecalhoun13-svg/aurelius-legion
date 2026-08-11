@@ -63,7 +63,7 @@ export const webAdapter: ToolAdapter = {
     {
       name: "deep_report",
       description:
-        "DEEP WORK: given a research brief, break it into angles, research each across web + academic sources, and produce a FULL structured report (markdown) — a real document, not a quick answer. Use when Cole asks to 'research X in depth', 'write me a report/breakdown on Y', 'go deep on Z'. Slow (multiple sources + synthesis); returns the report and files it in the brain. Says 'model-only' honestly if no live source backed it.",
+        "DEEP WORK: kick off a full multi-angle research report on a brief (web + academic sources → a real structured document, not a quick answer). Use when Cole asks to 'research X in depth', 'write me a report/breakdown on Y', 'go deep on Z'. This STARTS the research in the BACKGROUND (it takes a few minutes) and returns immediately with a status message — relay that message to Cole verbatim-ish; do NOT claim the report is done. The finished report is delivered to his Bridge (and Telegram) and saved to his Brain when ready.",
       dataSchema: '{ "brief": string, "operator"?: "strategy"|"training"|"business"|"wealth"|"health", "depth"?: "shallow"|"medium"|"deep" }',
       example: '[TOOL: tool=web action=deep_report data={"brief": "Velocity-based vs percentage-based training for HS athletes — what does the evidence say?", "operator": "training"}]',
     },
@@ -104,19 +104,23 @@ export const webAdapter: ToolAdapter = {
     if (action === "deep_report") {
       const brief = (data?.brief ?? "").toString().trim();
       if (brief.length < 8) return { ok: false, output: null, error: "deep_report needs a brief — a sentence or two on what to research." };
+      // A full report is minutes of work — longer than the tool-call timeout —
+      // so from chat we START it and return immediately; the finished report is
+      // delivered to the Bridge (+ Telegram) and saved to the Brain. Blocking
+      // here is what timed out at 120s. The Deep Work panel uses the synchronous
+      // path (Cole watches a loading screen there).
       try {
-        const { deepResearchReport } = await import("../../research/deepWork.ts");
-        const report = await deepResearchReport({
+        const { startDeepReportInBackground } = await import("../../research/deepWork.ts");
+        const kicked = startDeepReportInBackground({
           brief,
           operator: data?.operator ? String(data.operator) : undefined,
           depth: data?.depth ? (String(data.depth) as any) : undefined,
         });
-        if (!report.ok) return { ok: false, output: null, error: report.error ?? "deep report failed" };
-        // Return the full report as the tool output; the chat model folds it in
-        // for Cole, and it's already filed in the corpus (docId).
-        return { ok: true, output: { title: report.title, grounding: report.grounding, markdown: report.markdown, sources: report.sources, docId: report.docId } };
+        // Not an error even when a dup is already running — tell the model so it
+        // can relay the honest status to Cole.
+        return { ok: true, output: { status: kicked.started ? "started" : "already_running", message: kicked.message } };
       } catch (e: any) {
-        return { ok: false, output: null, error: e?.message ?? "deep report failed" };
+        return { ok: false, output: null, error: e?.message ?? "could not start deep report" };
       }
     }
     if (action === "youtube_transcript") {
