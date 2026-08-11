@@ -180,3 +180,68 @@ export async function deepResearchReport(input: DeepReportInput): Promise<DeepRe
 
   return { ok: true, title: plan.title, markdown, sources, grounding, angles: plan.angles, docId };
 }
+
+// ── Background delivery (the chat path) ──────────────────────────────
+//
+// A full report is 6+ sequential LLM calls + web fetches — minutes, not the
+// 120s a chat tool call is capped at. So from chat we DON'T block: we kick the
+// research off in the background, return immediately, and deliver the finished
+// report to the Bridge (which pushes to Telegram when configured) with the full
+// text saved to the Brain. The synchronous deepResearchReport() stays for the
+// Deep Work panel, where Cole is watching a loading screen.
+
+const inFlight = new Set<string>();
+
+export function startDeepReportInBackground(input: DeepReportInput): { started: boolean; message: string } {
+  const brief = (input.brief ?? "").trim();
+  if (brief.length < 8) return { started: false, message: "Give me a real brief — a sentence or two on what to research." };
+  const key = brief.toLowerCase().slice(0, 120);
+  if (inFlight.has(key)) {
+    return { started: false, message: `Already researching that one — I'll deliver it to your Bridge when it's done.` };
+  }
+  inFlight.add(key);
+
+  // Detach: research runs while chat returns instantly.
+  (async () => {
+    const { surfaceSignal } = await import("../core/bridge.ts");
+    const shortBrief = brief.length > 90 ? brief.slice(0, 90) + "…" : brief;
+    try {
+      const report = await deepResearchReport(input);
+      if (!report.ok) {
+        await surfaceSignal({
+          kind: "background_result", domain: "personal", sourceType: "deep_report",
+          sourceId: `deepreport:fail:${key}`, severity: "notice",
+          title: `Deep research couldn't finish`,
+          body: `Brief: "${shortBrief}"\n\n${report.error ?? "unknown error"}`,
+        }).catch(() => {});
+        return;
+      }
+      // Executive-summary preview for the notification; the full report lives in
+      // the Brain (docId) and reads on the Deep Work tab.
+      const preview = report.markdown.replace(/^>.*$/gm, "").trim().slice(0, 900);
+      await surfaceSignal({
+        kind: "background_result", domain: "personal", sourceType: "deep_report",
+        sourceId: `deepreport:${key}`, severity: "notice",
+        title: `Report ready — ${report.title}`,
+        body:
+          `${report.grounding === "external" ? "✓ web-grounded" : "⚠️ model-only"} · ${report.sources.length} source${report.sources.length === 1 ? "" : "s"}\n\n` +
+          `${preview}${report.markdown.length > 900 ? "…" : ""}\n\n` +
+          `— Full report saved to your Brain (Deep Work).`,
+      }).catch(() => {});
+    } catch (err: any) {
+      await surfaceSignal({
+        kind: "background_result", domain: "personal", sourceType: "deep_report",
+        sourceId: `deepreport:fail:${key}`, severity: "notice",
+        title: `Deep research errored`,
+        body: `Brief: "${shortBrief}"\n\n${err?.message ?? err}`,
+      }).catch(() => {});
+    } finally {
+      inFlight.delete(key);
+    }
+  })();
+
+  return {
+    started: true,
+    message: `On it — researching "${brief.length > 70 ? brief.slice(0, 70) + "…" : brief}" across multiple angles now. This runs a few minutes; I'll post the report to your Bridge and save it to your Brain (Deep Work) when it's done.`,
+  };
+}
