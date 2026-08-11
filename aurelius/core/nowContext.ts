@@ -10,7 +10,7 @@
 // model's sense of "now" never staleness-drifts by more than a minute.
 
 import { prisma } from "./db/prisma.ts";
-import { operatorTimeZone, operatorToday } from "./time.ts";
+import { operatorTimeZone, operatorDayRange } from "./time.ts";
 
 const TTL_MS = 60_000;
 let cached: { at: number; body: string } | null = null;
@@ -55,8 +55,10 @@ function localTime(d: Date): string {
 }
 
 async function buildBody(now: Date): Promise<string> {
-  const dstr = operatorToday();
-  const start = new Date(`${dstr}T00:00:00.000Z`);
+  // TZ-correct day window (2026-08-11 council) — and it MUST match the start
+  // that upsertTodayPlan/dayRange store the dailyPlan under, or the plan lookup
+  // below (where: { date: start }) silently misses on any non-UTC deploy.
+  const { dstr, start, end } = operatorDayRange();
   const lines: string[] = [];
 
   const [events, openToday, overdue, plan, grants] = await Promise.all([
@@ -69,7 +71,7 @@ async function buildBody(now: Date): Promise<string> {
     prisma.task.count({
       where: {
         status: { notIn: ["done", "abandoned"] },
-        OR: [{ status: "today" }, { scheduledFor: { gte: start, lte: new Date(`${dstr}T23:59:59.999Z`) } }],
+        OR: [{ status: "today" }, { scheduledFor: { gte: start, lt: end } }],
       },
     }),
     prisma.task.count({
