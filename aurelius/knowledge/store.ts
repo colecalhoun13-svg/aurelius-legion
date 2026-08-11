@@ -19,6 +19,11 @@ import { embedSourceSafe } from "../retrieval/embedPipeline.ts";
 // Phase 4.6: knowledge entries index for semantic recall on every write.
 // Text = human-readable rendering of scope.key + value + rationale.
 function indexKnowledgeEntry(entry: KnowledgeEntryShape): void {
+  // Rule 6: operational/mirror cursors (scope "system") are never embedded into
+  // the vector index — they're machine state, not recallable knowledge, and
+  // embedding them was the second half of the injected-scope hazard the
+  // 2026-08-11 council proved reachable. Skip them here, at the one index site.
+  if (entry.scope === "system") return;
   const valueStr =
     typeof entry.value === "string" ? entry.value : JSON.stringify(entry.value);
   const text = [
