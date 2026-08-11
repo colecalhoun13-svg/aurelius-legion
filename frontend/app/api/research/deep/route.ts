@@ -1,0 +1,56 @@
+import { NextResponse } from "next/server";
+
+// DEEP WORK — brief → full researched report (markdown). The heavy lifting
+// (multi-angle research + several LLM synthesis passes) lives in the backend
+// Express app (index.ts :: POST /api/aurelius/deep-report). We proxy to it
+// rather than duplicate that logic, EXACTLY like /api/aurelius does.
+//
+// Critical: this proxy runs SERVER-SIDE, so it reaches the backend over
+// loopback (127.0.0.1:3001) — no Codespaces port-forwarding, no public URL,
+// nothing to go stale when the codespace host changes. The browser only ever
+// talks to this same-origin route. Override the target with BACKEND_ORIGIN
+// if the backend runs elsewhere (e.g. the Mac Mini deploy).
+//
+// This call is SLOW — real research is 20–60+ seconds — so we deliberately
+// add no timeout of our own. Let fetch run until the backend answers.
+const BACKEND_ORIGIN = process.env.BACKEND_ORIGIN?.trim() || "http://127.0.0.1:3001";
+
+export const dynamic = "force-dynamic";
+
+export async function POST(request: Request) {
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  try {
+    const res = await fetch(`${BACKEND_ORIGIN}/api/aurelius/deep-report`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // Server-only env (never NEXT_PUBLIC) — unlocks the backend when its
+        // AURELIUS_API_KEY lock is set; harmless extra header when it isn't.
+        ...(process.env.AURELIUS_API_KEY ? { "x-aurelius-key": process.env.AURELIUS_API_KEY } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    return NextResponse.json(data, { status: res.status });
+  } catch (error: any) {
+    // The backend isn't reachable. Say so plainly, with the fix that matches
+    // where this is running. Three hosts, three different remedies: a managed
+    // platform, the Mini under launchd, and a dev box.
+    console.error("[api/research/deep] backend unreachable:", error?.message ?? error);
+    const hint = process.env.RAILWAY_ENVIRONMENT
+      ? "check BACKEND_ORIGIN on the app service and that the backend service is up"
+      : process.platform === "darwin"
+        ? "the backend isn't up — `launchctl kickstart -k gui/$(id -u)/com.aurelius.backend`, then check /Volumes/aurelius-backups/logs/backend.err"
+        : "start it with `cd aurelius && npx tsx index.ts`";
+    return NextResponse.json(
+      { ok: false, error: `Backend not reachable on ${BACKEND_ORIGIN} — ${hint}.` },
+      { status: 502 }
+    );
+  }
+}

@@ -60,6 +60,13 @@ export const webAdapter: ToolAdapter = {
       dataSchema: '{ "url": string, "ingest"?: boolean (default true), "domain"?: string }',
       example: '[TOOL: tool=web action=youtube_transcript data={"url": "https://youtu.be/dQw4w9WgXcQ"}]',
     },
+    {
+      name: "deep_report",
+      description:
+        "DEEP WORK: given a research brief, break it into angles, research each across web + academic sources, and produce a FULL structured report (markdown) — a real document, not a quick answer. Use when Cole asks to 'research X in depth', 'write me a report/breakdown on Y', 'go deep on Z'. Slow (multiple sources + synthesis); returns the report and files it in the brain. Says 'model-only' honestly if no live source backed it.",
+      dataSchema: '{ "brief": string, "operator"?: "strategy"|"training"|"business"|"wealth"|"health", "depth"?: "shallow"|"medium"|"deep" }',
+      example: '[TOOL: tool=web action=deep_report data={"brief": "Velocity-based vs percentage-based training for HS athletes — what does the evidence say?", "operator": "training"}]',
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     if (action === "search") {
@@ -92,6 +99,24 @@ export const webAdapter: ToolAdapter = {
         return { ok: true, output: { title: r.title, url: r.url, text: defuseDirectives(r.text.slice(0, 8000)) } };
       } catch (e: any) {
         return { ok: false, output: null, error: e?.message ?? "web fetch failed" };
+      }
+    }
+    if (action === "deep_report") {
+      const brief = (data?.brief ?? "").toString().trim();
+      if (brief.length < 8) return { ok: false, output: null, error: "deep_report needs a brief — a sentence or two on what to research." };
+      try {
+        const { deepResearchReport } = await import("../../research/deepWork.ts");
+        const report = await deepResearchReport({
+          brief,
+          operator: data?.operator ? String(data.operator) : undefined,
+          depth: data?.depth ? (String(data.depth) as any) : undefined,
+        });
+        if (!report.ok) return { ok: false, output: null, error: report.error ?? "deep report failed" };
+        // Return the full report as the tool output; the chat model folds it in
+        // for Cole, and it's already filed in the corpus (docId).
+        return { ok: true, output: { title: report.title, grounding: report.grounding, markdown: report.markdown, sources: report.sources, docId: report.docId } };
+      } catch (e: any) {
+        return { ok: false, output: null, error: e?.message ?? "deep report failed" };
       }
     }
     if (action === "youtube_transcript") {

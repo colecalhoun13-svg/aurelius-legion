@@ -24,6 +24,7 @@
 // One digest signal reports the sweep's work — counts, not items.
 
 import { prisma } from "../core/db/prisma.ts";
+import { NON_KEYHOLE_SCOPES } from "./proposals.ts";
 
 const KEYHOLE_CAP_PER_SWEEP = 25;
 const PROPOSAL_EXPIRY_DAYS = 30;
@@ -49,7 +50,7 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
   // one applied 25 and expired the rest of the eligible backlog unapplied —
   // the two policies in one function defeated each other).
   const ELIGIBLE = {
-    scope: { notIn: ["autonomy", "persona"] }, // hard rule 1 + one voice
+    scope: { notIn: [...NON_KEYHOLE_SCOPES] }, // hard rule 1 + one voice + rule 6 (system)
     OR: [
       { origin: { in: ["research", "ingestion"] } },
       // Backlog rows predate the origin column — the research engine's

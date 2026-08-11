@@ -1546,6 +1546,27 @@ app.post("/api/aurelius/research", async (req: Request, res: Response) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// DEEP WORK — brief → full researched report (markdown), POST /api/aurelius/deep-report
+// Body: { brief, operator?, depth?, maxAngles? }. Runs multi-angle research and
+// synthesizes a full document handed back to Cole AND saved to the corpus.
+// Heavy (several LLM calls + research) — lives in the backend process, proxied.
+// ═══════════════════════════════════════════════════════════════════
+app.post("/api/aurelius/deep-report", async (req: Request, res: Response) => {
+  const { brief, operator, depth, maxAngles } = req.body ?? {};
+  if (!brief || typeof brief !== "string" || brief.trim().length < 8) {
+    return res.status(400).json({ ok: false, error: "brief is required — a sentence or two on what to research." });
+  }
+  try {
+    const { deepResearchReport } = await import("./research/deepWork.ts");
+    const report = await deepResearchReport({ brief, operator, depth, maxAngles });
+    return res.status(report.ok ? 200 : 400).json(report);
+  } catch (err: any) {
+    console.error("Deep report error:", err);
+    return res.status(500).json({ ok: false, error: `Deep report failed: ${err?.message || String(err)}` });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // Athlete-to-sheet registration endpoint
 // POST /api/aurelius/register-sheet
 // Body: { client: "Mike", sheetId: "abc123", sport?: string, position?: string }
@@ -1984,4 +2005,11 @@ if (process.env.HEALTHCHECKS_PING_URL) {
 app.listen(PORT, "0.0.0.0", () => {
   logBootMarker(); // cockpit uptime derives from the latest boot row
   console.log(`Aurelius server running on port ${PORT}`);
+  // Auto re-index the vector store when the embedding provider has changed
+  // (e.g. EMBEDDINGS_PROVIDER flipped mock → gemini). Fire-and-forget AFTER
+  // listening so a long re-embed never blocks the health check; runs at most
+  // once per provider change (signature marker). No-op on mock/no provider.
+  import("./retrieval/reindex.ts")
+    .then((m) => m.ensureIndexMatchesProvider())
+    .catch((err) => console.warn("[reindex] boot check failed:", (err as any)?.message ?? err));
 });

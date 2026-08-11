@@ -47,6 +47,12 @@ export const gmailAdapter: ToolAdapter = {
     switch (action) {
       case "read_inbox": {
         const items = await listInbox({ max: Number(data?.max) || 10, query: data?.query });
+        // Defuse (council C3): email subject/snippet is attacker-controlled and
+        // is fed back into the agentic tool loop — strip any [TOOL:]/[SAVE:]
+        // directive syntax so a hostile message can't mimic a command. web.ts
+        // and googleSheets already do this; gmail is the cheapest attacker
+        // channel and was the one read adapter that didn't.
+        const { defuseDirectives } = await import("../../llm/directiveParser.ts");
         return {
           ok: true,
           output: {
@@ -54,8 +60,8 @@ export const gmailAdapter: ToolAdapter = {
             messages: items.map((m) => ({
               id: m.id,
               from: m.from,
-              subject: m.subject,
-              snippet: m.snippet,
+              subject: defuseDirectives(m.subject ?? ""),
+              snippet: defuseDirectives(m.snippet ?? ""),
               unread: m.unread,
             })),
           },
@@ -64,7 +70,16 @@ export const gmailAdapter: ToolAdapter = {
       case "read_message": {
         if (!data?.id) return { ok: false, output: null, error: "id required" };
         const m = await readMessage(String(data.id));
-        return { ok: true, output: { summary: `"${m.subject}" from ${m.from}`, ...m } };
+        const { defuseDirectives } = await import("../../llm/directiveParser.ts");
+        return {
+          ok: true,
+          output: {
+            summary: `"${defuseDirectives(m.subject ?? "")}" from ${m.from}`,
+            ...m,
+            subject: defuseDirectives(m.subject ?? ""),
+            body: m.body ? defuseDirectives(m.body) : m.body,
+          },
+        };
       }
       case "draft_reply": {
         if (!data?.to || !data?.subject || !data?.body) {

@@ -14,14 +14,20 @@
 import { prisma } from "../core/db/prisma.ts";
 import { needsDecision } from "../core/bridge.ts";
 import { embedSourceSafe } from "../retrieval/embedPipeline.ts";
+import { operatorDayRange } from "../core/time.ts";
 
 // ── Date helpers ─────────────────────────────────────────────────────
 
+// TZ-correct (2026-08-11 council): delegates to the ONE operatorDayRange so the
+// default day is Cole's local day and the window is local-midnight→local-midnight
+// in AURELIUS_TZ. The old UTC-midnight window hid his evening sessions from the
+// Today view, the briefing's calendar block, and session prep. `end` is now the
+// exclusive next-midnight; callers use `< end`, which all the range queries do.
 function dayRange(dateStr?: string): { date: Date; start: Date; end: Date; dstr: string } {
-  const dstr = dateStr ?? new Date().toISOString().slice(0, 10);
-  const start = new Date(`${dstr}T00:00:00.000Z`);
-  const end = new Date(`${dstr}T23:59:59.999Z`);
-  return { date: start, start, end, dstr };
+  const r = operatorDayRange(dateStr);
+  // These callers all query `lte: end`, so restore inclusive-last-ms semantics
+  // (the shared helper returns the exclusive next-midnight, [start, end)).
+  return { date: r.date, start: r.start, end: new Date(r.end.getTime() - 1), dstr: r.dstr };
 }
 
 // ── Tasks ────────────────────────────────────────────────────────────

@@ -25,6 +25,25 @@ import type { TaggedSignature } from "../compiled/types.ts";
 // Scope that never auto-applies, no matter what's granted (hard rule 1).
 const ESCALATION_SCOPE = "autonomy";
 
+/**
+ * Scopes that NEVER auto-apply under the knowledge.apply_proposal keyhole, no
+ * matter what's granted or where the proposal was born. ONE definition, used by
+ * every guard (createProposal's inline apply, the queue sweep's eligibility, and
+ * the resolveProposal choke point) so they can't drift apart again:
+ *   - "autonomy": hard rule 1 — autonomy never escalates its own autonomy.
+ *   - "persona":  one voice — the voice is never rewritten without Cole.
+ *   - "system":   rule 6 — operational/mirror cursors are never model-writable,
+ *                 and (store.ts) never embedded into the vector index. A research
+ *                 synthesis consumes external web/corpus text, so without this an
+ *                 injected source could steer an LLM-emitted scope:"system" into
+ *                 an auto-applied write (verified reachable, 2026-08-11 council).
+ */
+export const NON_KEYHOLE_SCOPES = ["autonomy", "persona", "system"] as const;
+
+/** Origins the ingestion keyhole may auto-apply from. Anything else keeps Cole's
+ *  confirm loop (his own words, his voice, re-anchoring stale truth). */
+export const KEYHOLE_ORIGINS = ["research", "ingestion"] as const;
+
 /** Where a proposal was born — decides whether the ingestion keyhole applies. */
 export type ProposalOrigin = "chat" | "research" | "ingestion" | "observer" | "freshness";
 
@@ -50,6 +69,7 @@ export type KnowledgeProposal = {
   createdAt: Date;
   resolvedAt: Date | null;
   cacheEntryId: string | null;
+  origin: string | null; // carried so the resolve choke point can re-derive it
 };
 
 function fromRow(row: any): KnowledgeProposal {
@@ -68,6 +88,7 @@ function fromRow(row: any): KnowledgeProposal {
     createdAt: row.createdAt,
     resolvedAt: row.resolvedAt,
     cacheEntryId: row.cacheEntryId,
+    origin: row.origin ?? null,
   };
 }
 
@@ -164,7 +185,7 @@ export async function createProposal(
   // (one voice) scopes never auto-apply no matter what's granted.
   try {
     const fromIngestion = input.origin === "research" || input.origin === "ingestion";
-    if (fromIngestion && input.scope !== ESCALATION_SCOPE && input.scope !== "persona") {
+    if (fromIngestion && !(NON_KEYHOLE_SCOPES as readonly string[]).includes(input.scope)) {
       const { decideAction } = await import("../autonomy/grants.ts");
       if ((await decideAction("knowledge.apply_proposal")).finalize) {
         const { executeAction } = await import("../autonomy/executor.ts");
@@ -275,6 +296,26 @@ export async function resolveProposal(
   if (proposal.status !== "pending") {
     console.warn(`[proposals] proposal ${input.proposalId} already ${proposal.status}`);
     return proposal;
+  }
+
+  // THE CHOKE-POINT CONSTITUTION GUARD (2026-08-11 council, verified reachable
+  // by live PoC). The keyhole's invariants used to live ONLY in the callers
+  // (createProposal's inline apply, the queue sweep). This is the one place
+  // every auto-apply passes through, so it enforces them here — a future caller,
+  // refactor, or injection-steered payload can no longer slip a forbidden scope
+  // or origin past the grant. Only the machine's own auto-apply is gated; Cole's
+  // hand (updatedBy defaulting to "cole") confirms anything he can see.
+  if (input.updatedBy === "aurelius" && (input.decision === "confirmed" || input.decision === "corrected")) {
+    if ((NON_KEYHOLE_SCOPES as readonly string[]).includes(proposal.scope)) {
+      throw new Error(
+        `keyhole refused: scope "${proposal.scope}" never auto-applies (proposal ${proposal.id}) — it needs Cole's confirm`
+      );
+    }
+    if (!proposal.origin || !(KEYHOLE_ORIGINS as readonly string[]).includes(proposal.origin)) {
+      throw new Error(
+        `keyhole refused: origin "${proposal.origin ?? "none"}" is not research/ingestion (proposal ${proposal.id}) — it needs Cole's confirm`
+      );
+    }
   }
 
   const valueToApply =

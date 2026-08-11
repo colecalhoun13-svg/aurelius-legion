@@ -1,0 +1,38 @@
+Verification complete. Two of the sweep's own claims failed contact with the code (noted below), and everything else in my verdict is line-verified. Here is the Contrarian's Round 2, for the synthesis.
+
+---
+
+# THE CONTRARIAN — ROUND 2: The Audit Vindicated, The Thesis Sharpened
+
+## 0. First, discipline: I audited the auditors
+
+Before pressing the advantage I re-verified the sweeps, and two headline claims are **wrong**. The business sweep's "stageBoost has no invoker" and "benchmarks.ts is dead code" are both false: `frontend/app/api/crm/growth/route.ts:51` calls `stageBoost` from the Business page's GrowthPanel (`business/page.tsx:1817-1824`), and `frontend/app/api/standard/route.ts:2` imports `assessStandard` — the sweep grepped the backend only. The Standard is *already wired*; that "highest leverage per line" opportunity is already shipped. What survives of that finding is worse, not better: `finalizeBoost` (`paidBoost.ts:113-129`) **records ad spend on Cole's confirm while the Meta API call is unwired** — a reachable button that writes fictional dollars into the ledger. Similarly, the "delete the engines" instinct must be precise: `aurelius/engines/*Engine.ts` (670 lines) are **live** — `llm/router.ts:12-17` imports them. The manifest below contains only what I verified has zero live importers.
+
+## 1. Dead on arrival, given the sweep evidence
+
+- **Visionary #1 (Earpiece/voice-out)** — DOA until the Operator's three defects and the Engineer's delivery blindness are fixed. Voice-out on a channel that doesn't record what it said (`recordTurns` only fires from chat, `index.ts:886`), marks briefings "ok" when Telegram failed (`sendToCole` never throws; Healthchecks pings on trace-ok, `trace.ts:130`), and serializes behind a 90s wedge is production values on a cron job — the Operator said it himself.
+- **Visionary #4 (Horizon Runner)** — right idea, DOA on this substrate: `productivity/service.ts:20` builds "today" in UTC, so **evening events — Cole's actual 4–8pm sessions — are invisible to Today, the briefing, and session prep**. A prep engine reading a day-window that omits the sessions preps the wrong day. TZ fix first, or it's confidently wrong at the exact hour it exists for.
+- **Visionary #5 (Apprentice)** — pours new pattern volume into `detector.ts:160`, where `Math.max` re-detection **erases Cole's correction decay**. Feeding a broken trust loop teaches it to un-learn faster.
+- **Visionary #6 (Film Room)** — media ingest is un-defused (`ingestMedia.ts`), vision's 18MB cap fails pre-base64, and the Engineer showed SMB-mount fragility kills logs and backups together. Three sweeps, one verdict: not yet.
+- **Steward R3/R4 (mission launch, keyhole widening)** — the Steward's *own* finding kills them: the keyhole finalizer enforces no scope/origin guard, and the mind sweep found the blocklist omits `system` — an injected research source can steer an LLM-chosen scope into auto-apply **and into the vector index** (`proposals.ts:167`, `queueSweep.ts:52`, `store.ts:219`). No keyhole widens until the choke point enforces what callers promise. This also puts one ordering constraint inside the Optimist's Fuel Week: **fix the keyhole trio before flipping `knowledge.apply_proposal`**.
+- **Business warm-list paste, as-is** — DOA for about ten lines: `leadEngine.ts:134-137` counts gated-never-sent drafts as touches, so real warm humans get "This is a FOLLOW-UP" emails about contact that never happened, and there is no touch cap. Fix both, then paste.
+
+## 2. My losses, honestly
+
+The Optimist and Business seats beat my round-1 framing in three places. **(a)** The loops are complete — the PR→proof→publish→outcome chain and the trust-flywheel push side are verified wired. "40k lines ahead of its user" stands as diagnosis, but "bloat" was the wrong word for machinery this closed; the right word was *unfueled*. **(b)** My kill-list item "delete the dead `content.draft` toggle" is **withdrawn** — the chain from draft button to staged publish is live. **(c)** "Suspend the Sunday learners" is **withdrawn** — the observer is deterministic, propose-only, 2/week; suspending it buys nothing. And the big concession: **the thesis survives, sharpened, not vindicated whole.** "Stop building, start using" was never "stop typing" — it was "stop adding surface." The sweeps found ~40 defects and ~1,400 dead lines *inside* built machinery, which is precisely what a feature pause is for: fix-and-delete capacity exists only when feature capacity is zero. Most remaining work being fixes is my round-1 §4 ("fixing is not building") winning on evidence I didn't have.
+
+## 3. The deletion manifest (verified, zero live importers)
+
+- **v3.4 core scaffold (496):** `core/engineRouter.ts` (39), `engineRegistry.ts` (20), `engineTypes.ts` (82), `registerEngines.ts` (82), `operatorModes.ts` (65), `nervousSystem.ts` (108), `memoryEngine.ts` (42), `operatorHelpers.ts` (40), `logger.ts` (7), `config.ts` (11) — plus `router/engineTest.ts` (74) and the `/tick` handler in `autonomyRouter.ts:7-22` (the rest of that file is live grants/confirm/undo).
+- **Autonomy legacy (359):** `decisionEngine.ts`, `taskPlanner.ts`, `stateStore.ts`, `autonomyConfig.ts`, `autonomyTypes.ts`, `types.ts`, `autonomyEngineDB.ts`.
+- **Operator stubs (446):** all of `operators/` except `operatorCores.ts`.
+- **Scripts (171):** `runNervousSystem*`, `runOperatorModeRecalibration`, `seedOperators`, `smokePhase4`.
+- **Misc:** `memory/memoryEvolutionEngine.ts` (49, registration commented out), the dead `business.draft_offer` duplicate (`business.ts:83-88, 208-219`), `chainId` dead field, deps `uuid`/`groq-sdk`/`@google/generative-ai`/`ts-node`/`nodemon`. `serpSearchAdapter` may stay — it is honestly dormant-until-configured. **~1,600 lines. Keep `engines/`.**
+
+## 4. FINAL VERDICT
+
+**Before any feature ships, in order:** (1) the trust-integrity trio + keyhole scope guard (~20 lines; precedes the grant flip); (2) injection closure — defuse inside `ingestDocument`, gmail adapter outputs, media text, plus `maxRetries:0` on autonomy/business/planning writes (precedes funding keys); (3) one TZ-correct `dayRange` in `core/time.ts` (precedes any presence work); (4) delivery-verified sends — send failure is job failure, Healthchecks pings after delivery (precedes "always-on"); (5) spine manifest unification — one roster generating registration, `ONCE_PER_DAY`, and catch-up, audited for parity (precedes any new scheduled job); (6) the deletion manifest + routing the agentic loop through `runLLM`; (7) the outreach touch-cap/phantom-follow-up fix + the `kind` filter in `ledger.ts`/`scoreboard.ts` (precedes the warm-list paste); (8) a complete `.env.example` (precedes Fuel Week, or Cole guesses variable names from source).
+
+**Three features allowed this month:** the **nightly conversation distiller** (Archivist #1 — ~100 lines on existing plumbing; its user is Cole in every chat he already has; it converts talking into being known); the **clock-anchored session-prep push** (Visionary #4 = Hole-Finder #1 = Operator Rung 2 — only after fixes 3–5, merged into the existing push budget, because in-day awareness is the felt second-operator gap); and the **funnel-affordance pair** — the "I texted them" tap + a payment link on the program offer — because the Business seat's 30-day plan to client #1 needs exactly those and they are hours, not weeks.
+
+**The test every future proposal must pass, one sentence:** *Name the invoker, name the user with evidence he exists, and show the sweep-defect list is empty in every file you touch — or you are adding surface to a machine that already fails silently somewhere.*
