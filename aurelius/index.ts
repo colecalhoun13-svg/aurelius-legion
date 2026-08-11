@@ -2005,4 +2005,11 @@ if (process.env.HEALTHCHECKS_PING_URL) {
 app.listen(PORT, "0.0.0.0", () => {
   logBootMarker(); // cockpit uptime derives from the latest boot row
   console.log(`Aurelius server running on port ${PORT}`);
+  // Auto re-index the vector store when the embedding provider has changed
+  // (e.g. EMBEDDINGS_PROVIDER flipped mock → gemini). Fire-and-forget AFTER
+  // listening so a long re-embed never blocks the health check; runs at most
+  // once per provider change (signature marker). No-op on mock/no provider.
+  import("./retrieval/reindex.ts")
+    .then((m) => m.ensureIndexMatchesProvider())
+    .catch((err) => console.warn("[reindex] boot check failed:", (err as any)?.message ?? err));
 });

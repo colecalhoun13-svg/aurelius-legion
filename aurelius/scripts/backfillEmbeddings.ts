@@ -128,6 +128,10 @@ async function main() {
   console.log(`  Failures: ${failed}`);
   console.log(`  Total vectors in index: ${total}`);
   if (failed > 0) process.exit(1);
+  // Stamp the marker so the boot-time auto-reindex knows the index is current
+  // for this provider and won't redundantly re-embed on the next deploy.
+  const { markIndexedForCurrentProvider } = await import("../retrieval/reindex.ts");
+  await markIndexedForCurrentProvider();
 }
 
 main()
