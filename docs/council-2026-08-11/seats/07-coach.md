@@ -1,0 +1,30 @@
+**THE COACH — seat report on the athlete surface**
+
+**1) The honest grade: B, and the B is real, not gentleman's**
+
+What's genuinely useful, in coaching terms:
+
+- **The battery is his battery** (`aurelius/training/battery.ts`). Ten, 5-10-5, vert, broad, top speed, trap bar 3RM, squat 3RM optional — that's a coach's actual sheet, not a template. Testing day as one entry pass matters enormously: the number-one killer of gym data systems is entry friction on a day when 20 kids are running lanes.
+- **The record wall is a coaching tool, not decoration.** High-schoolers chase names on walls. Empty slots rendered hollow ("an invitation") is exactly right.
+- **Momentum computed once, server-side** (`crm/performance.ts::seriesMomentum`), so the page tag and the Monday sweep signal can never disagree. The stalled definition is coach-literate: best untouched ≥28 days *while still logging* — a kid who stopped showing up isn't "stalled." Target pace derived from observed trailing-60-day rate vs required rate is the honest version of "will he make it."
+- **The unit and orientation discipline** — (label|unit) bucketing, positive-always-means-better, kg never dividing lbs — protects Cole from false green arrows, which is protecting his credibility with athletes.
+- **The reasoner's lock holds.** `training/reasoner.ts` line 677: "Never prescribe a future program or specific weights... Cole writes programs" — in the prompt as a hard rule, deterministic math in `volume.ts`/`prDetection.ts`, the LLM only reasons over it.
+
+What's decorative or thin: the **radar** is ceremony — self-normalized against the athlete's own min/max, it degenerates with 2-3 points and tells Cole nothing the trend rows don't. Tolerable, but it's the least load-bearing pixel on the page. The real gaps: **numbers carry no conditions** (hand-timed vs laser 10-yard differs ~0.15s — a "PR" can be a stopwatch thumb), **no readiness context**, **gradYear is displayed but never used analytically**, and the whole surface is starving for entries — nearly every mechanism needs 2+ points to say anything.
+
+**2) THE CRAFT ROADMAP** (ranked by coaching value per unit of build)
+
+1. **Testing-day protocol standardization — S.** Extend battery entries with conditions metadata (timing method, surface, footwear, warm-up standard) on Metric metadata; flag cross-condition comparisons instead of drawing a trend line through them. Exists: nothing. Line: recording conditions is measurement, not programming — no crossing risk.
+2. **Athlete-reported readiness — S/M, no hardware.** Nothing exists (RPE appears only as an optional sheet column the reasoner passes through). Cole-logged at the rack — 15 seconds, soreness/sleep/RPE — not athlete-messaged (they're minors; keep Aurelius out of direct minor comms). Line: "volume up 18% while reported soreness climbed three sessions running" is a signal; "cut Thursday's volume" is never Aurelius's sentence.
+3. **Session-planning support — S/M.** A pre-session card: who's flagged sliding, who tested yesterday, targets due this week, longest-untested. All ingredients exist (trendSweep, sessions, targets, calendar sync) — this is assembly, feeding the 07:00 briefing. Line: constraints and facts only, never an exercise or a load.
+4. **The "You" row — S.** Explicitly deferred in the page comment (~line 570), honestly not faked. Cole's own training reuses the entire existing series machinery, and it's the right test-bed for readiness inputs before touching kids' data. A coach who logs is a coach athletes believe.
+5. **LTAD / grad-year normalization — M.** `gradYear`, `sport`, `position` exist on Client, unused analytically. Start within-roster: class-of cohort ranks ("4th of 11 sophomores on vert"), honest at small N only as ranks, never percentile theater against reference tables he doesn't have. Line: rank is observation; "he needs max-velocity work" is Cole's call.
+6. **Film breakdown, Mini pose lane — L.** Exists: `media/vision.ts` (≤18MB inline Gemini video, observations-only prompt already enforced) and the §9 plan (whisper + ffmpeg + pose). The build: frame extraction, MediaPipe locally, jump contact-time and bar-path/velocity-loss estimates. Highest ceiling, longest road. Line: kinematic description ("hips rise before the bar leaves the floor at rep 4") — never a corrective drill.
+7. **Parent-facing report cards — M, gated.** `isMinor` exists; `athletePerformance` has everything a one-page artifact needs. Two locks: sending is outward (Cole confirms, always), and for gym athletes this brushes the employment boundary — a training artifact Cole hands over himself, never business machinery (which correctly excludes `training_only` in-query).
+8. **Wearables via Terra — L, park it.** HS kids don't own Whoops uniformly; #2 delivers 80% of the readiness signal for 5% of the cost. Revisit when remote clients exist.
+
+**3) The one thing this month**
+
+**Run two standardized testing days and feed the machine.** The system's bottleneck is not code — it's that `seriesMomentum`, `targetPace`, the sweep, the wall, and the radar all need 2+ points and most slots are empty. Write the protocol standard (item 1, days of work), run the full battery week 1 and week 4 under it, set one dated target per athlete off the week-1 baseline. Within a month every kid has a real trend line, the record wall has names, the Monday sweep has something true to say, and Cole walks the floor knowing who's moving and who's stuck — which is what an assistant coach is *for*. The machinery is built and honest; it's waiting on reps.
+
+Key files: `/home/user/aurelius-legion/aurelius/training/battery.ts`, `/home/user/aurelius-legion/aurelius/crm/performance.ts`, `/home/user/aurelius-legion/aurelius/training/trendSweep.ts`, `/home/user/aurelius-legion/aurelius/training/reasoner.ts`, `/home/user/aurelius-legion/aurelius/media/vision.ts`, `/home/user/aurelius-legion/docs/DEPLOY_MAC_MINI.md` (§9 roadmap, lines 422-429), `/home/user/aurelius-legion/frontend/app/(chrome)/athletes/page.tsx`.
