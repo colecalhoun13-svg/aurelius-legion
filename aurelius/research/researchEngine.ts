@@ -45,7 +45,7 @@ const FEATURES = {
   // non-academic topic. web/webSearch.ts already did this properly (Tavily,
   // or Gemini's Google Search grounding on the key we already have) and was
   // simply never imported here.
-  web: !!(process.env.TAVILY_API_KEY?.trim() || process.env.GEMINI_API_KEY?.trim()),
+  web: !!(process.env.TAVILY_API_KEY?.trim() || process.env.BRAVE_API_KEY?.trim() || process.env.GEMINI_API_KEY?.trim() || process.env.SERPAPI_KEY?.trim() || process.env.SERP_API_KEY?.trim()),
   // One name, matching .env.example. It used to be SERPAPI_KEY here and
   // SERP_API_KEY in researchConfig — impossible to satisfy both, so the tier
   // either never turned on or turned on with an empty key and returned [].
