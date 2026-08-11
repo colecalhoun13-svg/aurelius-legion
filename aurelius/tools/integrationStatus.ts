@@ -85,7 +85,17 @@ export async function getIntegrations(): Promise<Integration[]> {
   // Publishing needs a public URL for the image, not just a token.
   const { isMediaHostConfigured } = await import("../media/host.ts");
   const mediaHosted = isMediaHostConfigured();
-  const webLive = registered.has("web") && (has("TAVILY_API_KEY") || has("GEMINI_API_KEY"));
+  // The web-search failover array — each provider dormant until its key lands.
+  // Named breakdown so Cole can SEE which are wired in, not guess.
+  const searchProviders = [
+    { label: "Tavily", on: has("TAVILY_API_KEY") },
+    { label: "Brave", on: has("BRAVE_API_KEY") },
+    { label: "Gemini", on: has("GEMINI_API_KEY") },
+    { label: "SerpAPI", on: has("SERPAPI_KEY") || has("SERP_API_KEY") },
+  ];
+  const searchOn = searchProviders.filter((p) => p.on).map((p) => p.label);
+  const scraperOn = has("FIRECRAWL_API_KEY");
+  const webLive = registered.has("web") && searchOn.length > 0;
 
   // Memory/recall: what's actually powering semantic recall right now.
   const embProvider = (process.env.EMBEDDINGS_PROVIDER ?? "openai").trim().toLowerCase();
@@ -130,9 +140,15 @@ export async function getIntegrations(): Promise<Integration[]> {
     {
       name: "Live web search",
       status: webLive ? "live" : "config",
-      desc: "Real-time search (grounded, with sources) + page fetch — no more fabricated trends",
+      desc: webLive
+        ? `Failover array — active: ${searchOn.join(" → ")}${scraperOn ? " · Firecrawl scraping on" : ""}. First to answer wins; one going down doesn't stop research.`
+        : "Real-time search (grounded, with sources) + page fetch across a provider array",
       glyph: "⌕",
-      need: webLive ? undefined : "GEMINI_API_KEY (you have it) or a free TAVILY_API_KEY",
+      need: webLive
+        ? searchOn.length < 2 || !scraperOn
+          ? `Working on ${searchOn.join(", ")}. For more coverage/resilience add any of: ${searchProviders.filter((p) => !p.on).map((p) => p.label).join(", ")}${scraperOn ? "" : ", FIRECRAWL_API_KEY (renders JS/anti-bot pages)"} — all free-tier, all optional.`
+          : undefined
+        : "GEMINI_API_KEY (you have it) or a free TAVILY_API_KEY / BRAVE_API_KEY. Set on BOTH Railway services.",
     },
     {
       name: "Google Sheets",
