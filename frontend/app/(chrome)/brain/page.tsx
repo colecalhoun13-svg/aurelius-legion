@@ -16,9 +16,11 @@ import ShelvesPanel from "../../../components/brain/ShelvesPanel";
 import AskPanel from "../../../components/brain/AskPanel";
 import WikiPanel from "../../../components/brain/WikiPanel";
 import MindPanel from "../../../components/brain/MindPanel";
+import DeepWorkPanel from "../../../components/brain/DeepWorkPanel";
 
 const TABS = [
   { key: "ask", label: "Ask" },
+  { key: "deep", label: "Deep Work" },
   { key: "shelves", label: "Shelves" },
   { key: "wiki", label: "Syntheses" },
   { key: "mind", label: "Mind" },
@@ -76,6 +78,7 @@ function BrainInner() {
         ))}
       </nav>
       {tab === "ask" && <AskPanel />}
+      {tab === "deep" && <DeepWorkPanel />}
       {tab === "shelves" && <ShelvesPanel />}
       {tab === "wiki" && <WikiPanel />}
       {tab === "mind" && <MindPanel />}
