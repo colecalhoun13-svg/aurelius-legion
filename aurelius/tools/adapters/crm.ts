@@ -268,6 +268,13 @@ export const crmAdapter: ToolAdapter = {
       dataSchema: "{}",
       example: "[TOOL: crm.retention_analytics {}]",
     },
+    {
+      name: "pnl",
+      description:
+        "The profit & loss: money received (payments) minus expenses = net, month to date, with all-time earned for context. Honest at zero — an empty or negative P&L is stated plainly, never softened. Carries the quarterly-estimated-tax reminder (words, never a computed tax). Use for 'what's my P&L', 'am I profitable', 'money in vs out'.",
+      dataSchema: "{ month?: string (YYYY-MM, default current) }",
+      example: "[TOOL: crm.pnl {}]",
+    },
   ],
 
   async run(action: string, data: Record<string, any>): Promise<ToolAdapterResult> {
@@ -554,6 +561,11 @@ export const crmAdapter: ToolAdapter = {
         case "retention_analytics": {
           const { retentionAnalytics } = await import("../../crm/retention.ts");
           return { ok: true, output: await retentionAnalytics() };
+        }
+
+        case "pnl": {
+          const { profitAndLoss } = await import("../../business/pnl.ts");
+          return { ok: true, output: await profitAndLoss(data?.month ? String(data.month) : undefined) };
         }
 
         default:
