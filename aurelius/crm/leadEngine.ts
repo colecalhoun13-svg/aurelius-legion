@@ -512,6 +512,14 @@ export async function captureInboundLead(input: {
       /* counting failed — default to the loud path; a real lead is worth the buzz */
     }
     const { surfaceSignal } = await import("../core/bridge.ts");
+    // The CTA depends on whether Aurelius can act: with an email, the lead.inbound
+    // reactor is about to draft the reply (one-tap flagship); without one, there's
+    // nothing to draft, so the honest ask is for Cole to reach them his way.
+    const cta = lead.email
+      ? `They came to you. I'm drafting your reply now — it'll land here for a one-tap review, and sending stays your call. ` +
+        `Response time is the whole conversion lever at this stage.`
+      : `They came to you. Reply today — response time is the whole conversion lever at this stage. ` +
+        `No email on file, so reach them your way and mark it done (I can't draft without one).`;
     await surfaceSignal({
       kind: "opportunity",
       domain: "business",
@@ -523,11 +531,28 @@ export async function captureInboundLead(input: {
       body:
         `${lead.name}${lead.email ? ` (${lead.email})` : ""} reached out${lead.sport ? ` about ${lead.sport}` : ""}.\n\n` +
         (lead.notes ? `> ${lead.notes.slice(0, 500)}\n\n` : "") +
-        `They came to you. Reply today — response time is the whole conversion lever at this stage. ` +
-        `Say "draft a reply to ${lead.name}" and I'll write it into your Gmail drafts (you send).`,
+        cta,
     });
   } catch {
     /* the lead is captured either way */
+  }
+
+  // Announce the fact on the bus — ONCE, decoupled. The lead.inbound reactor
+  // (autonomy/reactors.ts) drafts the reply so it's waiting for Cole; future
+  // reactors (nurture cadence, Day-Model refresh) attach there without this
+  // function learning about them. Fire-and-forget: an inbound HTTP intake must
+  // not block on a reactor's LLM call, and no handler can throw out of emit.
+  try {
+    const { emit } = await import("../core/events.ts");
+    void emit({
+      type: "lead.inbound",
+      leadId: lead.id,
+      name: lead.name,
+      source: referredBy ? "referral" : channel,
+      hasEmail: !!email,
+    });
+  } catch {
+    /* the lead is captured and surfaced either way */
   }
   return { ok: true, leadId: lead.id };
 }

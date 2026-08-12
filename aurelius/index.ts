@@ -1672,6 +1672,11 @@ import { startTelegramBridge, sendToCole } from "./telegram/bot.ts";
 import("./autonomy/registerActions.ts")
   .then((m) => m.registerAllActions())
   .catch((err) => console.error("[autonomy] action registration failed:", err));
+// Wire the event-bus reactors (the reactive spine): lead.inbound → auto-draft
+// reply, and future reactions. Synchronous registration, one boot log line.
+import("./autonomy/reactors.ts")
+  .then((m) => m.registerAllReactors())
+  .catch((err) => console.error("[reactors] registration failed:", err));
 // Dormant without TELEGRAM_BOT_TOKEN; wakes the moment the token lands.
 startTelegramBridge();
 // Dormant without PAPERLESS_URL/TOKEN; wakes on the Mini.

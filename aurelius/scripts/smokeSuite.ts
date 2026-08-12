@@ -1911,6 +1911,48 @@ async function main() {
     check("outreach.draft has a real finalizer (not a dead toggle on the dial)",
       hasActionFinalizer("outreach.draft") === true);
 
+    // ── the event bus: react to what HAPPENED, not just the clock (#63) ──
+    {
+      const { on, off, emit, listEventHandlers, eventHandlerCount } = await import("../core/events.ts");
+      const { registerAllReactors } = await import("../autonomy/reactors.ts");
+
+      // Mechanics: every subscribed handler runs; a throwing sibling neither
+      // starves the others nor rejects emit; register-by-name REPLACES so a
+      // double boot import can't stack a reaction (which would double-draft).
+      const fired: string[] = [];
+      on("lead.inbound", `${TAG}_probe_a`, (e) => { fired.push("a:" + e.name); });
+      on("lead.inbound", `${TAG}_probe_boom`, () => { throw new Error("reactor blew up"); });
+      on("lead.inbound", `${TAG}_probe_b`, (e) => { fired.push("b:" + e.name); });
+      on("lead.inbound", `${TAG}_probe_a`, (e) => { fired.push("a2:" + e.name); }); // replaces a
+      await emit({ type: "lead.inbound", leadId: "probe", name: "Probe", source: "website", hasEmail: false });
+      check("emit runs every subscribed handler", fired.includes("a2:Probe") && fired.includes("b:Probe"));
+      check("a throwing reactor doesn't starve its siblings or reject emit",
+        fired.includes("b:Probe") && !fired.some((f) => f === "boom"));
+      check("registering the same name replaces, never stacks (no double-fire)",
+        !fired.includes("a:Probe") && fired.filter((f) => f === "a2:Probe").length === 1);
+      off("lead.inbound", `${TAG}_probe_a`);
+      off("lead.inbound", `${TAG}_probe_boom`);
+      off("lead.inbound", `${TAG}_probe_b`);
+
+      // The flagship reactor is actually wired to the event — inspectable, not assumed.
+      registerAllReactors();
+      const wired = listEventHandlers().find((h) => h.type === "lead.inbound");
+      check("the flagship lead-catch reactor is wired to lead.inbound",
+        !!wired && wired.handlers.includes("auto_draft_reply"));
+      check("the bus reports its live reaction count (inspectable wiring, rule 8)", eventHandlerCount() >= 1);
+
+      // Guard: a lead with no email can't be emailed, so the auto-draft reactor
+      // no-ops — it must NOT file a draft for someone it could never send to.
+      const before = await prisma.bridgeSignal.count({ where: { sourceType: "outreach_draft" } });
+      await emit({ type: "lead.inbound", leadId: "no-such", name: "NoEmail", source: "website", hasEmail: false });
+      const after = await prisma.bridgeSignal.count({ where: { sourceType: "outreach_draft" } });
+      check("auto-draft skips a lead with no email (can't send what you can't address)", after === before);
+
+      // Leave the registry as we found it so later capture blocks don't trip
+      // keyless draft attempts through the now-global reactor.
+      off("lead.inbound", "auto_draft_reply");
+    }
+
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["inbound_lead", "outreach_draft"] } } });
     await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
   }
