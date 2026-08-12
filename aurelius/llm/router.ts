@@ -371,64 +371,85 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
   // ── CACHE BREAK — everything below changes per call ─────────────────
   parts.push("\n" + CACHE_BREAK);
 
-  // Layer 1.5: Operator state — score + learned calibration, one voice.
-  // No modes: the register modulates from live state and from persona.*
-  // entries Cole has confirmed, never from a persona switch.
-  try {
-    const { getOperatorStateBlock } = await import("../measurement/operatorScore.ts");
-    const stateBlock = await getOperatorStateBlock();
-    if (stateBlock) parts.push("\n" + stateBlock);
-  } catch (err) {
-    console.warn("[router] operator state block failed (non-fatal):", err);
-  }
-
-  // Layer 2.4: NOW — the brain knows what time it is (final council). Clock,
-  // next events with countdowns, today's load, standing grants. 60s-cached
-  // body, fresh clock line; never fatal.
-  try {
-    const { buildNowBlock } = await import("../core/nowContext.ts");
-    const nowBlock = await buildNowBlock();
-    if (nowBlock) parts.push("\n" + nowBlock);
-  } catch (err) {
-    console.warn("[ROUTER] NOW layer failed (non-fatal):", err);
-  }
-
-  // Layer 5: Memory (loaded for primary operator; relations-aware so secondaries surface naturally)
-  try {
-    const memories = await loadMemoriesForOperator({
-      operator: operators.primary,
-      userMessage: task.input,
-    });
-    const memoryBlock = formatMemoriesForPrompt(memories);
-    if (memoryBlock) {
-      parts.push("\n" + memoryBlock);
-    }
-  } catch (err) {
-    console.warn("[ROUTER] memory load failed:", err);
-  }
-
-  // Layer 5.25: Recent conversation — short-term continuity. The last few
-  // persisted turns, so "like we discussed" survives restarts and devices.
-  try {
-    const { recentConversationBlock } = await import("../memory/conversation.ts");
-    const convo = await recentConversationBlock();
-    if (convo) parts.push("\n" + convo);
-  } catch (err) {
-    console.warn("[ROUTER] conversation continuity failed (non-fatal):", err);
-  }
-
-  // Resolve the primary operator's id once — shared by the compiled-pattern
-  // layer (5.4) and semantic recall (5.5).
+  // ── LIVE LAYERS — built CONCURRENTLY, emitted in fixed order ─────────
+  // (router efficiency, Build #1 · slice 2.) Every layer below is an
+  // INDEPENDENT read of the message + DB — none consumes another's output —
+  // so running them sequentially just stacked ~9 round-trips of latency onto
+  // every turn. They now fan out via Promise.all and their fragments are
+  // spliced into `parts` in the SAME source order as before, so the assembled
+  // prompt is byte-identical; only the wall-clock to build it drops. Each
+  // layer owns its try/catch and returns [] on failure, so one slow or broken
+  // layer can't reject the batch or reorder the rest (honest-failure intact).
+  // The single shared dependency — recallOperatorId, read by 5.4 and 5.5 — is
+  // resolved once, before the fan-out.
   const recallOperatorId =
     task.knowledgeContext?.operatorId ??
     (await resolveOperatorId(operators.primary).catch(() => null)) ??
     undefined;
 
+  // Layer 1.5: Operator state — score + learned calibration, one voice.
+  // No modes: the register modulates from live state and from persona.*
+  // entries Cole has confirmed, never from a persona switch.
+  const layerOperatorState = async (): Promise<string[]> => {
+    try {
+      const { getOperatorStateBlock } = await import("../measurement/operatorScore.ts");
+      const stateBlock = await getOperatorStateBlock();
+      return stateBlock ? ["\n" + stateBlock] : [];
+    } catch (err) {
+      console.warn("[router] operator state block failed (non-fatal):", err);
+      return [];
+    }
+  };
+
+  // Layer 2.4: NOW — the brain knows what time it is (final council). Clock,
+  // next events with countdowns, today's load, standing grants. 60s-cached
+  // body, fresh clock line; never fatal.
+  const layerNow = async (): Promise<string[]> => {
+    try {
+      const { buildNowBlock } = await import("../core/nowContext.ts");
+      const nowBlock = await buildNowBlock();
+      return nowBlock ? ["\n" + nowBlock] : [];
+    } catch (err) {
+      console.warn("[ROUTER] NOW layer failed (non-fatal):", err);
+      return [];
+    }
+  };
+
+  // Layer 5: Memory (loaded for primary operator; relations-aware so secondaries surface naturally)
+  const layerMemory = async (): Promise<string[]> => {
+    try {
+      const memories = await loadMemoriesForOperator({
+        operator: operators.primary,
+        userMessage: task.input,
+      });
+      const memoryBlock = formatMemoriesForPrompt(memories);
+      return memoryBlock ? ["\n" + memoryBlock] : [];
+    } catch (err) {
+      console.warn("[ROUTER] memory load failed:", err);
+      return [];
+    }
+  };
+
+  // Layer 5.25: Recent conversation — short-term continuity. The last few
+  // persisted turns, so "like we discussed" survives restarts and devices.
+  const layerRecentConvo = async (): Promise<string[]> => {
+    try {
+      const { recentConversationBlock } = await import("../memory/conversation.ts");
+      const convo = await recentConversationBlock();
+      return convo ? ["\n" + convo] : [];
+    } catch (err) {
+      console.warn("[ROUTER] conversation continuity failed (non-fatal):", err);
+      return [];
+    }
+  };
+
   // Layer 5.4: Compiled patterns — accumulated understanding.
   // Closes the learning loop for the MAIN brain: confirmed heuristics that
   // Aurelius compiled from repeated experience now ground everyday reasoning,
   // not just the training reasoner. No-op until patterns exist; never fatal.
-  if (recallOperatorId) {
+  const layerCompiledPatterns = async (): Promise<string[]> => {
+    if (!recallOperatorId) return [];
+    const out: string[] = [];
     try {
       const { loadOperatorPatternsForPrompt } = await import("../compiled/reasoningHelper.ts");
       const fired: string[] = []; // outcome loop: which rules informed this turn
@@ -441,7 +462,7 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
         query: task.input,
         fired,
       });
-      if (patternBlock) parts.push("\n" + patternBlock);
+      if (patternBlock) out.push("\n" + patternBlock);
 
       // Secondary lenses bring THEIR frameworks too — so the lenses that should
       // collide on a real decision actually do, instead of the primary reasoning
@@ -456,7 +477,7 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
           query: task.input,
           fired,
         });
-        if (secBlock) parts.push("\n" + secBlock);
+        if (secBlock) out.push("\n" + secBlock);
       }
 
       // Real decision → record which rules informed it (fire-and-forget; joins the
@@ -470,73 +491,102 @@ async function buildSystemPrompt(task: LLMTask): Promise<string> {
     } catch (err) {
       console.warn("[ROUTER] compiled-pattern layer failed (non-fatal):", err);
     }
-  }
+    return out;
+  };
 
   // Layer 5.35: COLE'S BUSINESS FACTS — injected whenever the business or
   // content lens is in play, so those turns reason from what Cole actually
   // said (and can SEE what's still unknown) instead of re-deriving a generic
   // youth-performance persona every time. Never fatal, empty until seeded.
-  if ([operators.primary, ...(operators.secondaries ?? [])].some((o) => o === "business" || o === "content")) {
+  const layerBusinessFacts = async (): Promise<string[]> => {
+    if (![operators.primary, ...(operators.secondaries ?? [])].some((o) => o === "business" || o === "content")) {
+      return [];
+    }
     try {
       const { businessContextBlock } = await import("../business/positioning.ts");
       const bizBlock = await businessContextBlock();
-      if (bizBlock) parts.push("\n" + bizBlock);
+      return bizBlock ? ["\n" + bizBlock] : [];
     } catch (err) {
       console.warn("[ROUTER] business context layer failed (non-fatal):", err);
+      return [];
     }
-  }
+  };
 
   // Layer 5.45: the primary operator's FIELD SYNTHESIS — its best current
   // understanding of the domain (the wiki page the curriculum keeps rewriting),
   // injected directly so it's ALWAYS reasoned from, not left to chance whether a
   // random chunk of it happens to surface in recall. Bounded; never fatal.
-  try {
-    const { prisma } = await import("../core/db/prisma.ts");
-    const slugs = [operators.primary, ...(operators.secondaries ?? [])];
-    const pages = await prisma.wikiPage.findMany({
-      where: { slug: { in: slugs } },
-      select: { slug: true, title: true, content: true },
-    });
-    const bySlug = new Map(pages.map((p) => [p.slug, p]));
-    for (const slug of slugs) {
-      const page = bySlug.get(slug);
-      if (!page?.content || page.content.trim().length <= 40) continue;
-      const isPrimary = slug === operators.primary;
-      const top = page.content.trim().slice(0, isPrimary ? 1400 : 500);
-      parts.push(
-        `\n═══ FIELD SYNTHESIS · ${page.title}${isPrimary ? "" : " (secondary lens)"} ═══\n${top}\n\nReason from this synthesis where it applies; update it if new evidence contradicts it.`
-      );
+  const layerFieldSynthesis = async (): Promise<string[]> => {
+    const out: string[] = [];
+    try {
+      const { prisma } = await import("../core/db/prisma.ts");
+      const slugs = [operators.primary, ...(operators.secondaries ?? [])];
+      const pages = await prisma.wikiPage.findMany({
+        where: { slug: { in: slugs } },
+        select: { slug: true, title: true, content: true },
+      });
+      const bySlug = new Map(pages.map((p) => [p.slug, p]));
+      for (const slug of slugs) {
+        const page = bySlug.get(slug);
+        if (!page?.content || page.content.trim().length <= 40) continue;
+        const isPrimary = slug === operators.primary;
+        const top = page.content.trim().slice(0, isPrimary ? 1400 : 500);
+        out.push(
+          `\n═══ FIELD SYNTHESIS · ${page.title}${isPrimary ? "" : " (secondary lens)"} ═══\n${top}\n\nReason from this synthesis where it applies; update it if new evidence contradicts it.`
+        );
+      }
+    } catch (err) {
+      console.warn("[ROUTER] field synthesis layer failed (non-fatal):", err);
     }
-  } catch (err) {
-    console.warn("[ROUTER] field synthesis layer failed (non-fatal):", err);
-  }
+    return out;
+  };
 
   // Layer 5.5 (Phase 4.6): Semantic recall — retrieval-augmented context.
   // Embeds the user's message and surfaces the closest knowledge, memories,
   // and prior reasoning. No-op when embeddings are disabled; never fatal.
-  try {
-    const hits = await semanticRecall({
-      query: task.input,
-      operatorId: recallOperatorId,
-      limit: 8,
-    });
-    const recallBlock = formatRecallForPrompt(hits);
-    if (recallBlock) {
-      parts.push("\n" + recallBlock);
+  const layerSemanticRecall = async (): Promise<string[]> => {
+    try {
+      const hits = await semanticRecall({
+        query: task.input,
+        operatorId: recallOperatorId,
+        limit: 8,
+      });
+      const recallBlock = formatRecallForPrompt(hits);
+      return recallBlock ? ["\n" + recallBlock] : [];
+    } catch (err) {
+      console.warn("[ROUTER] semantic recall failed (non-fatal):", err);
+      return [];
     }
-  } catch (err) {
-    console.warn("[ROUTER] semantic recall failed (non-fatal):", err);
-  }
+  };
 
   // Layer 5.75: Corpus awareness — Aurelius knows what it has ingested,
   // unprompted. The contents surface via recall; this is the table of
   // contents of its own mind.
-  try {
-    const awareness = await getCorpusAwareness();
-    if (awareness) parts.push("\n" + awareness);
-  } catch (err) {
-    console.warn("[ROUTER] corpus awareness failed (non-fatal):", err);
-  }
+  const layerCorpusAwareness = async (): Promise<string[]> => {
+    try {
+      const awareness = await getCorpusAwareness();
+      return awareness ? ["\n" + awareness] : [];
+    } catch (err) {
+      console.warn("[ROUTER] corpus awareness failed (non-fatal):", err);
+      return [];
+    }
+  };
+
+  // Fan out — all nine reads run concurrently; the slowest one alone bounds the
+  // wall-clock, not their sum. Order of the destructure == source order below.
+  const [b15, b24, b5, b525, b54, b535, b545, b55, b575] = await Promise.all([
+    layerOperatorState(),   // 1.5
+    layerNow(),             // 2.4
+    layerMemory(),          // 5
+    layerRecentConvo(),     // 5.25
+    layerCompiledPatterns(),// 5.4
+    layerBusinessFacts(),   // 5.35
+    layerFieldSynthesis(),  // 5.45
+    layerSemanticRecall(),  // 5.5
+    layerCorpusAwareness(), // 5.75
+  ]);
+  // Splice in the exact same order the sequential version emitted them.
+  parts.push(...b15, ...b24, ...b5, ...b525, ...b54, ...b535, ...b545, ...b55, ...b575);
 
   // Layer 7: Task context
   const context: string[] = [];

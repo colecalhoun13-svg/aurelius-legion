@@ -50,6 +50,12 @@ export const selfAdapter: ToolAdapter = {
         const days = Number(data?.days);
         const summary = Number.isFinite(days) && days > 0 ? await spendSummary(days) : await monthToDate();
         const budget = monthlyBudgetUsd();
+        // Efficiency made visible: the embed-once cache collapses the same
+        // message being embedded by five prompt layers into one provider call.
+        // Process-local (resets on redeploy), so it's "since last boot", not
+        // the billing window — labeled as such.
+        const { embedCacheStats } = await import("../../retrieval/embeddingAdapter.ts");
+        const ec = embedCacheStats();
         return {
           ok: true,
           output: {
@@ -64,6 +70,15 @@ export const selfAdapter: ToolAdapter = {
             topJobs: summary.byTaskType.slice(0, 8).map((b) => ({ job: b.key, cost: formatUsd(b.costUsd), calls: b.calls })),
             topModels: summary.byModel.slice(0, 8).map((b) => ({ model: b.key, cost: formatUsd(b.costUsd), calls: b.calls })),
             unpricedCalls: summary.unpricedCalls,
+            embedCache:
+              ec.hits + ec.misses > 0
+                ? {
+                    since: "boot",
+                    embedsAvoided: ec.hits,
+                    provider_calls: ec.misses,
+                    hitRate: `${Math.round((ec.hits / (ec.hits + ec.misses)) * 100)}%`,
+                  }
+                : null,
             caveat:
               `Estimated from hand-maintained prices as of ${summary.pricesAsOf} — not a billing feed. Check the provider console for the real bill.` +
               (summary.unpricedCalls > 0
