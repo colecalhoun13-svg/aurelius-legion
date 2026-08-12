@@ -66,45 +66,52 @@ function withAutoDraftLock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * FLAGSHIP reaction (#26): a lead arrives → the reply is already drafted,
- * waiting for Cole's one tap. This is the difference between "a lead came in,
- * go write something" and "here's the message, send it" — the whole point of
- * the lead-catch. Inward: draftOutreach only ever writes a Gmail draft (gated
- * or granted), never sends.
+ * The shared reactive auto-draft: draft an outreach message for a lead so it's
+ * waiting for Cole's one tap. Used by BOTH the lead-came-in catch and the
+ * lead-replied catch, so they share ONE daily budget and ONE serialization lock
+ * — the review-capacity constraint is the sum of reactive drafts, not per-event.
+ * The whole check→draft→commit runs under the lock so the cap can't be raced.
+ * Inward: draftOutreach only ever writes a Gmail draft (gated or granted).
+ */
+async function reactiveAutoDraft(reason: string, e: { leadId: string; name: string; hasEmail: boolean }): Promise<void> {
+  // Can't draft an email reply to someone with no email on file. The Bridge
+  // signal already nudged Cole to reach them another way; nothing to do here.
+  if (!e.hasEmail) return;
+
+  await withAutoDraftLock(async () => {
+    const drafted = await reactiveDraftsToday();
+    if (drafted >= AUTO_DRAFT_DAILY_CAP) {
+      console.log(
+        `[reactors] ${reason} ${e.name}: auto-draft cap reached (${drafted}/${AUTO_DRAFT_DAILY_CAP} today) — left for manual draft`
+      );
+      return;
+    }
+
+    const { draftOutreach } = await import("../crm/leadEngine.ts");
+    // draftOutreach detects a follow-up on its own (prior touches / lastContact),
+    // so a reply-reaction naturally drafts a follow-up, not a first message.
+    const res = await draftOutreach(e.leadId, { origin: "inbound" });
+    if (!res.ok) {
+      // draftOutreach guards against filing model-error text as a message; a
+      // failure means no draft was created (nothing counted against the budget).
+      // The lead + its Bridge signal stand, so Cole still sees it.
+      console.warn(`[reactors] ${reason} ${e.name}: auto-draft failed — ${res.error}`);
+      return;
+    }
+    console.log(
+      `[reactors] ${reason} ${e.name}: reply ${res.gated ? "proposed (awaiting confirm)" : "drafted"} for one-tap review`
+    );
+  });
+}
+
+/**
+ * FLAGSHIP reactions (#26): a lead arrives — or a lead REPLIES — and the message
+ * back is already drafted, waiting for Cole's one tap. The difference between "a
+ * lead came in, go write something" and "here's the message, send it."
  */
 export function registerAllReactors(): void {
-  on("lead.inbound", "auto_draft_reply", async (e) => {
-    // Can't draft an email reply to someone who left no email. The inbound
-    // signal already nudged Cole to reach them another way; nothing to do here.
-    if (!e.hasEmail) return;
-
-    // The whole check→draft→commit runs under the lock so the cap can't be
-    // raced. Each queued draft commits its signal before the next one reads the
-    // count, so N concurrent inbound events produce at most CAP drafts, not N.
-    await withAutoDraftLock(async () => {
-      const drafted = await reactiveDraftsToday();
-      if (drafted >= AUTO_DRAFT_DAILY_CAP) {
-        console.log(
-          `[reactors] lead.inbound ${e.name}: auto-draft cap reached (${drafted}/${AUTO_DRAFT_DAILY_CAP} today) — left for manual draft`
-        );
-        return;
-      }
-
-      const { draftOutreach } = await import("../crm/leadEngine.ts");
-      const res = await draftOutreach(e.leadId, { origin: "inbound" });
-      if (!res.ok) {
-        // draftOutreach already guards against filing model-error text as a
-        // message; a failure here means no draft was created (and nothing was
-        // counted against the budget). The lead + inbound signal stand, so Cole
-        // still sees it — we just log why the auto-draft didn't land.
-        console.warn(`[reactors] lead.inbound ${e.name}: auto-draft failed — ${res.error}`);
-        return;
-      }
-      console.log(
-        `[reactors] lead.inbound ${e.name}: reply ${res.gated ? "proposed (awaiting confirm)" : "drafted"} for one-tap review`
-      );
-    });
-  });
+  on("lead.inbound", "auto_draft_reply", (e) => reactiveAutoDraft("lead.inbound", e));
+  on("lead.reply_received", "auto_draft_followup", (e) => reactiveAutoDraft("lead.reply", e));
 
   const handlers = listEventHandlers();
   console.log(

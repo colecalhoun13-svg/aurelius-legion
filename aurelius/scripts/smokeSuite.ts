@@ -1936,10 +1936,13 @@ async function main() {
 
       // The flagship reactor is actually wired to the event — inspectable, not assumed.
       registerAllReactors();
-      const wired = listEventHandlers().find((h) => h.type === "lead.inbound");
+      const wiredIn = listEventHandlers().find((h) => h.type === "lead.inbound");
+      const wiredReply = listEventHandlers().find((h) => h.type === "lead.reply_received");
       check("the flagship lead-catch reactor is wired to lead.inbound",
-        !!wired && wired.handlers.includes("auto_draft_reply"));
-      check("the bus reports its live reaction count (inspectable wiring, rule 8)", eventHandlerCount() >= 1);
+        !!wiredIn && wiredIn.handlers.includes("auto_draft_reply"));
+      check("the lead-replied reactor is wired to lead.reply_received (loop closed)",
+        !!wiredReply && wiredReply.handlers.includes("auto_draft_followup"));
+      check("the bus reports its live reaction count (inspectable wiring, rule 8)", eventHandlerCount() >= 2);
 
       // Guard: a lead with no email can't be emailed, so the auto-draft reactor
       // no-ops — it must NOT file a draft for someone it could never send to.
@@ -1962,8 +1965,9 @@ async function main() {
         (await reactiveDraftsToday()) === 1);
 
       // Leave the registry as we found it so later capture blocks don't trip
-      // keyless draft attempts through the now-global reactor.
+      // keyless draft attempts through the now-global reactors.
       off("lead.inbound", "auto_draft_reply");
+      off("lead.reply_received", "auto_draft_followup");
     }
 
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["inbound_lead", "outreach_draft"] } } });

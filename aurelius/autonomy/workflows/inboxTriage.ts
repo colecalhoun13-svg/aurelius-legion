@@ -53,7 +53,7 @@ export async function matchInboundReplyToLead(item: InboxItem): Promise<boolean>
         ...(emailMatch ? [{ email: { equals: emailMatch, mode: "insensitive" as const } }] : []),
       ],
     },
-    select: { id: true, name: true, angleId: true, source: true, refCode: true, trackLinkId: true },
+    select: { id: true, name: true, angleId: true, source: true, refCode: true, trackLinkId: true, email: true },
   });
   if (!lead) return false;
 
@@ -90,9 +90,18 @@ export async function matchInboundReplyToLead(item: InboxItem): Promise<boolean>
     severity: "attention",
     title: `${lead.name} replied`,
     body:
-      `${lead.name} replied to your outreach — they're warm right now. Keep it moving today. ` +
-      `Say "draft a reply to ${lead.name}" and I'll write it into your Gmail drafts (you send).`,
+      `${lead.name} replied to your outreach — they're warm right now. ` +
+      `I'm drafting your response — it'll land here for a one-tap review, and sending stays your call.`,
   }).catch(() => {});
+  // Announce it on the bus — the reply-reactor drafts the next message so it's
+  // waiting. Fire-and-forget: the triage pass must not block on a draft's LLM
+  // call, and no handler can throw out of emit.
+  try {
+    const { emit } = await import("../../core/events.ts");
+    void emit({ type: "lead.reply_received", leadId: lead.id, name: lead.name, hasEmail: !!lead.email });
+  } catch {
+    /* the reply is captured and surfaced either way */
+  }
   return true;
 }
 

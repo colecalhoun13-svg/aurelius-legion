@@ -50,6 +50,16 @@ export type AureliusEvent =
       /** Whether the lead left an email — a reactor that drafts an email reply
        *  must skip the ones it could never send. */
       hasEmail: boolean;
+    }
+  | {
+      /** A lead REPLIED to outreach (matched by thread or address in the inbox
+       *  scan). They're warm right now; the reactor drafts the next message so
+       *  it's waiting. A replied-to lead always has an email on file (that's how
+       *  the outreach thread existed), but carry it for symmetry with .inbound. */
+      type: "lead.reply_received";
+      leadId: string;
+      name: string;
+      hasEmail: boolean;
     };
 
 export type EventType = AureliusEvent["type"];
