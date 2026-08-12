@@ -28,22 +28,41 @@ import { on, eventHandlerCount, listEventHandlers } from "../core/events.ts";
 // today, so a quiet day never wastes the budget.
 const AUTO_DRAFT_DAILY_CAP = Math.max(1, Number(process.env.INBOUND_AUTODRAFT_CAP) || 5);
 
-async function autoDraftsToday(): Promise<number> {
+export async function reactiveDraftsToday(): Promise<number> {
   const { prisma } = await import("../core/db/prisma.ts");
   const dayStart = new Date();
   dayStart.setHours(0, 0, 0, 0);
-  // Count the auto-draft signals this reactor filed today. sourceId is prefixed
-  // so a manual "draft a reply" (same sourceType, different origin) isn't
-  // double-counted against the reactive budget.
+  // Count ONLY the reactor's own drafts today. draftOutreach tags reactive
+  // drafts with a ":auto" sourceId suffix, so the scheduled 07:30 sweep and any
+  // manual "draft a reply" (both sourceType "outreach_draft", no suffix) do NOT
+  // consume this budget — otherwise a busy day would starve the rarest, most
+  // time-critical event (an inbound lead) exactly when it matters.
   return prisma.bridgeSignal
     .count({
       where: {
         sourceType: "outreach_draft",
         createdAt: { gte: dayStart },
-        sourceId: { startsWith: "outreach:" },
+        sourceId: { endsWith: ":auto" },
       },
     })
     .catch(() => 0);
+}
+
+// Serialize the check+draft so a BURST of concurrent lead.inbound events can't
+// all read "under cap" in the multi-second window before any draft's signal
+// lands and then all draft (the council's thundering-herd finding). Because
+// emit runs handlers detached and concurrently, the cap is a check-then-act
+// race unless the whole read→draft→commit sequence runs one-at-a-time. A single
+// process makes an in-process promise-chain lock the exact right primitive; if
+// this ever runs multi-dyno, swap in a Postgres advisory lock here.
+let autoDraftChain: Promise<void> = Promise.resolve();
+function withAutoDraftLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = autoDraftChain.then(fn, fn);
+  autoDraftChain = run.then(
+    () => {},
+    () => {}
+  );
+  return run;
 }
 
 /**
@@ -59,27 +78,32 @@ export function registerAllReactors(): void {
     // signal already nudged Cole to reach them another way; nothing to do here.
     if (!e.hasEmail) return;
 
-    const drafted = await autoDraftsToday();
-    if (drafted >= AUTO_DRAFT_DAILY_CAP) {
-      console.log(
-        `[reactors] lead.inbound ${e.name}: auto-draft cap reached (${drafted}/${AUTO_DRAFT_DAILY_CAP} today) — left for manual draft`
-      );
-      return;
-    }
+    // The whole check→draft→commit runs under the lock so the cap can't be
+    // raced. Each queued draft commits its signal before the next one reads the
+    // count, so N concurrent inbound events produce at most CAP drafts, not N.
+    await withAutoDraftLock(async () => {
+      const drafted = await reactiveDraftsToday();
+      if (drafted >= AUTO_DRAFT_DAILY_CAP) {
+        console.log(
+          `[reactors] lead.inbound ${e.name}: auto-draft cap reached (${drafted}/${AUTO_DRAFT_DAILY_CAP} today) — left for manual draft`
+        );
+        return;
+      }
 
-    const { draftOutreach } = await import("../crm/leadEngine.ts");
-    const res = await draftOutreach(e.leadId);
-    if (!res.ok) {
-      // draftOutreach already guards against filing model-error text as a
-      // message; a failure here means no draft was created. The lead + inbound
-      // signal stand, so Cole still sees it — we just log why the auto-draft
-      // didn't land.
-      console.warn(`[reactors] lead.inbound ${e.name}: auto-draft failed — ${res.error}`);
-      return;
-    }
-    console.log(
-      `[reactors] lead.inbound ${e.name}: reply ${res.gated ? "proposed (awaiting confirm)" : "drafted"} for one-tap review`
-    );
+      const { draftOutreach } = await import("../crm/leadEngine.ts");
+      const res = await draftOutreach(e.leadId, { origin: "inbound" });
+      if (!res.ok) {
+        // draftOutreach already guards against filing model-error text as a
+        // message; a failure here means no draft was created (and nothing was
+        // counted against the budget). The lead + inbound signal stand, so Cole
+        // still sees it — we just log why the auto-draft didn't land.
+        console.warn(`[reactors] lead.inbound ${e.name}: auto-draft failed — ${res.error}`);
+        return;
+      }
+      console.log(
+        `[reactors] lead.inbound ${e.name}: reply ${res.gated ? "proposed (awaiting confirm)" : "drafted"} for one-tap review`
+      );
+    });
   });
 
   const handlers = listEventHandlers();

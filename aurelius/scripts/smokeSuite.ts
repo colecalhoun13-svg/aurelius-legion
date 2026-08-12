@@ -1948,6 +1948,19 @@ async function main() {
       const after = await prisma.bridgeSignal.count({ where: { sourceType: "outreach_draft" } });
       check("auto-draft skips a lead with no email (can't send what you can't address)", after === before);
 
+      // Council fix: the reactor's daily cap must count ONLY its own reactive
+      // drafts (":auto" suffix), NOT the 07:30 sweep's or a manual draft —
+      // otherwise a busy day starves the rarest, most time-critical event.
+      const { reactiveDraftsToday } = await import("../autonomy/reactors.ts");
+      await prisma.bridgeSignal.createMany({
+        data: [
+          { kind: "opportunity", sourceType: "outreach_draft", sourceId: `outreach:${TAG}sweep:1`, title: `${TAG} sweep draft`, body: "x" },
+          { kind: "opportunity", sourceType: "outreach_draft", sourceId: `outreach:${TAG}auto:1:auto`, title: `${TAG} reactive draft`, body: "x" },
+        ],
+      });
+      check("the auto-draft cap counts reactive drafts only, not the sweep's (flagship not starved)",
+        (await reactiveDraftsToday()) === 1);
+
       // Leave the registry as we found it so later capture blocks don't trip
       // keyless draft attempts through the now-global reactor.
       off("lead.inbound", "auto_draft_reply");

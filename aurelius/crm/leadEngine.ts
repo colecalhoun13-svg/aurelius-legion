@@ -111,7 +111,15 @@ export async function importWarmList(
  * defect that had to be fixed in inbox triage, and far worse here, because
  * this one is addressed to someone who might have become a client.
  */
-export async function draftOutreach(leadId: string): Promise<{
+export async function draftOutreach(
+  leadId: string,
+  // origin distinguishes WHO asked for this draft. The reactive lead-catch
+  // passes "inbound" so its drafts carry a marker in the sourceId — that lets
+  // the reactor's daily cap count ONLY reactive drafts, not the scheduled
+  // sweep's or a manual "draft a reply". Default (undefined) is byte-identical
+  // to the historic behaviour, so the sweep/manual/smoke callers are unchanged.
+  opts: { origin?: "inbound" } = {}
+): Promise<{
   ok: boolean;
   gated?: boolean;
   bridgeSignalId?: string;
@@ -140,7 +148,10 @@ export async function draftOutreach(leadId: string): Promise<{
     actionClass: OUTREACH_DRAFT_CLASS,
     sourceType: "outreach_draft",
     // Touch-numbered so a follow-up isn't deduped against the first message.
-    sourceId: `outreach:${lead.id}:${priorTouches + 1}`,
+    // The trailing ":auto" on reactive drafts still startsWith `outreach:${id}`
+    // (so touch-counting above is unaffected) but is countable on its own, so
+    // the reactor caps its budget without starving the scheduled sweep.
+    sourceId: `outreach:${lead.id}:${priorTouches + 1}${opts.origin === "inbound" ? ":auto" : ""}`,
     prepare: async () => {
       const res = await runLLM({
         taskType: "chat",
