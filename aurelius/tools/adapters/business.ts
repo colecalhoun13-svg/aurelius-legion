@@ -100,6 +100,34 @@ export const businessAdapter: ToolAdapter = {
       dataSchema: '{ "question": string (what he\'s weighing — e.g. "how do I get more high school athletes into the gym") }',
       example: '[TOOL: tool=business action=options data={"question": "how should I get more varsity athletes in the door"}]',
     },
+    {
+      name: "research_partners",
+      description:
+        "Research NON-competing partnership candidates (apparel/gear/recovery/complementary brands — NEVER other gyms or PT clinics), grounded in Cole's positioning. Read-only: names and why, not outreach. Use for 'who could I partner with', 'find brand partners'.",
+      dataSchema: "{}",
+      example: "[TOOL: tool=business action=research_partners data={}]",
+    },
+    {
+      name: "draft_partner_intro",
+      description:
+        "Draft an INWARD intro DM/email to a specific partner and mint a per-partner tracked link so a landed partnership is attributable. Drafts only — sending stays Cole's. Use for 'draft an intro to <brand>'.",
+      dataSchema: "{ name: string, handle?: string, angle?: string }",
+      example: '[TOOL: tool=business action=draft_partner_intro data={"name":"<brand>","angle":"co-branded speed program"}]',
+    },
+    {
+      name: "probe_offer",
+      description:
+        "Float 2-3 offer VARIANTS behind tracked links to learn which framing pulls — consistent pricing, never per-lead. Inward: creates the probe + links, nothing outward. Use for 'test my offer framing', 'which package lands'.",
+      dataSchema: "{ variants?: number (2-3) }",
+      example: "[TOOL: tool=business action=probe_offer data={}]",
+    },
+    {
+      name: "offer_probe_standing",
+      description:
+        "Where a running offer probe stands — which variant is pulling and whether there's enough signal to call it. Read-only. Use for 'how's the offer test going'.",
+      dataSchema: "{}",
+      example: "[TOOL: tool=business action=offer_probe_standing data={}]",
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     // ── marketing: evidence-carrying, never a bare assertion ──
@@ -175,6 +203,38 @@ export const businessAdapter: ToolAdapter = {
         const out = await O.retireOffer(String(data.offerId));
         if (!out.ok) return { ok: false, output: null, error: out.error };
         return { ok: true, output: await O.offerReadiness() };
+      } catch (err: any) {
+        return { ok: false, output: null, error: err?.message ?? String(err) };
+      }
+    }
+
+    // ── partnerships (non-competing) + offer probe: inward growth ──
+    if (action === "research_partners" || action === "draft_partner_intro" || action === "probe_offer" || action === "offer_probe_standing") {
+      try {
+        if (action === "research_partners") {
+          const { researchPartners } = await import("../../business/partnership.ts");
+          const out = await researchPartners();
+          if (!out.ok) return { ok: false, output: null, error: out.suggestions };
+          return { ok: true, output: { suggestions: out.suggestions, trustThis: out.grounding } };
+        }
+        if (action === "draft_partner_intro") {
+          if (!data?.name) throw new Error("draft_partner_intro needs a partner name.");
+          const { draftPartnerIntro } = await import("../../business/partnership.ts");
+          const out = await draftPartnerIntro({ name: String(data.name), handle: data?.handle, angle: data?.angle });
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return {
+            ok: true,
+            output: { body: out.body, trackedLink: out.refUrl, note: "Inward draft — send it yourself. The link makes a landed partnership attributable." },
+          };
+        }
+        if (action === "probe_offer") {
+          const { probeOffer } = await import("../../business/offers.ts");
+          const out = await probeOffer({ variants: data?.variants != null ? Number(data.variants) : undefined });
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: out };
+        }
+        const { offerProbeStanding } = await import("../../business/offers.ts");
+        return { ok: true, output: await offerProbeStanding() };
       } catch (err: any) {
         return { ok: false, output: null, error: err?.message ?? String(err) };
       }

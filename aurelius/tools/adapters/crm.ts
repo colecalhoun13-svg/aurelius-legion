@@ -247,6 +247,27 @@ export const crmAdapter: ToolAdapter = {
       dataSchema: '{ leadId?: string, clientId?: string, to?: string (raw number), body: string }',
       example: '[TOOL: crm.text_lead {"leadId": "abc123", "body": "Hey Jake — still want to lock in that speed block?"}]',
     },
+    {
+      name: "draft_client_message",
+      description:
+        "Draft a check-in, re-sign, or referral-ask to an EXISTING client — inward, returns the draft for you to read and send yourself. Training-only athletes are refused (business messaging never aims at them). Use for 'draft a check-in to Sarah', 'write a re-sign for Jake', 'ask Maria for a referral'.",
+      dataSchema: '{ clientId: string, kind: "checkin"|"resign"|"referral" }',
+      example: '[TOOL: crm.draft_client_message {"clientId":"abc","kind":"checkin"}]',
+    },
+    {
+      name: "draft_proof_content",
+      description:
+        "Draft a proof content piece from a client's REAL PRs — inward, files a content draft you review before it goes anywhere. Refuses training-only athletes and clients with no PRs on record (never invents proof). Use for 'make a proof post from Jake's numbers'.",
+      dataSchema: "{ clientId: string }",
+      example: '[TOOL: crm.draft_proof_content {"clientId":"abc"}]',
+    },
+    {
+      name: "retention_analytics",
+      description:
+        "Retention truth — average client LTV and churn-risk count — but ONLY once there are enough clients to be honest; below the threshold it says 'too early' rather than a number from one or two. Use for 'what's my LTV', 'who's at risk of churning'.",
+      dataSchema: "{}",
+      example: "[TOOL: crm.retention_analytics {}]",
+    },
   ],
 
   async run(action: string, data: Record<string, any>): Promise<ToolAdapterResult> {
@@ -504,6 +525,35 @@ export const crmAdapter: ToolAdapter = {
               message: "Staged and waiting on your confirm — I don't send texts on my own. Confirm on the Bridge to send it.",
             },
           };
+        }
+
+        case "draft_client_message": {
+          const kind = String(data?.kind ?? "");
+          if (!data?.clientId || !["checkin", "resign", "referral"].includes(kind))
+            return { ok: false, output: null, error: 'need clientId and kind ("checkin" | "resign" | "referral")' };
+          const { draftClientMessage } = await import("../../crm/retention.ts");
+          const res = await draftClientMessage(String(data.clientId), kind as "checkin" | "resign" | "referral");
+          if (!res.ok) return { ok: false, output: null, error: res.error };
+          return {
+            ok: true,
+            output: { draft: res.body, note: "Inward draft — read it, then send it yourself. I don't message clients on my own." },
+          };
+        }
+
+        case "draft_proof_content": {
+          if (!data?.clientId) return { ok: false, output: null, error: "need clientId" };
+          const { draftProofContent } = await import("../../crm/retention.ts");
+          const res = await draftProofContent(String(data.clientId));
+          if (!res.ok) return { ok: false, output: null, error: res.error };
+          return {
+            ok: true,
+            output: { draftId: res.draftId, note: "Filed as a content draft from real PRs — review it before it goes anywhere." },
+          };
+        }
+
+        case "retention_analytics": {
+          const { retentionAnalytics } = await import("../../crm/retention.ts");
+          return { ok: true, output: await retentionAnalytics() };
         }
 
         default:
