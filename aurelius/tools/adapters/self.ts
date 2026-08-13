@@ -54,6 +54,13 @@ export const selfAdapter: ToolAdapter = {
       dataSchema: "{ decision: string }",
       example: '[TOOL: tool=self action=board data={"decision":"should I drop the gym to part-time and go all-in on remote?"}]',
     },
+    {
+      name: "voice",
+      description:
+        "Turn Cole's APPROVED words into an audio clip in his voice (ElevenLabs cloned voice if configured, else OpenAI TTS; dormant with neither). Voices ONLY the text it's given — approved content, a briefing, words Cole hands over — never an autonomous answer. Produces a file for Cole to use/share; it does not post anything. Use for 'voice this', 'read this in my voice', 'make an audio of this'.",
+      dataSchema: "{ text: string, filename?: string }",
+      example: '[TOOL: tool=self action=voice data={"text":"<approved words>"}]',
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     const { prisma } = await import("../../core/db/prisma.ts");
@@ -75,6 +82,12 @@ export const selfAdapter: ToolAdapter = {
         return { ok: false, output: null, error: result.error ?? "The board couldn't convene (no engine?). Nothing fabricated." };
       }
       return { ok: true, output: { deliberation: formatDeliberation(result), note: "The board informs; the call stays yours." } };
+    }
+    if (action === "voice") {
+      const { synthesizeSpeech } = await import("../../voice/tts.ts");
+      const out = await synthesizeSpeech(String(data?.text ?? ""), { filename: data?.filename ? String(data.filename) : undefined });
+      if (!out.ok) return { ok: false, output: null, error: out.error };
+      return { ok: true, output: { path: out.path, provider: out.provider, cloned: out.cloned, bytes: out.bytes, note: "Audio of your approved words — yours to share. I don't post it." } };
     }
     if (action === "spend") {
       try {

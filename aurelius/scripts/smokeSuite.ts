@@ -552,6 +552,15 @@ async function main() {
     const { selfAdapter } = await import("../tools/adapters/self.ts");
     const board = await selfAdapter.run("board", {});
     check("the board tool refuses to convene without a decision", board.ok === false && /decision/i.test(board.error ?? ""));
+
+    // Voice-out (#23): voices only GIVEN approved words; dormant-honest with no
+    // TTS key (never fabricates audio, never silently no-ops).
+    const { synthesizeSpeech, voiceStatus } = await import("../voice/tts.ts");
+    check("voice refuses empty input (voices only approved words it's given)",
+      (await synthesizeSpeech("")).ok === false);
+    const vs = voiceStatus();
+    check("voice is honest about config (dormant with a fix, or a named provider)",
+      typeof vs.configured === "boolean" && (vs.configured ? !!vs.provider : !!vs.reason));
   }
 
   console.log("── new tools: gmail + fred (keyless: honest connect/config fails) ──");
