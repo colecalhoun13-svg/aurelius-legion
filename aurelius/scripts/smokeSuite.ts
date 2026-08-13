@@ -546,6 +546,12 @@ async function main() {
     const fr = await faithRhythm();
     check("faith rhythm stays dormant (won't invent scripture) with no library material",
       fr.ok === false && /library/i.test(fr.reason ?? ""));
+
+    // Board of directors (#58): the council is reachable as a tool the model can
+    // aim at a real decision — and refuses an empty one, trusting its own gate.
+    const { selfAdapter } = await import("../tools/adapters/self.ts");
+    const board = await selfAdapter.run("board", {});
+    check("the board tool refuses to convene without a decision", board.ok === false && /decision/i.test(board.error ?? ""));
   }
 
   console.log("── new tools: gmail + fred (keyless: honest connect/config fails) ──");

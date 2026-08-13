@@ -47,6 +47,13 @@ export const selfAdapter: ToolAdapter = {
       dataSchema: "{}",
       example: "[TOOL: tool=self action=faith data={}]",
     },
+    {
+      name: "board",
+      description:
+        "Convene the BOARD OF DIRECTORS on a real decision — multiple independent operator lenses deliberate it and synthesize into one call. Aim it at anything genuinely weighty (a pricing move, a big commitment, a fork). Use this yourself when Cole is clearly weighing a real decision, not just chatting — that's the point of the board. Returns the deliberation; Cole still decides.",
+      dataSchema: "{ decision: string }",
+      example: '[TOOL: tool=self action=board data={"decision":"should I drop the gym to part-time and go all-in on remote?"}]',
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     const { prisma } = await import("../../core/db/prisma.ts");
@@ -55,6 +62,19 @@ export const selfAdapter: ToolAdapter = {
       const fr = await faithRhythm();
       if (!fr.ok) return { ok: false, output: null, error: fr.reason };
       return { ok: true, output: { rhythm: fr.rhythm, drawnFrom: fr.drawnFrom } };
+    }
+    if (action === "board") {
+      const decision = String(data?.decision ?? "").trim();
+      if (!decision) return { ok: false, output: null, error: "The board needs a decision to deliberate — what's Cole weighing?" };
+      const { deliberate, formatDeliberation } = await import("../../council/deliberate.ts");
+      const result = await deliberate(decision);
+      // Trust the council's own honesty gate: it filters engine-error seats and
+      // returns ok:false when it couldn't actually convene, so a keyless run
+      // yields an honest refusal here rather than error text dressed as a verdict.
+      if (!result.ok) {
+        return { ok: false, output: null, error: result.error ?? "The board couldn't convene (no engine?). Nothing fabricated." };
+      }
+      return { ok: true, output: { deliberation: formatDeliberation(result), note: "The board informs; the call stays yours." } };
     }
     if (action === "spend") {
       try {
