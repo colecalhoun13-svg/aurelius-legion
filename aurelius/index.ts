@@ -1804,6 +1804,16 @@ scheduleNamed("training_trend_sweep", "50 6 * * 1", "training trend sweep", asyn
       console.log(`[training] trend sweep: ${out.ran ? `${out.flagged} athlete(s) flagged` : `skipped (${out.reason})`}`);
     });
 });
+// Sunday 08:00 — cross-athlete pattern sense: what's moving/stalling ACROSS the
+// roster (a working stimulus vs a programming gap), one deduped training-domain
+// signal. Observations only; empty-honest until a real roster pattern exists.
+scheduleNamed("roster_patterns", "0 8 * * 0", "roster pattern sweep", async () => {
+    await runTraced("schedule", "roster_patterns", async () => {
+      const { runRosterPatternSweep } = await import("./training/rosterPatterns.ts");
+      const out = await runRosterPatternSweep();
+      console.log(`[training] roster patterns: ${out.ran ? `${out.patterns} surfaced` : `skipped (${out.reason})`}`);
+    });
+});
 scheduleNamed("retention_sweep", "30 8 * * *", "retention sweep", async () => {
     await runTraced("schedule", "retention_sweep", async () => {
       const { retentionSweep } = await import("./crm/retention.ts");

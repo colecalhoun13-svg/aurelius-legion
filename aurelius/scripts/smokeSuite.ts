@@ -2262,6 +2262,42 @@ async function main() {
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["pr_peak", "check_in_due", "renewal_due", "referral_captured", "inbound_lead"] } } });
   }
 
+  console.log("── cross-athlete pattern sense: the roster as a field (#11) ──");
+  {
+    const { addClient } = await import("../crm/service.ts");
+    const { logMetric } = await import("../crm/retention.ts");
+    const { crossAthletePatterns, runRosterPatternSweep } = await import("../training/rosterPatterns.ts");
+
+    // Two athletes both improving on the SAME measure = a roster pattern; one
+    // athlete on a lone measure is NOT (needs >= 2).
+    const a1 = await addClient({ name: `${TAG} Field A`, sport: "basketball" });
+    const a2 = await addClient({ name: `${TAG} Field B`, sport: "soccer" });
+    await logMetric({ clientId: a1.id, label: "vertical", value: 24, unit: "in" });
+    await logMetric({ clientId: a1.id, label: "vertical", value: 27, unit: "in" });
+    await logMetric({ clientId: a2.id, label: "vertical", value: 22, unit: "in" });
+    await logMetric({ clientId: a2.id, label: "vertical", value: 25, unit: "in" });
+    await logMetric({ clientId: a1.id, label: "bench", value: 185, unit: "lb" }); // lone measure, one point
+    await logMetric({ clientId: a1.id, label: "bench", value: 195, unit: "lb" }); // only a1 → not a pattern
+
+    const rp = await crossAthletePatterns();
+    const vertical = rp.working.find((p) => p.measure.toLowerCase() === "vertical");
+    check("a measure improving across 2+ athletes surfaces as a working roster pattern",
+      !!vertical && vertical.athletes === 2 && vertical.improving === 2);
+    check("a measure with only one athlete is NOT called a roster pattern",
+      !rp.working.some((p) => p.measure.toLowerCase() === "bench") && !rp.stalling.some((p) => p.measure.toLowerCase() === "bench"));
+
+    const sweep = await runRosterPatternSweep();
+    check("the weekly roster-pattern sweep surfaces the field signal on its own",
+      sweep.ran && sweep.patterns >= 1 &&
+        (await prisma.bridgeSignal.count({ where: { sourceType: "roster_patterns" } })) >= 1);
+
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "roster_patterns" } });
+    await prisma.metric.deleteMany({ where: { clientId: { in: [a1.id, a2.id] } } });
+    await prisma.referral.deleteMany({ where: { referrerClientId: { in: [a1.id, a2.id] } } });
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "pr_peak" } });
+    await prisma.client.deleteMany({ where: { id: { in: [a1.id, a2.id] } } });
+  }
+
   console.log("── integrations: money & comms self-record, verified ──");
   {
     const crypto = await import("node:crypto");
