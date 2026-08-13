@@ -1999,7 +1999,17 @@ async function main() {
         !!wiredIn && wiredIn.handlers.includes("auto_draft_reply"));
       check("the lead-replied reactor is wired to lead.reply_received (loop closed)",
         !!wiredReply && wiredReply.handlers.includes("auto_draft_followup"));
-      check("the bus reports its live reaction count (inspectable wiring, rule 8)", eventHandlerCount() >= 2);
+      const wiredPr = listEventHandlers().find((h) => h.type === "pr.recorded");
+      check("the PR→proof reactor is wired to pr.recorded (#39)",
+        !!wiredPr && wiredPr.handlers.includes("auto_draft_proof"));
+      check("the bus reports its live reaction count (inspectable wiring, rule 8)", eventHandlerCount() >= 3);
+
+      // Consent gate: a MINOR client's PR must NOT auto-draft proof content
+      // (that stays a manual, consent-driven step). Emitting for a minor is a no-op.
+      const proofBefore = await prisma.bridgeSignal.count({ where: { sourceType: "proof_autodraft" } });
+      await emit({ type: "pr.recorded", clientId: "no-such", name: "Minor", isMinor: true, label: "vertical", value: 30 });
+      check("a minor's PR never auto-drafts proof (consent stays manual)",
+        (await prisma.bridgeSignal.count({ where: { sourceType: "proof_autodraft" } })) === proofBefore);
 
       // Guard: a lead with no email can't be emailed, so the auto-draft reactor
       // no-ops — it must NOT file a draft for someone it could never send to.
@@ -2025,6 +2035,7 @@ async function main() {
       // keyless draft attempts through the now-global reactors.
       off("lead.inbound", "auto_draft_reply");
       off("lead.reply_received", "auto_draft_followup");
+      off("pr.recorded", "auto_draft_proof");
     }
 
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["inbound_lead", "outreach_draft"] } } });

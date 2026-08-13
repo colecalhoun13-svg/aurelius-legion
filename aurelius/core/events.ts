@@ -60,6 +60,21 @@ export type AureliusEvent =
       leadId: string;
       name: string;
       hasEmail: boolean;
+    }
+  | {
+      /** A paying CLIENT hit a PR (the peak moment). Fired only for business
+       *  clients — a gym athlete's PR is a coaching win, not a business one, and
+       *  never reaches this event. isMinor gates the proof-content reactor:
+       *  auto-drafting proof about a minor needs explicit consent Cole handles by
+       *  hand, so the reactor skips them. Publishing is always outward/gated
+       *  regardless — the draft is inward and Cole's to review. */
+      type: "pr.recorded";
+      clientId: string;
+      name: string;
+      isMinor: boolean;
+      label: string;
+      value: number;
+      unit?: string;
     };
 
 export type EventType = AureliusEvent["type"];

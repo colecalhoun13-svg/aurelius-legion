@@ -113,6 +113,29 @@ export function registerAllReactors(): void {
   on("lead.inbound", "auto_draft_reply", (e) => reactiveAutoDraft("lead.inbound", e));
   on("lead.reply_received", "auto_draft_followup", (e) => reactiveAutoDraft("lead.reply", e));
 
+  // PR → proof post (#39): a paying client's PR is their most-convinced moment.
+  // For non-minor clients, draft the proof content so it's waiting — Cole
+  // reviews it, and PUBLISHING is always his outward tap (content.publish).
+  // Minors are skipped: proof about a minor needs consent Cole handles by hand.
+  // Deduped per client per day via a marker so multiple PRs in one session don't
+  // stack drafts.
+  on("pr.recorded", "auto_draft_proof", async (e) => {
+    if (e.isMinor) return; // consent-sensitive — stays a manual, Cole-driven draft
+    const { prisma } = await import("../core/db/prisma.ts");
+    const day = new Date().toISOString().slice(0, 10);
+    const markerId = `proof_autodraft:${e.clientId}:${day}`;
+    // Claim the day's slot atomically-ish (a bridge marker) so a burst of PRs
+    // produces one proof draft, not one per lift.
+    const already = await prisma.bridgeSignal.count({ where: { sourceType: "proof_autodraft", sourceId: markerId } }).catch(() => 1);
+    if (already > 0) return;
+    await prisma.bridgeSignal
+      .create({ data: { kind: "background_result", domain: "business", sourceType: "proof_autodraft", sourceId: markerId, status: "noted", severity: "info", title: `proof auto-draft claim — ${e.name}`, body: "marker" } })
+      .catch(() => {});
+    const { draftProofContent } = await import("../crm/retention.ts");
+    const res = await draftProofContent(e.clientId);
+    console.log(`[reactors] pr.recorded ${e.name}: proof ${res.ok ? "drafted (review before publish)" : `skipped — ${res.error}`}`);
+  });
+
   const handlers = listEventHandlers();
   console.log(
     `[reactors] wired ${eventHandlerCount()} reaction(s) across ${handlers.length} event type(s): ` +
