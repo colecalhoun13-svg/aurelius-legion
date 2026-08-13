@@ -10,6 +10,7 @@ const NAV_GLYPHS: Record<string, string> = {
   Chat: "❧",
   Decisions: "⇄",
   Zero: "◉",
+  Finance: "❦",
   Business: "◈",
   Goals: "◎",
   Brain: "❈",

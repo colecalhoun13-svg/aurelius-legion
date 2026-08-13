@@ -2405,6 +2405,40 @@ async function main() {
     check("competitor intel refuses to invent intel with no engine", (await competitorIntel()).ok === false);
   }
 
+  console.log("── personal finance: net worth + cashflow, private + separate (#51) ──");
+  {
+    const { addAccount, addTxn, importCsv, netWorth, cashflow, financeDashboard } = await import("../finance/service.ts");
+    await prisma.financeTxn.deleteMany({});
+    await prisma.financeAccount.deleteMany({});
+    await prisma.netWorthSnapshot.deleteMany({});
+
+    await addAccount({ name: `${TAG} Checking`, kind: "checking", balance: 5000 });
+    await addAccount({ name: `${TAG} Card`, kind: "debt", balance: 1200 });
+    const nw = await netWorth();
+    check("net worth = assets − debt (a debt subtracts)", nw.netCents === 380000 && nw.assetsCents === 500000 && nw.liabilitiesCents === 120000);
+    check("updating a balance writes a net-worth snapshot (the chosen cadence)", nw.trend.length >= 1);
+
+    await addTxn({ amount: -80, category: "food" });
+    await addTxn({ amount: 2000, category: "income" });
+    const cf = await cashflow();
+    check("cashflow separates money in from money out", cf.inCents === 200000 && cf.outCents === 8000);
+
+    const first = await importCsv([{ date: "2026-08-02", amount: -42.5, description: "shell gas" }]);
+    const again = await importCsv([{ date: "2026-08-02", amount: -42.5, description: "shell gas" }]);
+    check("CSV import is idempotent (re-drop is a no-op, not a double-count)", first.imported === 1 && again.imported === 0 && again.skipped === 1);
+
+    const dash = await financeDashboard();
+    check("the finance dashboard assembles and isn't empty once data exists", !dash.empty && /net worth/i.test(dash.headline));
+
+    // BOUNDARY: personal finance must never touch the business ledger/analyst.
+    const { moneyLedger } = await import("../crm/ledger.ts");
+    check("personal finance never inflates the business ledger", (await moneyLedger()).earnedCents === 0);
+
+    await prisma.financeTxn.deleteMany({});
+    await prisma.financeAccount.deleteMany({});
+    await prisma.netWorthSnapshot.deleteMany({});
+  }
+
   console.log("── Athlete Zero: Cole's own record, double-excluded (#44/#8) ──");
   {
     const { getOrCreateSelf, athleteZeroSummary } = await import("../athlete/self.ts");

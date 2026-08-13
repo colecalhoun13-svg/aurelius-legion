@@ -1367,3 +1367,48 @@ model Referral {
   @@index([referrerClientId, status])
   @@index([status])
 }
+
+// ── PERSONAL FINANCE (Cole's own money — NEVER business, NEVER indexed) ──
+// A separate money world from the business ledger: no business query reads
+// these tables and they are never embedded into the vector index (hard rule 6),
+// so balances/transactions can't leak into a prompt. Integer cents throughout.
+model FinanceAccount {
+  id            String   @id @default(cuid())
+  name          String
+  kind          String   @default("checking") // "checking"|"savings"|"investment"|"debt"|"cash"
+  balanceCents  Int      @default(0) // signed — a debt account is negative
+  currency      String   @default("usd")
+  lastBalanceAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  txns          FinanceTxn[]
+
+  @@index([kind])
+}
+
+model FinanceTxn {
+  id          String          @id @default(cuid())
+  accountId   String?
+  account     FinanceAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  date        DateTime
+  amountCents Int // signed: + in / - out
+  category    String          @default("other")
+  description String?
+  source      String          @default("manual") // "csv" | "manual"
+  importHash  String?         @unique // idempotent CSV dedupe (re-import is a no-op)
+  createdAt   DateTime        @default(now())
+
+  @@index([date])
+  @@index([category])
+}
+
+model NetWorthSnapshot {
+  id               String   @id @default(cuid())
+  at               DateTime @default(now())
+  assetsCents      Int
+  liabilitiesCents Int
+  netCents         Int
+  createdAt        DateTime @default(now())
+
+  @@index([at])
+}

@@ -75,6 +75,12 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     description: "The week as a resource",
     group: "Direction",
   },
+  finance: {
+    name: "Finance",
+    path: "/finance",
+    description: "Your personal money — net worth, cashflow, and runway (private)",
+    group: "Direction",
+  },
   machine: {
     name: "Machine",
     path: "/engines",
