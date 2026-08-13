@@ -2333,6 +2333,21 @@ async function main() {
       (await buildProgressArtifact(a2.id)).ok === false); // a2 has metrics? it does (vertical) → keyless engine refusal; both are ok:false
     check("progress artifact refuses an unknown athlete", (await buildProgressArtifact("no-such")).ok === false);
 
+    // Paperwork autopilot (#6): the intake set is deterministic and ships even
+    // keyless; the welcome/agreement refuse rather than fabricate.
+    const { generateOnboardingDocs } = await import("../crm/paperwork.ts");
+    const docs = await generateOnboardingDocs(a1.id); // a1 is a client (addClient default)
+    check("onboarding paperwork ships the intake questions even with no engine",
+      docs.ok === true && (docs.intake?.length ?? 0) >= 5 && docs.welcome === null);
+
+    // Dispatch guard: a declared crm action with no switch case is a dead tool
+    // (progress_artifact shipped one commit without its case). Assert both wire.
+    const { crmAdapter } = await import("../tools/adapters/crm.ts");
+    const paDisp = await crmAdapter.run("progress_artifact", { clientId: "no-such" });
+    const odDisp = await crmAdapter.run("onboarding_docs", { clientId: "no-such" });
+    check("newly-added crm actions actually dispatch (no declared-but-dead tool)",
+      !/Unknown crm action/.test(paDisp.error ?? "") && !/Unknown crm action/.test(odDisp.error ?? ""));
+
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: "roster_patterns" } });
     await prisma.metric.deleteMany({ where: { clientId: { in: [a1.id, a2.id] } } });
     await prisma.referral.deleteMany({ where: { referrerClientId: { in: [a1.id, a2.id] } } });

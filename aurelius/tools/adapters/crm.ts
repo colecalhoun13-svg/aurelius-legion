@@ -289,6 +289,13 @@ export const crmAdapter: ToolAdapter = {
       dataSchema: "{ clientId: string }",
       example: '[TOOL: crm.progress_artifact {"clientId":"abc"}]',
     },
+    {
+      name: "onboarding_docs",
+      description:
+        "Generate the onboarding PAPERWORK for a new client — the intake questionnaire (always), a drafted welcome message, and a plain coaching-agreement outline. INWARD: drafts to review and send, never auto-sent; no invented prices/guarantees; training-only athletes refused. Use for 'onboarding docs for <client>', 'intake questions for <client>', 'welcome + agreement'.",
+      dataSchema: "{ clientId: string }",
+      example: '[TOOL: crm.onboarding_docs {"clientId":"abc"}]',
+    },
   ],
 
   async run(action: string, data: Record<string, any>): Promise<ToolAdapterResult> {
@@ -588,6 +595,22 @@ export const crmAdapter: ToolAdapter = {
           const out = await developmentCurves(String(data.clientId));
           if (!out) return { ok: false, output: null, error: "No such athlete." };
           return { ok: true, output: out };
+        }
+
+        case "progress_artifact": {
+          if (!data?.clientId) return { ok: false, output: null, error: "need clientId" };
+          const { buildProgressArtifact } = await import("../../athlete/progressArtifact.ts");
+          const out = await buildProgressArtifact(String(data.clientId));
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: { artifact: out.artifact, forMinor: out.forMinor, note: "Inward draft — review, then share it yourself." } };
+        }
+
+        case "onboarding_docs": {
+          if (!data?.clientId) return { ok: false, output: null, error: "need clientId" };
+          const { generateOnboardingDocs } = await import("../../crm/paperwork.ts");
+          const out = await generateOnboardingDocs(String(data.clientId));
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: { intake: out.intake, welcome: out.welcome, agreement: out.agreement, note: out.note } };
         }
 
         default:
