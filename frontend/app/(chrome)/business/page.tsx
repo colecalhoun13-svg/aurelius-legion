@@ -94,6 +94,12 @@ type ExpenseSummary = {
   byCategory: { category: string; cents: number; label: string }[];
   quarterEstimateNote: string;
 };
+type ProfitAndLoss = {
+  month: string;
+  netThisMonthCents: number; netThisMonth: string;
+  earnedThisMonth: string; spentThisMonth: string;
+  headline: string;
+};
 
 type Cadence = { lastPublishedAt: string | null; daysSince: number | null; plannedThisWeek: number; line: string };
 
@@ -168,6 +174,9 @@ export default function BusinessPage() {
   // The spend side of the treasury (what this month COST). Loaded separately
   // and tolerant of failure — a missing chip must never read as "no business".
   const [expenses, setExpenses] = useState<ExpenseSummary | null>(null);
+  // The month's net (earned − spent). Additive and failure-tolerant like the
+  // spend chip — its absence is a missing line, never a broken page.
+  const [pnl, setPnl] = useState<ProfitAndLoss | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Transient success line — so an action that writes a Gmail draft / converts a
@@ -207,6 +216,7 @@ export default function BusinessPage() {
       if (eres.ok) {
         const ej = await eres.json();
         setExpenses(ej?.expenses ?? null);
+        setPnl(ej?.pnl ?? null);
       }
     } catch { /* the chip is additive */ }
   }, []);
@@ -518,6 +528,15 @@ export default function BusinessPage() {
                 {expenses.byCategory[0]
                   ? ` · ${expenses.byCategory[0].category === "software" ? "tools" : expenses.byCategory[0].category}`
                   : ""}
+              </span>
+            )}
+            {/* The net chip — earned − spent, the sentence the treasury never
+                said. Honest sign: green when ahead, danger when the month is
+                underwater (which, pre-revenue, is the truth worth seeing). */}
+            {pnl && (pnl.netThisMonthCents !== 0 || (expenses?.spentCents ?? 0) > 0) && (
+              <span title={pnl.headline}>
+                <i style={{ display: "inline-block", width: 8, height: 8, borderRadius: 1, marginRight: ".45em", background: pnl.netThisMonthCents >= 0 ? "var(--money)" : "var(--danger)" }} />
+                <b style={{ color: pnl.netThisMonthCents >= 0 ? "var(--money)" : "var(--danger)" }}>{pnl.netThisMonth}</b>&nbsp;net
               </span>
             )}
           </div>

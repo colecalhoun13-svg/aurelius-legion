@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
+    "typecheck": "tsc --noEmit",
     "start": "next start",
     "postinstall": "prisma generate --schema ../aurelius/prisma/schema.prisma && cp -r ../aurelius/node_modules/.prisma node_modules/ && rm -rf node_modules/@prisma/client && cp -r ../aurelius/node_modules/@prisma/client node_modules/@prisma/client"
   },

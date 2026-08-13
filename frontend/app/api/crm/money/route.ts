@@ -8,6 +8,7 @@ import {
   updateEngagement,
 } from "../../../../../aurelius/crm/service";
 import { expenseSummary, listExpenses } from "../../../../../aurelius/business/expenses";
+import { profitAndLoss } from "../../../../../aurelius/business/pnl";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +20,15 @@ export const dynamic = "force-dynamic";
  */
 export async function GET() {
   try {
-    const [expenses, recent] = await Promise.all([expenseSummary(), listExpenses({ limit: 10 })]);
-    return NextResponse.json({ expenses, recent });
+    const [expenses, recent, pnl] = await Promise.all([
+      expenseSummary(),
+      listExpenses({ limit: 10 }),
+      // The P&L joins earned − spent = net (the one statement the treasury
+      // never actually subtracted). Best-effort: a P&L failure must not take
+      // the whole money panel down with it.
+      profitAndLoss().catch(() => null),
+    ]);
+    return NextResponse.json({ expenses, recent, pnl });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message ?? "Failed to load expenses" }, { status: 500 });
   }
