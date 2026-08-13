@@ -142,6 +142,27 @@ export const businessAdapter: ToolAdapter = {
       dataSchema: "{}",
       example: "[TOOL: tool=business action=productize data={}]",
     },
+    {
+      name: "flight_sim",
+      description:
+        "Model a business move BEFORE committing — 'raise the block to $350 and add 3 clients', 'go part-time at the gym'. Projects revenue/capacity/timeline against Cole's REAL numbers, names what has to be true, and the biggest risk. A model, not a promise — says its assumptions. Use for 'what if I…', 'should I raise my price', 'model this'.",
+      dataSchema: "{ scenario: string }",
+      example: '[TOOL: tool=business action=flight_sim data={"scenario":"raise the block to $350 and add 3 clients"}]',
+    },
+    {
+      name: "discovery_prep",
+      description:
+        "A one-glance discovery-call prep sheet for a lead: the picture, qualifying questions, the offer to present, likely objections. Read-only. Use for 'prep me for the call with <lead>', 'discovery prep for <lead>'.",
+      dataSchema: "{ leadId: string }",
+      example: '[TOOL: tool=business action=discovery_prep data={"leadId":"abc"}]',
+    },
+    {
+      name: "discovery_followup",
+      description:
+        "Draft the post-call follow-up for a lead, from the lead plus Cole's call notes. INWARD — a draft Cole reads and sends. Use for 'follow up with <lead> after the call'.",
+      dataSchema: "{ leadId: string, notes?: string }",
+      example: '[TOOL: tool=business action=discovery_followup data={"leadId":"abc","notes":"wants speed, budget tight, start in Sept"}]',
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     // ── marketing: evidence-carrying, never a bare assertion ──
@@ -265,6 +286,30 @@ export const businessAdapter: ToolAdapter = {
         const out = await productizationRecommendations();
         if (!out.ok) return { ok: false, output: null, error: out.error };
         return { ok: true, output: { recommendations: out.recommendations, trustThis: out.grounding } };
+      } catch (err: any) {
+        return { ok: false, output: null, error: err?.message ?? String(err) };
+      }
+    }
+
+    // ── planning: flight-sim (what-if) + discovery-call co-pilot ──
+    if (action === "flight_sim" || action === "discovery_prep" || action === "discovery_followup") {
+      try {
+        if (action === "flight_sim") {
+          const { flightSimulate } = await import("../../business/flightSim.ts");
+          const out = await flightSimulate(String(data?.scenario ?? ""));
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: { projection: out.projection, trustThis: out.grounding } };
+        }
+        if (!data?.leadId) throw new Error(`${action} needs a leadId.`);
+        const D = await import("../../business/discovery.ts");
+        if (action === "discovery_prep") {
+          const out = await D.discoveryPrep(String(data.leadId));
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: { sheet: out.sheet } };
+        }
+        const out = await D.discoveryFollowup(String(data.leadId), data?.notes ? String(data.notes) : undefined);
+        if (!out.ok) return { ok: false, output: null, error: out.error };
+        return { ok: true, output: { body: out.body, note: "Inward draft — read it, then send it yourself." } };
       } catch (err: any) {
         return { ok: false, output: null, error: err?.message ?? String(err) };
       }

@@ -2308,6 +2308,16 @@ async function main() {
     // Keyless: productization must refuse rather than invent advice (hard rule 3).
     const prod = await productizationRecommendations();
     check("productization refuses to invent recommendations with no engine (hard rule 3)", prod.ok === false);
+
+    // Planning tools: flight-sim needs a scenario; discovery needs a real lead;
+    // both refuse keyless rather than filing an error as a projection/sheet.
+    const { flightSimulate } = await import("../business/flightSim.ts");
+    const { discoveryPrep } = await import("../business/discovery.ts");
+    const noScenario = await flightSimulate("");
+    check("flight-sim asks WHAT to model when given nothing", noScenario.ok === false && /model what/i.test(noScenario.error ?? ""));
+    check("flight-sim refuses to model on a guess with no engine (hard rule 3)",
+      (await flightSimulate("raise the block to $350")).ok === false);
+    check("discovery prep refuses an unknown lead", (await discoveryPrep("no-such-lead")).ok === false);
   }
 
   console.log("── integrations: money & comms self-record, verified ──");
