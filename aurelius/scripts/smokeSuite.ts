@@ -2405,6 +2405,36 @@ async function main() {
     check("competitor intel refuses to invent intel with no engine", (await competitorIntel()).ok === false);
   }
 
+  console.log("── Athlete Zero: Cole's own record, double-excluded (#44/#8) ──");
+  {
+    const { getOrCreateSelf, athleteZeroSummary } = await import("../athlete/self.ts");
+    const { athleteRoster } = await import("../crm/performance.ts");
+    const { pipelineSnapshot } = await import("../crm/service.ts");
+    const { syncWhoop, whoopStatus, latestReadiness } = await import("../health/whoop.ts");
+
+    const self = await getOrCreateSelf();
+    const dupe = await getOrCreateSelf();
+    check("the self record is created once and reused (idempotent)", self.id === dupe.id);
+
+    // DOUBLE EXCLUSION: not among coached athletes, not in the business pipeline.
+    const roster = await athleteRoster();
+    check("Athlete Zero never appears on the coached-athlete roster", !roster.some((r) => r.id === self.id));
+    const snap = await pipelineSnapshot();
+    check("Athlete Zero never counts as a business client", (snap.activeClients ?? 0) === 0 || !("self" in snap));
+
+    // WHOOP dormant-honest.
+    check("WHOOP is dormant-honest without a token", whoopStatus().configured === false && !!whoopStatus().reason);
+    check("WHOOP sync skips cleanly when dormant (no fake reading)", (await syncWhoop()).ran === false);
+    check("readiness is null before any sync (never fabricated)", (await latestReadiness()).recovery === null);
+
+    // The summary reads without throwing (empty-honest for a fresh self record).
+    const z = await athleteZeroSummary();
+    check("the Athlete Zero summary assembles for the self record", z.self.id === self.id);
+
+    await prisma.metric.deleteMany({ where: { clientId: self.id } });
+    await prisma.client.deleteMany({ where: { kind: "self" } });
+  }
+
   console.log("── integrations: money & comms self-record, verified ──");
   {
     const crypto = await import("node:crypto");

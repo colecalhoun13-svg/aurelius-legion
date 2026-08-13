@@ -1781,6 +1781,15 @@ scheduleNamed("delivery_retry", "*/30 * * * *", "delivery retry", async () => {
       await retryUndeliveredPushes();
     });
 });
+// WHOOP sync every 30 min — pull Cole's recovery/HRV onto his Athlete Zero
+// record (deduped per day). Dormant-honest: no token → a clean skip.
+scheduleNamed("whoop_sync", "*/30 * * * *", "whoop sync", async () => {
+    await runTraced("schedule", "whoop_sync", async () => {
+      const { syncWhoop } = await import("./health/whoop.ts");
+      const out = await syncWhoop();
+      if (out.ran && out.stored > 0) console.log(`[whoop] synced ${out.stored} reading(s)`);
+    });
+});
 // Nightly at 23:30 — distill the day's conversation into durable memory, so a
 // decision or preference from yesterday's chat survives past the raw-turn
 // window and stays recall-able. Dedups against its own last run; skips on too

@@ -8,6 +8,7 @@
 
 import { prisma } from "../core/db/prisma.ts";
 import { lowerIsBetter } from "./retention.ts";
+import { COACHED_KINDS } from "../athlete/self.ts";
 
 export type MetricSeries = {
   label: string; // display label (most recent casing wins)
@@ -285,6 +286,9 @@ export type TrendSummary = {
 export async function athleteRoster() {
   const [clients, metrics] = await Promise.all([
     prisma.client.findMany({
+      // Coached athletes only — the self record (Athlete Zero, kind:"self") is
+      // Cole, not someone he coaches, so it never appears on the roster.
+      where: { kind: { in: [...COACHED_KINDS] } },
       select: { id: true, name: true, kind: true, status: true, sport: true, position: true, gradYear: true },
       orderBy: { startedAt: "asc" },
     }),

@@ -40,8 +40,10 @@ export type RosterPatterns = {
 };
 
 export async function crossAthletePatterns(): Promise<RosterPatterns> {
+  const { COACHED_KINDS } = await import("../athlete/self.ts");
   const clients = await prisma.client.findMany({
-    where: { status: "active" },
+    // Coached athletes only — the self record (Athlete Zero) is not a peer.
+    where: { status: "active", kind: { in: [...COACHED_KINDS] } },
     select: { id: true },
   });
   if (clients.length === 0) {

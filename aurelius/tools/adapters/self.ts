@@ -61,6 +61,13 @@ export const selfAdapter: ToolAdapter = {
       dataSchema: "{ text: string, filename?: string }",
       example: '[TOOL: tool=self action=voice data={"text":"<approved words>"}]',
     },
+    {
+      name: "zero",
+      description:
+        "ATHLETE ZERO — Cole's OWN training picture: his performance series, development curves, and latest WHOOP readiness (recovery/HRV). His data, kept separate from the athletes he coaches. Use for 'how am I trending', 'my recovery', 'my numbers', 'athlete zero'.",
+      dataSchema: "{}",
+      example: "[TOOL: tool=self action=zero data={}]",
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     const { prisma } = await import("../../core/db/prisma.ts");
@@ -88,6 +95,22 @@ export const selfAdapter: ToolAdapter = {
       const out = await synthesizeSpeech(String(data?.text ?? ""), { filename: data?.filename ? String(data.filename) : undefined });
       if (!out.ok) return { ok: false, output: null, error: out.error };
       return { ok: true, output: { path: out.path, provider: out.provider, cloned: out.cloned, bytes: out.bytes, note: "Audio of your approved words — yours to share. I don't post it." } };
+    }
+    if (action === "zero") {
+      const { athleteZeroSummary } = await import("../../athlete/self.ts");
+      const { whoopStatus } = await import("../../health/whoop.ts");
+      const z = await athleteZeroSummary();
+      return {
+        ok: true,
+        output: {
+          athlete: z.self.name,
+          readiness: z.readiness,
+          whoop: whoopStatus(),
+          measures: z.performance?.series?.length ?? 0,
+          series: z.performance?.series ?? [],
+          curves: z.curves?.curves ?? [],
+        },
+      };
     }
     if (action === "spend") {
       try {

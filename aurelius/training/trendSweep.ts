@@ -13,8 +13,10 @@ import { prisma } from "../core/db/prisma.ts";
 import { athletePerformance } from "../crm/performance.ts";
 
 export async function trainingTrendSweep(now = new Date()): Promise<{ ran: boolean; reason: string; flagged: number }> {
+  const { COACHED_KINDS } = await import("../athlete/self.ts");
   const athletes = await prisma.client.findMany({
-    where: { status: "active" },
+    // Coached athletes only — never the self record (Athlete Zero is Cole).
+    where: { status: "active", kind: { in: [...COACHED_KINDS] } },
     select: { id: true, name: true },
   });
   if (athletes.length === 0) {

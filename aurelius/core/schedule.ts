@@ -62,6 +62,7 @@ export const ONCE_PER_DAY = new Set([
 // claim by being mislabeled frequent.
 export const FREQUENT_JOBS = new Set([
   "delivery_retry", // every 30 min: re-send undelivered pushes (pushedAt-null); stamping makes a repeat a no-op
+  "whoop_sync", // every 30 min: pull Cole's WHOOP recovery; deduped per day, dormant without a token
 ]);
 
 export function localDayKey(): string {
