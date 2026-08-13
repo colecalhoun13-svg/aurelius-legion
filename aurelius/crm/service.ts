@@ -253,7 +253,10 @@ export async function listClients(opts: { status?: string; kind?: string; limit?
   return prisma.client.findMany({
     where: {
       ...(opts.status ? { status: must(opts.status, CLIENT_STATUSES, "status") } : {}),
-      ...(opts.kind ? { kind: must(opts.kind, CLIENT_KINDS, "kind") } : {}),
+      // Default to the listable kinds (client + training_only). The self record
+      // (Athlete Zero, kind:"self") is Cole, not someone on his roster, so it
+      // must never appear in a bare "list clients" — only an explicit kind reaches it.
+      ...(opts.kind ? { kind: must(opts.kind, CLIENT_KINDS, "kind") } : { kind: { in: [...CLIENT_KINDS] } }),
     },
     include: { engagements: { where: { status: "active" } } },
     orderBy: { createdAt: "desc" },

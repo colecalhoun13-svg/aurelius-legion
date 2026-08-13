@@ -8,8 +8,9 @@
 // /tools and /settings stay listed under Setup so every live route keeps a
 // door on desktop, and /more still lists everything on the phone.
 // (Mobile keeps its own five; MobileTabBar is deliberately independent.)
-// Standing rules: at most 12 items in at most 5 groups; a new page joins an
+// Standing rules: keep it tight (≤13 items in ≤5 groups); a new page joins an
 // existing group or replaces an item. Anything Cole acts on weekly lives here.
+// "Zero" (Athlete Zero) joins The day — Cole's own readiness is a daily glance.
 // ================================
 
 export type OperatorDefinition = {
@@ -36,6 +37,12 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     name: "Decisions",
     path: "/decisions",
     description: "Everything awaiting your ruling — one queue, one badge",
+    group: "The day",
+  },
+  zero: {
+    name: "Zero",
+    path: "/zero",
+    description: "Athlete Zero — your own readiness, numbers, and trajectory",
     group: "The day",
   },
   business: {

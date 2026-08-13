@@ -2431,6 +2431,12 @@ async function main() {
     const z = await athleteZeroSummary();
     check("the Athlete Zero summary assembles for the self record", z.self.id === self.id);
 
+    // Boundary council fix: a bare listClients() (the list_clients tool + raw
+    // GET /clients) must NOT return the self record — only an explicit kind does.
+    const { listClients } = await import("../crm/service.ts");
+    const bareList = await listClients({});
+    check("a bare client list never includes Athlete Zero (self)", !bareList.some((c) => c.id === self.id));
+
     await prisma.metric.deleteMany({ where: { clientId: self.id } });
     await prisma.client.deleteMany({ where: { kind: "self" } });
   }
