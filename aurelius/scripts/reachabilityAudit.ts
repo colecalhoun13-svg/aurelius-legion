@@ -114,13 +114,17 @@ export function auditReachability(): Finding[] {
   // ── 4. Scheduled jobs without a once-per-day claim ─────────────────
   // A daily/weekly job outside ONCE_PER_DAY can double-fire when a redeploy
   // straddles its cron minute. Interval pollers are correctly absent.
+  // Intentionally sub-daily jobs live in FREQUENT_JOBS instead (they run many
+  // times a day and are idempotent), so a job is fine if it's in EITHER set.
   const scheduleTs = read(join(BACKEND, "core", "schedule.ts"));
   const onceBlock = scheduleTs.match(/ONCE_PER_DAY = new Set\(\[([\s\S]*?)\]\)/);
   const onceNames = new Set([...(onceBlock?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]!));
+  const frequentBlock = scheduleTs.match(/FREQUENT_JOBS = new Set\(\[([\s\S]*?)\]\)/);
+  const frequentNames = new Set([...(frequentBlock?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]!));
   for (const m of indexTs.matchAll(/scheduleNamed\(\s*"([^"]+)"/g)) {
     const job = m[1]!;
-    if (!onceNames.has(job)) {
-      add("high", "schedule", `job "${job}" is scheduled but not in ONCE_PER_DAY — a redeploy across its minute can double-fire it`);
+    if (!onceNames.has(job) && !frequentNames.has(job)) {
+      add("high", "schedule", `job "${job}" is scheduled but not in ONCE_PER_DAY or FREQUENT_JOBS — a redeploy across its minute can double-fire it`);
     }
   }
 

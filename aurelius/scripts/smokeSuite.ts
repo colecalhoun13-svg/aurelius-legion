@@ -481,6 +481,32 @@ async function main() {
     await prisma.calendarEvent.deleteMany({ where: { id: { in: [focus.id, clash.id] } } });
   }
 
+  console.log("── delivery-verified: a push that never landed self-heals (#65) ──");
+  {
+    const { retryUndeliveredPushes } = await import("../core/deliverySweep.ts");
+    // A critical, never-delivered, still-pending signal — shouldPushNow always
+    // says yes to critical, so this is unambiguously eligible for retry.
+    const held = await prisma.bridgeSignal.create({
+      data: { kind: "risk", sourceType: "smoke_delivery", sourceId: `${TAG}held`, severity: "critical", status: "pending", title: `${TAG} held critical`, body: "never reached the phone", pushedAt: null },
+    });
+    // An already-delivered signal must never be re-pushed.
+    const done = await prisma.bridgeSignal.create({
+      data: { kind: "risk", sourceType: "smoke_delivery", sourceId: `${TAG}done`, severity: "critical", status: "pending", title: `${TAG} delivered`, body: "already landed", pushedAt: new Date() },
+    });
+
+    const res = await retryUndeliveredPushes();
+    check("the retry sweep finds a should-have-pushed signal that never landed", res.eligible >= 1);
+    // Telegram is dormant in the sandbox, so the send can't land — the row must
+    // be HELD (pushedAt still null) for the next sweep, never falsely stamped.
+    const heldAfter = await prisma.bridgeSignal.findUnique({ where: { id: held.id }, select: { pushedAt: true } });
+    check("an undeliverable push is held for the next sweep, not falsely marked delivered",
+      heldAfter?.pushedAt === null && res.stillPending >= 1);
+    const doneAfter = await prisma.bridgeSignal.findUnique({ where: { id: done.id }, select: { pushedAt: true } });
+    check("an already-delivered signal is never re-pushed", doneAfter?.pushedAt !== null);
+
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "smoke_delivery" } });
+  }
+
   console.log("── new tools: gmail + fred (keyless: honest connect/config fails) ──");
   const { gmailAdapter } = await import("../tools/adapters/gmail.ts");
   const { fredAdapter } = await import("../tools/adapters/fred.ts");

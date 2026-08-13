@@ -1771,6 +1771,16 @@ scheduleNamed("content_outcome", "0 9 * * *", "content outcome read-back", async
       console.log(`[content] outcome sweep: ${out.ran ? `read ${out.processed}, reinforced ${out.reinforced}` : `skipped (${out.reason})`}`);
     });
 });
+// Delivery-verified retry every 30 min — re-send should-have-pushed signals
+// whose pushedAt is still null (Telegram was down / the chat wasn't bound yet),
+// so a critical ask that failed to reach the phone self-heals the moment the
+// bridge is back. Dormant-honest: no token → nothing delivered, no error spam.
+scheduleNamed("delivery_retry", "*/30 * * * *", "delivery retry", async () => {
+    await runTraced("schedule", "delivery_retry", async () => {
+      const { retryUndeliveredPushes } = await import("./core/deliverySweep.ts");
+      await retryUndeliveredPushes();
+    });
+});
 // Retention sweep at 08:30 daily — overdue check-ins + renewals coming due.
 // Dormant-honest: with no active clients it finds nothing and says so.
 // Monday 06:50 — the training trend sweep: stalls, slides, and off-pace
