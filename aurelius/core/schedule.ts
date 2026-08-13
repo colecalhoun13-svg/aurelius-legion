@@ -50,6 +50,7 @@ export const ONCE_PER_DAY = new Set([
   "persona_observer", "weekly_planning", "freshness_sweep", "weekly_scoreboard",
   "capability_gaps", "decision_curriculum", "curriculum_ingest", "db_backup",
   "queue_sweep", "marketing_pass", "content_outcome", "retention_sweep", "training_trend_sweep",
+  "conversation_distill",
 ]);
 
 // Intentionally SUB-DAILY jobs that run many times a day and must NOT be

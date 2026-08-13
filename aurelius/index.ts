@@ -1781,6 +1781,17 @@ scheduleNamed("delivery_retry", "*/30 * * * *", "delivery retry", async () => {
       await retryUndeliveredPushes();
     });
 });
+// Nightly at 23:30 — distill the day's conversation into durable memory, so a
+// decision or preference from yesterday's chat survives past the raw-turn
+// window and stays recall-able. Dedups against its own last run; skips on too
+// few turns; never files an engine error as memory.
+scheduleNamed("conversation_distill", "30 23 * * *", "conversation distiller", async () => {
+    await runTraced("schedule", "conversation_distill", async () => {
+      const { distillRecentConversation } = await import("./memory/distiller.ts");
+      const out = await distillRecentConversation();
+      console.log(`[distiller] ${out.ran ? `condensed ${out.turns} turns` : `skipped (${out.reason})`}`);
+    });
+});
 // Retention sweep at 08:30 daily — overdue check-ins + renewals coming due.
 // Dormant-honest: with no active clients it finds nothing and says so.
 // Monday 06:50 — the training trend sweep: stalls, slides, and off-pace

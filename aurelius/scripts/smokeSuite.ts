@@ -507,6 +507,37 @@ async function main() {
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: "smoke_delivery" } });
   }
 
+  console.log("── conversation distiller: remembers past 48h, refuses error text (#59) ──");
+  {
+    const { distillRecentConversation } = await import("../memory/distiller.ts");
+    // Too few turns → nothing to condense (deterministic, no engine needed).
+    await prisma.conversationTurn.deleteMany({ where: { content: { startsWith: TAG } } });
+    await prisma.conversationTurn.createMany({
+      data: [
+        { role: "cole", content: `${TAG} hey` },
+        { role: "aurelius", content: `${TAG} hi` },
+      ],
+    });
+    const thin = await distillRecentConversation();
+    check("the distiller skips when there's too little to condense", thin.ran === false && /nothing worth condensing/i.test(thin.reason));
+
+    // Enough turns, but keyless → the model can't distill, so it must REFUSE to
+    // save (never file an engine error as memory, hard rule 3).
+    await prisma.conversationTurn.createMany({
+      data: Array.from({ length: 6 }, (_, i) => ({
+        role: i % 2 === 0 ? "cole" : "aurelius",
+        content: `${TAG} turn ${i}: a real thing worth remembering about the plan`,
+      })),
+    });
+    const before = await prisma.memory.count({ where: { category: "conversation_distillation" } });
+    const keyless = await distillRecentConversation();
+    const after = await prisma.memory.count({ where: { category: "conversation_distillation" } });
+    check("with no engine it refuses to file an error as a memory (hard rule 3)",
+      keyless.ran === false && after === before);
+
+    await prisma.conversationTurn.deleteMany({ where: { content: { startsWith: TAG } } });
+  }
+
   console.log("── new tools: gmail + fred (keyless: honest connect/config fails) ──");
   const { gmailAdapter } = await import("../tools/adapters/gmail.ts");
   const { fredAdapter } = await import("../tools/adapters/fred.ts");
