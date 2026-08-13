@@ -2312,6 +2312,20 @@ async function main() {
       sweep.ran && sweep.patterns >= 1 &&
         (await prisma.bridgeSignal.count({ where: { sourceType: "roster_patterns" } })) >= 1);
 
+    // Development curves (#14): a measure with points over real time projects
+    // forward and names its trajectory; too-few/too-short data says "insufficient".
+    const { developmentCurves } = await import("../training/devCurves.ts");
+    const base = Date.now();
+    for (let i = 0; i < 5; i++)
+      await prisma.metric.create({ data: { clientId: a1.id, label: "broad jump", value: 100 + i * 2, unit: "in", achievedAt: new Date(base - (4 - i) * 10 * 86400_000) } });
+    const dc = await developmentCurves(a1.id);
+    const bj = dc?.curves.find((c) => c.measure.toLowerCase() === "broad jump");
+    check("a development curve projects forward and names the trajectory",
+      !!bj && bj.trajectory !== "insufficient" && (bj.ratePerWeek ?? 0) > 0 && (bj.projected90d ?? 0) > bj.latest);
+    const lone = dc?.curves.find((c) => c.measure.toLowerCase() === "vertical"); // 2 same-day points from earlier
+    check("a curve with too little history says insufficient, not a confident line",
+      !lone || lone.trajectory === "insufficient" || lone.count >= 3);
+
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: "roster_patterns" } });
     await prisma.metric.deleteMany({ where: { clientId: { in: [a1.id, a2.id] } } });
     await prisma.referral.deleteMany({ where: { referrerClientId: { in: [a1.id, a2.id] } } });

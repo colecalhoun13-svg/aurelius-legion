@@ -275,6 +275,13 @@ export const crmAdapter: ToolAdapter = {
       dataSchema: "{ month?: string (YYYY-MM, default current) }",
       example: "[TOOL: crm.pnl {}]",
     },
+    {
+      name: "dev_curves",
+      description:
+        "Long-term development curves for an athlete: per-measure trend, rate of change per week, a ~90-day projection, and the trajectory shape (accelerating / steady / plateauing / declining). Says 'insufficient' rather than drawing a confident line through too few points. Observation, not a prescription. Use for 'where is Jake heading', 'is she plateauing', 'development trajectory'.",
+      dataSchema: "{ clientId: string }",
+      example: '[TOOL: crm.dev_curves {"clientId":"abc"}]',
+    },
   ],
 
   async run(action: string, data: Record<string, any>): Promise<ToolAdapterResult> {
@@ -566,6 +573,14 @@ export const crmAdapter: ToolAdapter = {
         case "pnl": {
           const { profitAndLoss } = await import("../../business/pnl.ts");
           return { ok: true, output: await profitAndLoss(data?.month ? String(data.month) : undefined) };
+        }
+
+        case "dev_curves": {
+          if (!data?.clientId) return { ok: false, output: null, error: "need clientId" };
+          const { developmentCurves } = await import("../../training/devCurves.ts");
+          const out = await developmentCurves(String(data.clientId));
+          if (!out) return { ok: false, output: null, error: "No such athlete." };
+          return { ok: true, output: out };
         }
 
         default:
