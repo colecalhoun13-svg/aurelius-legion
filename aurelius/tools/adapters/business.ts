@@ -163,6 +163,20 @@ export const businessAdapter: ToolAdapter = {
       dataSchema: "{ leadId: string, notes?: string }",
       example: '[TOOL: tool=business action=discovery_followup data={"leadId":"abc","notes":"wants speed, budget tight, start in Sept"}]',
     },
+    {
+      name: "niche_wedge",
+      description:
+        "Find under-served NICHE WEDGES — specific athlete/sport/format spots the field leaves open that Cole's standard fits — for floating a new program or sharpening positioning. Research-grounded, honestly labelled (says when it's a hypothesis, not a finding). Use for 'where's my opening', 'what niche should I go after', 'new program idea'.",
+      dataSchema: "{ topic?: string }",
+      example: '[TOOL: tool=business action=niche_wedge data={"topic":"remote speed training for soccer"}]',
+    },
+    {
+      name: "competitor_intel",
+      description:
+        "Competitor intel on OTHER remote coaches (never the gym Cole works for): how they position/promise, price signals, and the positioning gaps Cole could own. Research-grounded, honestly labelled, never fabricates a claim about a named competitor. Use for 'what are other coaches doing', 'competitor research', 'how do I stand out'.",
+      dataSchema: "{ names?: string }",
+      example: '[TOOL: tool=business action=competitor_intel data={}]',
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     // ── marketing: evidence-carrying, never a bare assertion ──
@@ -310,6 +324,23 @@ export const businessAdapter: ToolAdapter = {
         const out = await D.discoveryFollowup(String(data.leadId), data?.notes ? String(data.notes) : undefined);
         if (!out.ok) return { ok: false, output: null, error: out.error };
         return { ok: true, output: { body: out.body, note: "Inward draft — read it, then send it yourself." } };
+      } catch (err: any) {
+        return { ok: false, output: null, error: err?.message ?? String(err) };
+      }
+    }
+
+    // ── market intel: niche wedges + competitor positioning (research-backed) ──
+    if (action === "niche_wedge" || action === "competitor_intel") {
+      try {
+        const M = await import("../../business/marketIntel.ts");
+        if (action === "niche_wedge") {
+          const out = await M.nicheWedge(data?.topic ? String(data.topic) : undefined);
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: { wedges: out.wedge, trustThis: out.grounding, sources: out.sources } };
+        }
+        const out = await M.competitorIntel(data?.names ? String(data.names) : undefined);
+        if (!out.ok) return { ok: false, output: null, error: out.error };
+        return { ok: true, output: { intel: out.intel, trustThis: out.grounding, sources: out.sources } };
       } catch (err: any) {
         return { ok: false, output: null, error: err?.message ?? String(err) };
       }

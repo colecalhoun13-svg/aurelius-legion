@@ -2318,6 +2318,12 @@ async function main() {
     check("flight-sim refuses to model on a guess with no engine (hard rule 3)",
       (await flightSimulate("raise the block to $350")).ok === false);
     check("discovery prep refuses an unknown lead", (await discoveryPrep("no-such-lead")).ok === false);
+
+    // Market intel: research-backed but honest — keyless, refuses rather than
+    // inventing a wedge or competitor claim (hard rule 3).
+    const { nicheWedge, competitorIntel } = await import("../business/marketIntel.ts");
+    check("niche-wedge refuses to invent a wedge with no engine", (await nicheWedge("soccer")).ok === false);
+    check("competitor intel refuses to invent intel with no engine", (await competitorIntel()).ok === false);
   }
 
   console.log("── integrations: money & comms self-record, verified ──");
