@@ -2298,6 +2298,18 @@ async function main() {
     await prisma.client.deleteMany({ where: { id: { in: [a1.id, a2.id] } } });
   }
 
+  console.log("── capacity health + productization: honest business intel (#10) ──");
+  {
+    const { capacityHealth } = await import("../business/capacity.ts");
+    const { productizationRecommendations } = await import("../business/productization.ts");
+    const cap = await capacityHealth();
+    check("capacity refuses to invent a ceiling until Cole sets one",
+      cap.capacityCeiling === null && /isn't set/i.test(cap.headline) && typeof cap.activeClients === "number");
+    // Keyless: productization must refuse rather than invent advice (hard rule 3).
+    const prod = await productizationRecommendations();
+    check("productization refuses to invent recommendations with no engine (hard rule 3)", prod.ok === false);
+  }
+
   console.log("── integrations: money & comms self-record, verified ──");
   {
     const crypto = await import("node:crypto");

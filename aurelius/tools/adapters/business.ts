@@ -128,6 +128,20 @@ export const businessAdapter: ToolAdapter = {
       dataSchema: "{}",
       example: "[TOOL: tool=business action=offer_probe_standing data={}]",
     },
+    {
+      name: "capacity",
+      description:
+        "Roster/capacity health: how many paying clients Cole has vs the remote capacity he can actually handle on top of the gym job, plus headroom. Honest when capacity isn't set (won't invent a ceiling). Gym athletes reported as a coaching load, never a business slot. Use for 'how full am I', 'can I take more clients', 'what's my capacity'.",
+      dataSchema: "{}",
+      example: "[TOOL: tool=business action=capacity data={}]",
+    },
+    {
+      name: "productize",
+      description:
+        "RECOMMENDATIONS for turning time-for-money coaching into something repeatable (a named program, a self-serve template, a cohort). Recommends only — never builds a product or sets a price. Honest pre-data. Use for 'how do I scale', 'can I productize this', 'package my coaching'.",
+      dataSchema: "{}",
+      example: "[TOOL: tool=business action=productize data={}]",
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     // ── marketing: evidence-carrying, never a bare assertion ──
@@ -235,6 +249,22 @@ export const businessAdapter: ToolAdapter = {
         }
         const { offerProbeStanding } = await import("../../business/offers.ts");
         return { ok: true, output: await offerProbeStanding() };
+      } catch (err: any) {
+        return { ok: false, output: null, error: err?.message ?? String(err) };
+      }
+    }
+
+    // ── capacity health + productization: business intelligence reads ──
+    if (action === "capacity" || action === "productize") {
+      try {
+        if (action === "capacity") {
+          const { capacityHealth } = await import("../../business/capacity.ts");
+          return { ok: true, output: await capacityHealth() };
+        }
+        const { productizationRecommendations } = await import("../../business/productization.ts");
+        const out = await productizationRecommendations();
+        if (!out.ok) return { ok: false, output: null, error: out.error };
+        return { ok: true, output: { recommendations: out.recommendations, trustThis: out.grounding } };
       } catch (err: any) {
         return { ok: false, output: null, error: err?.message ?? String(err) };
       }
