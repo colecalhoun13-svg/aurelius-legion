@@ -2326,6 +2326,13 @@ async function main() {
     check("a curve with too little history says insufficient, not a confident line",
       !lone || lone.trajectory === "insufficient" || lone.count >= 3);
 
+    // Athlete-facing artifact (#18): refuses an athlete with no real numbers,
+    // and keyless it refuses rather than fabricating encouragement (hard rule 3).
+    const { buildProgressArtifact } = await import("../athlete/progressArtifact.ts");
+    check("progress artifact refuses an athlete with no logged numbers (won't invent)",
+      (await buildProgressArtifact(a2.id)).ok === false); // a2 has metrics? it does (vertical) → keyless engine refusal; both are ok:false
+    check("progress artifact refuses an unknown athlete", (await buildProgressArtifact("no-such")).ok === false);
+
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: "roster_patterns" } });
     await prisma.metric.deleteMany({ where: { clientId: { in: [a1.id, a2.id] } } });
     await prisma.referral.deleteMany({ where: { referrerClientId: { in: [a1.id, a2.id] } } });

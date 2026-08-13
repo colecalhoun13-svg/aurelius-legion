@@ -282,6 +282,13 @@ export const crmAdapter: ToolAdapter = {
       dataSchema: "{ clientId: string }",
       example: '[TOOL: crm.dev_curves {"clientId":"abc"}]',
     },
+    {
+      name: "progress_artifact",
+      description:
+        "Build a shareable, athlete-FACING progress piece from an athlete's REAL numbers (PRs, what's improving, goal pace) in Cole's voice — for a minor it addresses the parent too. INWARD: it drafts the piece; Cole reviews and shares it himself (no auto-send, consent stays his). Never invents a stat. Use for 'progress update for <athlete>', 'something to send the parents'.",
+      dataSchema: "{ clientId: string }",
+      example: '[TOOL: crm.progress_artifact {"clientId":"abc"}]',
+    },
   ],
 
   async run(action: string, data: Record<string, any>): Promise<ToolAdapterResult> {
