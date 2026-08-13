@@ -561,6 +561,13 @@ async function main() {
     const vs = voiceStatus();
     check("voice is honest about config (dormant with a fix, or a named provider)",
       typeof vs.configured === "boolean" && (vs.configured ? !!vs.provider : !!vs.reason));
+
+    // Multi-channel (#41): the channel registry names each channel and, for every
+    // dormant one, carries the exact fix — never a silent gap or a fake-live.
+    const { channelReadiness } = await import("../content/channels.ts");
+    const cr = channelReadiness();
+    check("the channel registry lists channels and every dormant one names its fix",
+      cr.length >= 3 && cr.some((c) => c.channel === "tiktok") && cr.filter((c) => !c.live).every((c) => !!c.reason));
   }
 
   console.log("── new tools: gmail + fred (keyless: honest connect/config fails) ──");
