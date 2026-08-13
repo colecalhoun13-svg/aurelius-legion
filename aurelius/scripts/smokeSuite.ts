@@ -538,6 +538,16 @@ async function main() {
     await prisma.conversationTurn.deleteMany({ where: { content: { startsWith: TAG } } });
   }
 
+  console.log("── faith rhythm: from the library, never invented (#48) ──");
+  {
+    const { faithRhythm } = await import("../faith/rhythm.ts");
+    // Mock embeddings / no ingested faith material → it must stay DORMANT and
+    // say so, never fabricate a devotional or a verse (the whole point).
+    const fr = await faithRhythm();
+    check("faith rhythm stays dormant (won't invent scripture) with no library material",
+      fr.ok === false && /library/i.test(fr.reason ?? ""));
+  }
+
   console.log("── new tools: gmail + fred (keyless: honest connect/config fails) ──");
   const { gmailAdapter } = await import("../tools/adapters/gmail.ts");
   const { fredAdapter } = await import("../tools/adapters/fred.ts");

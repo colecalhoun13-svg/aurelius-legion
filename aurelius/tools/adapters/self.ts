@@ -40,9 +40,22 @@ export const selfAdapter: ToolAdapter = {
       dataSchema: '{ "days"?: number (default: month-to-date) }',
       example: '[TOOL: tool=self action=spend data={}]',
     },
+    {
+      name: "faith",
+      description:
+        "Today's faith rhythm — a short grounding reflection drawn ONLY from faith material Cole has ingested into his library (a devotional, a reading plan, scripture). Never invents or quotes scripture that isn't in the library; dormant-honest until he's added some. Use for 'faith rhythm', 'a word for today', 'devotional'.",
+      dataSchema: "{}",
+      example: "[TOOL: tool=self action=faith data={}]",
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     const { prisma } = await import("../../core/db/prisma.ts");
+    if (action === "faith") {
+      const { faithRhythm } = await import("../../faith/rhythm.ts");
+      const fr = await faithRhythm();
+      if (!fr.ok) return { ok: false, output: null, error: fr.reason };
+      return { ok: true, output: { rhythm: fr.rhythm, drawnFrom: fr.drawnFrom } };
+    }
     if (action === "spend") {
       try {
         const { spendSummary, monthToDate } = await import("../../measurement/spend.ts");

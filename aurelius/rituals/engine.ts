@@ -355,7 +355,20 @@ then close with a single directive sentence. Under 180 words. No headers, no bul
     // the dawn thread is a bonus, never a briefing blocker
   }
 
-  const fullBriefing = briefing + prepFooter + riskFooter + dawnFooter;
+  // ── FAITH RHYTHM (#48): a steady closing line drawn ONLY from faith material
+  // Cole has ingested into his library — appended verbatim (never voiceOver'd,
+  // so nothing is added to or invented about it). Dormant/silent until the
+  // library has something faith-related; never a briefing blocker.
+  let faithFooter = "";
+  try {
+    const { faithRhythm } = await import("../faith/rhythm.ts");
+    const fr = await faithRhythm();
+    if (fr.ok && fr.rhythm) faithFooter = `\n\n✝ ${fr.rhythm}`;
+  } catch {
+    // faith rhythm is a bonus, never a briefing blocker
+  }
+
+  const fullBriefing = briefing + prepFooter + riskFooter + dawnFooter + faithFooter;
   const instance = await fileInstance("morning_briefing", fullBriefing, {
     date: today.date,
     taskCount: today.tasks.length,
