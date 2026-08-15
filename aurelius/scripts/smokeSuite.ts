@@ -2482,6 +2482,38 @@ async function main() {
     check("Cole can set his own targets on Athlete Zero", tgt.ok && (z2.performance?.targets?.length ?? 0) >= 1);
     check("a self PR still fires no business machinery (training win only)",
       (await prisma.referral.count({ where: { referrerClientId: self.id } })) === 0);
+
+    // Cole can point his OWN workout sheet at Athlete Zero (reuses updateClient's
+    // Google-Sheets validation), and clear it. A bad URL is refused, not stored.
+    const { linkSelfSheet } = await import("../athlete/self.ts");
+    const badSheet = await linkSelfSheet("https://evil.example.com/not-a-sheet");
+    check("a non-Google-Sheets workout link is refused", !badSheet.ok);
+    const goodSheet = await linkSelfSheet("https://docs.google.com/spreadsheets/d/SMOKE_SELF/edit");
+    const zSheet = await athleteZeroSummary();
+    check("Cole can link his own workout Google Sheet to Athlete Zero", goodSheet.ok && !!zSheet.sheetUrl);
+    check("clearing the workout-sheet link empties it", (await linkSelfSheet("")).ok && !(await athleteZeroSummary()).sheetUrl);
+
+    // n=1 self-experiments: a hypothesis + metric captures the current value as
+    // baseline; concluding reads the metric now, computes the delta, and returns
+    // an HONEST verdict (deterministic fallback here — no LLM engine in sandbox).
+    const { startExperiment, concludeExperiment, listExperiments, abandonExperiment } = await import("../athlete/experiments.ts");
+    const noHyp = await startExperiment({ hypothesis: "", metricLabel: "vertical" });
+    check("an experiment without a hypothesis is refused", !noHyp.ok);
+    const exp = await startExperiment({ hypothesis: "smoke: creatine raises my vertical", metricLabel: "vertical" });
+    check("starting an experiment captures the latest self metric as baseline", exp.ok && exp.baseline === 32);
+    const running = await listExperiments("running");
+    check("a running experiment lists on Athlete Zero", running.some((e: any) => e.id === exp.id));
+    await logSelfMetric({ label: "vertical", value: 35, unit: "in" });
+    const concl = await concludeExperiment(exp.id!);
+    check("concluding computes the delta from baseline to result", concl.ok && concl.delta === 3);
+    check("the n=1 verdict is honest (a signal, not proof), never fabricated", !!concl.verdict && /signal, not proof/i.test(concl.verdict!));
+    check("a concluded experiment can't be concluded twice", !(await concludeExperiment(exp.id!)).ok);
+    const exp2 = await startExperiment({ hypothesis: "smoke: abandon me", metricLabel: "vertical" });
+    check("an experiment can be abandoned", (await abandonExperiment(exp2.id!)).ok);
+    const zExp = await athleteZeroSummary();
+    check("the Athlete Zero summary carries experiments", (zExp.experiments?.length ?? 0) >= 2);
+
+    await prisma.selfExperiment.deleteMany({ where: { hypothesis: { startsWith: "smoke:" } } });
     await prisma.metric.deleteMany({ where: { clientId: self.id } });
     await prisma.athleteTarget.deleteMany({ where: { clientId: self.id } });
 

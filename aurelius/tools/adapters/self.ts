@@ -82,6 +82,33 @@ export const selfAdapter: ToolAdapter = {
       dataSchema: '{ label: string, targetValue: number, unit?: string, targetDate?: string }',
       example: '[TOOL: tool=self action=set_target data={"label":"vertical","targetValue":32,"unit":"in","targetDate":"2026-12-01"}]',
     },
+    {
+      name: "link_sheet",
+      description:
+        "Link Cole's OWN workout Google Sheet to Athlete Zero (the program-delivery layer his athletes use, pointed at himself). Must be a Google Sheets URL, or empty to clear. Use for 'link my training sheet', 'here's my workout log <url>'.",
+      dataSchema: "{ url: string }",
+      example: '[TOOL: tool=self action=link_sheet data={"url":"https://docs.google.com/spreadsheets/d/…"}]',
+    },
+    {
+      name: "start_experiment",
+      description:
+        "Start an n=1 self-experiment: a hypothesis + the metric to watch (captures Cole's current value as the baseline). Use for 'test creatine on my vertical for 6 weeks', 'experiment: 8h sleep → recovery'.",
+      dataSchema: '{ hypothesis: string, metricLabel: string, protocol?: string, endAt?: string }',
+      example: '[TOOL: tool=self action=start_experiment data={"hypothesis":"creatine raises my vertical","metricLabel":"vertical","endAt":"2026-10-01"}]',
+    },
+    {
+      name: "conclude_experiment",
+      description:
+        "Conclude a running self-experiment — reads the metric now, computes the change, and gives an HONEST n=1 verdict (a signal, not proof). Use for 'wrap up my creatine experiment'.",
+      dataSchema: "{ id: string }",
+      example: '[TOOL: tool=self action=conclude_experiment data={"id":"abc"}]',
+    },
+    {
+      name: "experiments",
+      description: "List Cole's self-experiments (running + concluded), with baselines, results, and verdicts. Use for 'my experiments', 'what am I testing'.",
+      dataSchema: '{ status?: "running"|"concluded"|"abandoned" }',
+      example: "[TOOL: tool=self action=experiments data={}]",
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     const { prisma } = await import("../../core/db/prisma.ts");
@@ -122,6 +149,61 @@ export const selfAdapter: ToolAdapter = {
       if (!res.ok) return { ok: false, output: null, error: res.error };
       return { ok: true, output: { message: "Target set on Athlete Zero." } };
     }
+    if (action === "link_sheet") {
+      const { linkSelfSheet } = await import("../../athlete/self.ts");
+      const url = String(data?.url ?? "");
+      const res = await linkSelfSheet(url);
+      if (!res.ok) return { ok: false, output: null, error: res.error };
+      return { ok: true, output: { message: url.trim() ? "Your workout sheet is linked to Athlete Zero." : "Cleared the workout-sheet link." } };
+    }
+    if (action === "start_experiment") {
+      const { startExperiment } = await import("../../athlete/experiments.ts");
+      const res = await startExperiment({
+        hypothesis: String(data?.hypothesis ?? ""),
+        metricLabel: String(data?.metricLabel ?? ""),
+        protocol: data?.protocol ? String(data.protocol) : undefined,
+        endAt: data?.endAt ? String(data.endAt) : undefined,
+      });
+      if (!res.ok) return { ok: false, output: null, error: res.error };
+      return {
+        ok: true,
+        output: {
+          id: res.id,
+          baseline: res.baseline,
+          message:
+            res.baseline != null
+              ? `Experiment running. Baseline captured at ${res.baseline}. Log the metric through the window, then conclude it.`
+              : `Experiment running — but no baseline exists for that metric yet. Log it now so the start point is real, or the verdict can only show where you land, not the change.`,
+        },
+      };
+    }
+    if (action === "conclude_experiment") {
+      const { concludeExperiment } = await import("../../athlete/experiments.ts");
+      const res = await concludeExperiment(String(data?.id ?? ""));
+      if (!res.ok) return { ok: false, output: null, error: res.error };
+      return { ok: true, output: { verdict: res.verdict, delta: res.delta } };
+    }
+    if (action === "experiments") {
+      const { listExperiments } = await import("../../athlete/experiments.ts");
+      const status = data?.status ? String(data.status) : undefined;
+      const rows = await listExperiments(status);
+      return {
+        ok: true,
+        output: {
+          count: rows.length,
+          experiments: rows.map((e: any) => ({
+            id: e.id,
+            hypothesis: e.hypothesis,
+            metric: e.metricLabel,
+            status: e.status,
+            baseline: e.baselineValue,
+            result: e.resultValue,
+            verdict: e.verdict,
+            startedAt: e.startAt,
+          })),
+        },
+      };
+    }
     if (action === "zero") {
       const { athleteZeroSummary } = await import("../../athlete/self.ts");
       const { whoopStatus } = await import("../../health/whoop.ts");
@@ -132,9 +214,14 @@ export const selfAdapter: ToolAdapter = {
           athlete: z.self.name,
           readiness: z.readiness,
           whoop: whoopStatus(),
+          sheetUrl: z.sheetUrl,
           measures: z.performance?.series?.length ?? 0,
           series: z.performance?.series ?? [],
           curves: z.curves?.curves ?? [],
+          experiments: (z.experiments ?? []).map((e: any) => ({
+            id: e.id, hypothesis: e.hypothesis, metric: e.metricLabel, status: e.status,
+            baseline: e.baselineValue, result: e.resultValue, verdict: e.verdict,
+          })),
         },
       };
     }

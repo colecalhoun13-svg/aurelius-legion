@@ -1412,3 +1412,24 @@ model NetWorthSnapshot {
 
   @@index([at])
 }
+
+// ── n=1 SELF-EXPERIMENTS (Athlete Zero) — Cole testing things on himself ──
+// "Does X move Y?" — a hypothesis, a metric to watch, a baseline captured at
+// the start and a result at the end, with an honest n=1 verdict (a signal, not
+// proof). Ties to his own metrics on the self record; never business.
+model SelfExperiment {
+  id            String   @id @default(cuid())
+  hypothesis    String
+  protocol      String?
+  metricLabel   String // which self-metric to watch (e.g. "vertical", "recovery")
+  startAt       DateTime @default(now())
+  endAt         DateTime?
+  baselineValue Float?
+  resultValue   Float?
+  status        String   @default("running") // "running" | "concluded" | "abandoned"
+  verdict       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status])
+}

@@ -15,12 +15,18 @@ type Series = {
   stalled: boolean; regressing: boolean;
 };
 type Curve = { measure: string; unit: string | null; ratePerWeek: number | null; projected90d: number | null; trajectory: string };
+type Experiment = {
+  id: string; hypothesis: string; metricLabel: string; protocol: string | null; status: string;
+  baselineValue: number | null; resultValue: number | null; verdict: string | null; startAt: string;
+};
 type ZeroData = {
   athlete: string;
   readiness: Readiness | null;
   whoop: { configured: boolean; reason: string | null };
+  sheetUrl: string | null;
   series: Series[];
   curves: Curve[];
+  experiments: Experiment[];
   error?: string;
 };
 
@@ -39,6 +45,12 @@ export default function ZeroPage() {
   const [label, setLabel] = useState("");
   const [value, setValue] = useState("");
   const [unit, setUnit] = useState("");
+  const [sheet, setSheet] = useState("");
+  const [sheetBusy, setSheetBusy] = useState(false);
+  const [hypothesis, setHypothesis] = useState("");
+  const [expMetric, setExpMetric] = useState("");
+  const [expEnd, setExpEnd] = useState("");
+  const [expBusy, setExpBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -60,6 +72,33 @@ export default function ZeroPage() {
       setLabel(""); setValue(""); setUnit("");
       await load();
     } finally { setBusy(false); }
+  }
+
+  async function saveSheet() {
+    setSheetBusy(true);
+    try {
+      await fetch("/api/zero", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "sheet", url: sheet.trim() }) });
+      setSheet("");
+      await load();
+    } finally { setSheetBusy(false); }
+  }
+
+  async function startExperiment() {
+    if (!hypothesis.trim() || !expMetric.trim()) return;
+    setExpBusy(true);
+    try {
+      await fetch("/api/zero", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "exp_start", hypothesis: hypothesis.trim(), metricLabel: expMetric.trim(), endAt: expEnd.trim() || undefined }) });
+      setHypothesis(""); setExpMetric(""); setExpEnd("");
+      await load();
+    } finally { setExpBusy(false); }
+  }
+
+  async function concludeExperiment(id: string) {
+    setExpBusy(true);
+    try {
+      await fetch("/api/zero", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "exp_conclude", id }) });
+      await load();
+    } finally { setExpBusy(false); }
   }
 
   if (failed) {
@@ -141,6 +180,70 @@ export default function ZeroPage() {
         </Panel>
       </div>
 
+      {/* WORKOUT SHEET — the same program-delivery layer as the athletes, pointed at Cole */}
+      <Divider />
+      <SectionLabel>Your workout sheet</SectionLabel>
+      <div style={{ height: ".9rem" }} />
+      {data.sheetUrl ? (
+        <div className="au-lrow" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+          <a href={data.sheetUrl} target="_blank" rel="noreferrer" style={{ color: "var(--money)", wordBreak: "break-all" }}>
+            Open your training sheet ↗
+          </a>
+          <button className="au-btn-ghost" disabled={sheetBusy} onClick={() => { setSheet(""); saveSheet(); }} style={ghostBtn}>
+            Unlink
+          </button>
+        </div>
+      ) : (
+        <Panel tier="glass">
+          <p style={{ color: "var(--ink2)", margin: "0 0 .7rem" }}>
+            Link your own Google Sheet — the same program-delivery surface your athletes use, kept on your own record.
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: ".5rem", alignItems: "center" }}>
+            <input value={sheet} onChange={(e) => setSheet(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…" style={{ ...inputStyle, flex: 1, minWidth: 240 }} />
+            <Btn disabled={sheetBusy || !sheet.trim()} onClick={saveSheet}>Link</Btn>
+          </div>
+        </Panel>
+      )}
+
+      {/* n=1 SELF-EXPERIMENTS — Cole testing on himself, with an honest verdict */}
+      <Divider />
+      <SectionLabel>Self-experiments</SectionLabel>
+      <div style={{ height: ".9rem" }} />
+      {data.experiments.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: ".7rem", marginBottom: ".9rem" }}>
+          {data.experiments.map((e) => (
+            <div key={e.id} className="au-card" style={{ padding: ".8rem 1rem" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "1rem", flexWrap: "wrap" }}>
+                <span style={{ color: "var(--ink)", fontWeight: 600 }}>{e.hypothesis}</span>
+                <span style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: ".05em", color: e.status === "running" ? "var(--attn)" : "var(--ink3)" }}>{e.status}</span>
+              </div>
+              <div style={{ color: "var(--ink3)", fontSize: 13, marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+                {e.metricLabel}
+                {e.baselineValue !== null && <> · baseline {e.baselineValue}</>}
+                {e.resultValue !== null && <> → {e.resultValue}</>}
+              </div>
+              {e.verdict && <p style={{ color: "var(--ink2)", fontSize: 14, margin: ".6rem 0 0" }}>{e.verdict}</p>}
+              {e.status === "running" && (
+                <div style={{ marginTop: ".6rem" }}>
+                  <button className="au-btn-ghost" disabled={expBusy} onClick={() => concludeExperiment(e.id)} style={ghostBtn}>Conclude</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <Panel tier="glass">
+        <p style={{ color: "var(--ink2)", margin: "0 0 .7rem" }}>
+          Test one thing on yourself the way you&apos;d test it on an athlete — a hypothesis, the metric to watch, an honest n=1 verdict at the end (a signal, never proof). It captures your current number as the baseline, so log the metric first.
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: ".5rem", alignItems: "center" }}>
+          <input value={hypothesis} onChange={(e) => setHypothesis(e.target.value)} placeholder="hypothesis (e.g. creatine raises my vertical)" style={{ ...inputStyle, flex: 1, minWidth: 220 }} />
+          <input value={expMetric} onChange={(e) => setExpMetric(e.target.value)} placeholder="metric (e.g. vertical)" style={{ ...inputStyle, width: 150 }} />
+          <input value={expEnd} onChange={(e) => setExpEnd(e.target.value)} type="date" style={{ ...inputStyle, width: 150 }} />
+          <Btn disabled={expBusy || !hypothesis.trim() || !expMetric.trim()} onClick={startExperiment}>Start</Btn>
+        </div>
+      </Panel>
+
       {/* TRAJECTORY — dev curves */}
       {data.curves.some((c) => c.trajectory !== "insufficient") && (
         <>
@@ -170,4 +273,9 @@ export default function ZeroPage() {
 const inputStyle: React.CSSProperties = {
   background: "var(--bg1)", border: "1px solid var(--line1)", borderRadius: 6,
   padding: ".45rem .6rem", color: "var(--ink)", fontSize: 14,
+};
+
+const ghostBtn: React.CSSProperties = {
+  background: "transparent", border: "1px solid var(--line1)", borderRadius: 6,
+  padding: ".35rem .7rem", color: "var(--ink2)", fontSize: 13, cursor: "pointer",
 };

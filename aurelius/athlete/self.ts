@@ -52,6 +52,20 @@ export async function logSelfMetric(input: { label: string; value: number; unit?
   return { ok: true, isPR: !!m.isPR };
 }
 
+/** Link Cole's own workout Google Sheet to Athlete Zero — the same
+ *  program-delivery layer his athletes use, pointed at himself. Reuses
+ *  updateClient's validation (must be a real Google Sheets URL, or empty to clear). */
+export async function linkSelfSheet(url: string): Promise<{ ok: boolean; error?: string }> {
+  const self = await getOrCreateSelf();
+  const { updateClient } = await import("../crm/service.ts");
+  try {
+    await updateClient(self.id, { sheetUrl: url });
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? String(e) };
+  }
+}
+
 /** Set one of Cole's OWN targets on the self record. */
 export async function setSelfTarget(input: { label: string; targetValue: number; unit?: string; targetDate?: string }): Promise<{ ok: boolean; error?: string }> {
   const label = (input.label ?? "").trim();
@@ -70,20 +84,25 @@ export async function setSelfTarget(input: { label: string; targetValue: number;
  */
 export async function athleteZeroSummary(): Promise<{
   self: { id: string; name: string };
+  sheetUrl: string | null;
   performance: Awaited<ReturnType<typeof import("../crm/performance.ts").athletePerformance>>;
   curves: Awaited<ReturnType<typeof import("../training/devCurves.ts").developmentCurves>>;
   readiness: Awaited<ReturnType<typeof import("../health/whoop.ts").latestReadiness>>;
+  experiments: Awaited<ReturnType<typeof import("./experiments.ts").listExperiments>>;
 }> {
   const self = await getOrCreateSelf();
-  const [{ athletePerformance }, { developmentCurves }, { latestReadiness }] = await Promise.all([
+  const [{ athletePerformance }, { developmentCurves }, { latestReadiness }, { listExperiments }] = await Promise.all([
     import("../crm/performance.ts"),
     import("../training/devCurves.ts"),
     import("../health/whoop.ts"),
+    import("./experiments.ts"),
   ]);
-  const [performance, curves, readiness] = await Promise.all([
+  const [performance, curves, readiness, experiments, sheet] = await Promise.all([
     athletePerformance(self.id).catch(() => null),
     developmentCurves(self.id).catch(() => null),
     latestReadiness().catch(() => null),
+    listExperiments().catch(() => []),
+    prisma.client.findUnique({ where: { id: self.id }, select: { sheetUrl: true } }).catch(() => null),
   ]);
-  return { self, performance, curves, readiness };
+  return { self, sheetUrl: sheet?.sheetUrl ?? null, performance, curves, readiness, experiments };
 }
