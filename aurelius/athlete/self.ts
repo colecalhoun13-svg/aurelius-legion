@@ -38,6 +38,30 @@ export async function getSelf(): Promise<{ id: string; name: string } | null> {
   return prisma.client.findFirst({ where: { kind: "self" }, select: { id: true, name: true } });
 }
 
+/** Log one of Cole's OWN numbers onto the self record. This is what makes
+ *  Athlete Zero a place he can PUT his training into, not just read it. Reuses
+ *  logMetric (PR detection included) against the self record — onPeak routes a
+ *  self PR to the training branch, so it surfaces a training win and fires zero
+ *  business machinery. */
+export async function logSelfMetric(input: { label: string; value: number; unit?: string }): Promise<{ ok: boolean; isPR?: boolean; error?: string }> {
+  const label = (input.label ?? "").trim();
+  if (!label || !Number.isFinite(input.value)) return { ok: false, error: "Need a label and a numeric value." };
+  const self = await getOrCreateSelf();
+  const { logMetric } = await import("../crm/retention.ts");
+  const m = await logMetric({ clientId: self.id, label, value: input.value, unit: input.unit });
+  return { ok: true, isPR: !!m.isPR };
+}
+
+/** Set one of Cole's OWN targets on the self record. */
+export async function setSelfTarget(input: { label: string; targetValue: number; unit?: string; targetDate?: string }): Promise<{ ok: boolean; error?: string }> {
+  const label = (input.label ?? "").trim();
+  if (!label || !Number.isFinite(input.targetValue)) return { ok: false, error: "Need a label and a numeric target." };
+  const self = await getOrCreateSelf();
+  const { setTarget } = await import("../crm/targets.ts");
+  await setTarget({ clientId: self.id, label, targetValue: input.targetValue, unit: input.unit ?? null, targetDate: input.targetDate ?? null });
+  return { ok: true };
+}
+
 /**
  * Athlete Zero in one read: Cole's own training picture (performance series,
  * development curves) plus his latest readiness (WHOOP, when configured). The

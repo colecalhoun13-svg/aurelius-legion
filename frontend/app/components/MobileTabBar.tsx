@@ -12,7 +12,7 @@ import { usePathname } from "next/navigation";
 import { useNeedsYou } from "../../lib/useNeedsYou";
 
 const TABS: Array<{ label: string; path: string; glyph: string; also?: string[] }> = [
-  { label: "Home", path: "/home", glyph: "❂" },
+  { label: "Dashboard", path: "/home", glyph: "❂" },
   { label: "Chat", path: "/chat", glyph: "❧" },
   { label: "Decisions", path: "/decisions", glyph: "⇄" },
   { label: "Business", path: "/business", glyph: "◈" },

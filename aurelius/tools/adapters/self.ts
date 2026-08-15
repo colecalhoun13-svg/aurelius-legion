@@ -68,6 +68,20 @@ export const selfAdapter: ToolAdapter = {
       dataSchema: "{}",
       example: "[TOOL: tool=self action=zero data={}]",
     },
+    {
+      name: "log",
+      description:
+        "Log one of COLE'S OWN numbers (a lift, a test, bodyweight) onto Athlete Zero — this is how his training gets IN, resolving to his self record automatically. Use for 'log my vertical 30in', 'my squat is 405', 'log my bodyweight 185'.",
+      dataSchema: '{ label: string, value: number, unit?: string }',
+      example: '[TOOL: tool=self action=log data={"label":"vertical","value":30,"unit":"in"}]',
+    },
+    {
+      name: "set_target",
+      description:
+        "Set one of COLE'S OWN targets on Athlete Zero (his goal for a lift/test, with an optional date). Use for 'my goal is a 32in vertical by December', 'target 315 bench'.",
+      dataSchema: '{ label: string, targetValue: number, unit?: string, targetDate?: string }',
+      example: '[TOOL: tool=self action=set_target data={"label":"vertical","targetValue":32,"unit":"in","targetDate":"2026-12-01"}]',
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     const { prisma } = await import("../../core/db/prisma.ts");
@@ -95,6 +109,18 @@ export const selfAdapter: ToolAdapter = {
       const out = await synthesizeSpeech(String(data?.text ?? ""), { filename: data?.filename ? String(data.filename) : undefined });
       if (!out.ok) return { ok: false, output: null, error: out.error };
       return { ok: true, output: { path: out.path, provider: out.provider, cloned: out.cloned, bytes: out.bytes, note: "Audio of your approved words — yours to share. I don't post it." } };
+    }
+    if (action === "log") {
+      const { logSelfMetric } = await import("../../athlete/self.ts");
+      const res = await logSelfMetric({ label: String(data?.label ?? ""), value: Number(data?.value), unit: data?.unit ? String(data.unit) : undefined });
+      if (!res.ok) return { ok: false, output: null, error: res.error };
+      return { ok: true, output: { logged: true, isPR: res.isPR, message: res.isPR ? "Logged — that's a PR." : "Logged to Athlete Zero." } };
+    }
+    if (action === "set_target") {
+      const { setSelfTarget } = await import("../../athlete/self.ts");
+      const res = await setSelfTarget({ label: String(data?.label ?? ""), targetValue: Number(data?.targetValue), unit: data?.unit ? String(data.unit) : undefined, targetDate: data?.targetDate ? String(data.targetDate) : undefined });
+      if (!res.ok) return { ok: false, output: null, error: res.error };
+      return { ok: true, output: { message: "Target set on Athlete Zero." } };
     }
     if (action === "zero") {
       const { athleteZeroSummary } = await import("../../athlete/self.ts");

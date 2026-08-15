@@ -1,16 +1,18 @@
 // ================================
 // AURELIUS OS — NAVIGATION REGISTRY
-// The 2026-08 ELEVATED IMPERIAL ruling (docs/REDESIGN_PLAN.md): ten tabs —
-// Morning · Chat · Decisions · Business · Athletes · Goals · Brain ·
-// Calendar · Machine · Tuning. Machine and Tuning point at the
-// pages that hold their content TODAY (/engines and /aurelius); when the real
-// Machine/Tuning pages land, only the paths change. Nothing is deleted:
-// /tools and /settings stay listed under Setup so every live route keeps a
-// door on desktop, and /more still lists everything on the phone.
-// (Mobile keeps its own five; MobileTabBar is deliberately independent.)
-// Standing rules: keep it tight (≤13 items in ≤5 groups); a new page joins an
-// existing group or replaces an item. Anything Cole acts on weekly lives here.
-// "Zero" (Athlete Zero) joins The day — Cole's own readiness is a daily glance.
+// The 2026-08 ELEVATED IMPERIAL ruling (docs/REDESIGN_PLAN.md), reorganized
+// 2026-08-13 into five coherent groups so the nav reads as designed, not
+// accreted:
+//   The day  — Dashboard · Chat · Decisions   (what you look at every day)
+//   You      — Zero · Finance                 (your body + your money, private)
+//   Direction— Business · Athletes · Goals · Calendar · Brain   (the work)
+//   The machine — Machine · Tuning            (how Aurelius runs)
+//   Setup    — Tools · Settings
+// Machine/Tuning point at the pages that hold their content TODAY (/engines,
+// /aurelius); when the real pages land, only the paths change. Nothing is
+// deleted; /more still lists everything on the phone. Standing rule: each
+// label means ONE thing, ≤5 groups; a new page joins a group by theme, and
+// the group ORDER here is the render order (first-seen wins).
 // ================================
 
 export type OperatorDefinition = {
@@ -22,7 +24,7 @@ export type OperatorDefinition = {
 
 export const operatorRegistry: Record<string, OperatorDefinition> = {
   home: {
-    name: "Morning",
+    name: "Dashboard",
     path: "/home",
     description: "The day, what needs you, and the confrontation — one screen",
     group: "The day",
@@ -43,7 +45,7 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     name: "Zero",
     path: "/zero",
     description: "Athlete Zero — your own readiness, numbers, and trajectory",
-    group: "The day",
+    group: "You",
   },
   business: {
     name: "Business",
@@ -79,7 +81,7 @@ export const operatorRegistry: Record<string, OperatorDefinition> = {
     name: "Finance",
     path: "/finance",
     description: "Your personal money — net worth, cashflow, and runway (private)",
-    group: "Direction",
+    group: "You",
   },
   machine: {
     name: "Machine",

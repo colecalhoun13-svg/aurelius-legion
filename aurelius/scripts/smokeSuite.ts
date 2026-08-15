@@ -2471,6 +2471,20 @@ async function main() {
     const bareList = await listClients({});
     check("a bare client list never includes Athlete Zero (self)", !bareList.some((c) => c.id === self.id));
 
+    // Logging gap closed: Cole can PUT his own numbers/targets into Zero, and
+    // they land on the self record (still excluded from business + roster).
+    const { logSelfMetric, setSelfTarget } = await import("../athlete/self.ts");
+    const logged = await logSelfMetric({ label: "vertical", value: 30, unit: "in" });
+    await logSelfMetric({ label: "vertical", value: 32, unit: "in" });
+    const tgt = await setSelfTarget({ label: "vertical", targetValue: 34, unit: "in" });
+    const z2 = await athleteZeroSummary();
+    check("Cole can log his own numbers into Athlete Zero", logged.ok && (z2.performance?.series?.length ?? 0) >= 1);
+    check("Cole can set his own targets on Athlete Zero", tgt.ok && (z2.performance?.targets?.length ?? 0) >= 1);
+    check("a self PR still fires no business machinery (training win only)",
+      (await prisma.referral.count({ where: { referrerClientId: self.id } })) === 0);
+    await prisma.metric.deleteMany({ where: { clientId: self.id } });
+    await prisma.athleteTarget.deleteMany({ where: { clientId: self.id } });
+
     await prisma.metric.deleteMany({ where: { clientId: self.id } });
     await prisma.client.deleteMany({ where: { kind: "self" } });
   }

@@ -6,7 +6,7 @@
 // data says how to fill it, never fakes a number). Re-dress, never invent.
 
 import { useCallback, useEffect, useState } from "react";
-import { Divider, Panel, SectionLabel, Stat } from "../../../components/kit";
+import { Btn, Divider, Panel, SectionLabel, Stat } from "../../../components/kit";
 
 type Readiness = { recovery: number | null; hrv: number | null; restingHr: number | null; at: string | null };
 type Series = {
@@ -35,6 +35,10 @@ const TRAJ_TONE: Record<string, string> = {
 export default function ZeroPage() {
   const [data, setData] = useState<ZeroData | null>(null);
   const [failed, setFailed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [label, setLabel] = useState("");
+  const [value, setValue] = useState("");
+  const [unit, setUnit] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -47,6 +51,16 @@ export default function ZeroPage() {
     }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  async function logNumber() {
+    if (!label.trim() || !value) return;
+    setBusy(true);
+    try {
+      await fetch("/api/zero", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "log", label: label.trim(), value: Number(value), unit: unit.trim() || undefined }) });
+      setLabel(""); setValue(""); setUnit("");
+      await load();
+    } finally { setBusy(false); }
+  }
 
   if (failed) {
     return <div className="au-card" style={{ margin: "2rem auto", maxWidth: 560, textAlign: "center", color: "var(--ink2)" }}>
@@ -110,10 +124,22 @@ export default function ZeroPage() {
       ) : (
         <Panel tier="glass">
           <p style={{ color: "var(--ink2)", margin: 0 }}>
-            No numbers logged for you yet. Log a lift or a test (chat: &ldquo;log my vertical 30in&rdquo;) and your trend starts here.
+            No numbers logged for you yet. Log one below (or in chat: &ldquo;log my vertical 30in&rdquo;) and your trend starts here.
           </p>
         </Panel>
       )}
+
+      {/* LOG A NUMBER — Zero is a place you PUT your training in, not just read it */}
+      <div style={{ marginTop: ".9rem" }}>
+        <Panel tier="glass">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: ".5rem", alignItems: "center" }}>
+            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="lift / test (e.g. vertical)" style={inputStyle} />
+            <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="value" inputMode="decimal" style={{ ...inputStyle, width: 90 }} />
+            <input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="unit" style={{ ...inputStyle, width: 80 }} />
+            <Btn disabled={busy || !label.trim() || !value} onClick={logNumber}>Log</Btn>
+          </div>
+        </Panel>
+      </div>
 
       {/* TRAJECTORY — dev curves */}
       {data.curves.some((c) => c.trajectory !== "insufficient") && (
@@ -140,3 +166,8 @@ export default function ZeroPage() {
     </div>
   );
 }
+
+const inputStyle: React.CSSProperties = {
+  background: "var(--bg1)", border: "1px solid var(--line1)", borderRadius: 6,
+  padding: ".45rem .6rem", color: "var(--ink)", fontSize: 14,
+};
