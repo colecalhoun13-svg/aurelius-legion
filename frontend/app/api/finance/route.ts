@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { financeDashboard, addAccount, updateBalance, addTxn } from "../../../../aurelius/finance/service";
+import { financeDashboard, addAccount, updateBalance, addTxn, importCsv } from "../../../../aurelius/finance/service";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +27,10 @@ export async function POST(request: Request) {
       case "txn": {
         const res = await addTxn({ amount: body.amount, category: body.category, description: body.description, date: body.date, accountId: body.accountId });
         return res.ok ? NextResponse.json(res) : NextResponse.json({ error: res.error }, { status: 400 });
+      }
+      case "import_csv": {
+        if (!Array.isArray(body.rows)) return NextResponse.json({ error: "import_csv needs a rows array" }, { status: 400 });
+        return NextResponse.json(await importCsv(body.rows));
       }
       default:
         return NextResponse.json({ error: "unknown finance write" }, { status: 400 });

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { athleteZeroSummary, logSelfMetric, setSelfTarget, linkSelfSheet } from "../../../../aurelius/athlete/self";
-import { startExperiment, concludeExperiment } from "../../../../aurelius/athlete/experiments";
+import { startExperiment, concludeExperiment, abandonExperiment } from "../../../../aurelius/athlete/experiments";
 import { whoopStatus } from "../../../../aurelius/health/whoop";
 
 export const dynamic = "force-dynamic";
@@ -50,6 +50,10 @@ export async function POST(request: Request) {
     }
     if (body?.op === "exp_conclude") {
       const res = await concludeExperiment(String(body.id ?? ""));
+      return res.ok ? NextResponse.json(res) : NextResponse.json({ error: res.error }, { status: 400 });
+    }
+    if (body?.op === "exp_abandon") {
+      const res = await abandonExperiment(String(body.id ?? ""));
       return res.ok ? NextResponse.json(res) : NextResponse.json({ error: res.error }, { status: 400 });
     }
     return NextResponse.json({ error: "unknown zero write" }, { status: 400 });

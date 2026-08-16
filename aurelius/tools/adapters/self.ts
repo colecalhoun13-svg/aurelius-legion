@@ -109,6 +109,13 @@ export const selfAdapter: ToolAdapter = {
       dataSchema: '{ status?: "running"|"concluded"|"abandoned" }',
       example: "[TOOL: tool=self action=experiments data={}]",
     },
+    {
+      name: "abandon_experiment",
+      description:
+        "Abandon a running self-experiment without concluding it (Cole changed the plan or the protocol slipped). Marks it abandoned — no verdict, no fabricated result. Use for 'drop my creatine experiment', 'scrap that test'.",
+      dataSchema: "{ id: string }",
+      example: '[TOOL: tool=self action=abandon_experiment data={"id":"abc"}]',
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     const { prisma } = await import("../../core/db/prisma.ts");
@@ -182,6 +189,12 @@ export const selfAdapter: ToolAdapter = {
       const res = await concludeExperiment(String(data?.id ?? ""));
       if (!res.ok) return { ok: false, output: null, error: res.error };
       return { ok: true, output: { verdict: res.verdict, delta: res.delta } };
+    }
+    if (action === "abandon_experiment") {
+      const { abandonExperiment } = await import("../../athlete/experiments.ts");
+      const res = await abandonExperiment(String(data?.id ?? ""));
+      if (!res.ok) return { ok: false, output: null, error: res.error };
+      return { ok: true, output: { message: "Experiment abandoned — no verdict filed." } };
     }
     if (action === "experiments") {
       const { listExperiments } = await import("../../athlete/experiments.ts");

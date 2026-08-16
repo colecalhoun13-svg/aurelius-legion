@@ -175,11 +175,26 @@ const AUTH_EXEMPT = new Set([
   "/api/gmail/auth", "/api/gmail/callback",
   "/api/instagram/auth", "/api/instagram/callback",
 ]);
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 if (!API_KEY) {
-  console.warn("[auth] DORMANT — no AURELIUS_API_KEY set. Fine on a private machine; set it BEFORE exposing port 3001 or deploying always-on.");
+  if (IS_PRODUCTION) {
+    // FAIL-CLOSED (council G4). In production the key is the only thing standing
+    // between the outward-action routes and the open internet. A deploy that
+    // forgot it must refuse writes, not silently run open. Webhooks (signature-
+    // verified) and the public funnel stay reachable so intake still works.
+    console.error("[auth] FAIL-CLOSED — AURELIUS_API_KEY is REQUIRED in production and is not set. /api writes are refused until it is.");
+  } else {
+    console.warn("[auth] DORMANT — no AURELIUS_API_KEY set. Fine on a private machine; set it BEFORE exposing port 3001 or deploying always-on.");
+  }
 }
 app.use((req, res, next) => {
-  if (!API_KEY) return next();
+  if (!API_KEY) {
+    // Dev with no key → open (frictionless). Production with no key → fail closed
+    // on everything but the signature-verified webhooks and the public funnel.
+    if (!IS_PRODUCTION) return next();
+    if (AUTH_EXEMPT.has(req.path) || req.path.startsWith("/l/")) return next();
+    return res.status(503).json({ error: "server misconfigured — AURELIUS_API_KEY is required in production" });
+  }
   if (AUTH_EXEMPT.has(req.path)) return next();
   // Public tracked-link redirects: a stranger clicking a link in a bio or a
   // story has no API key. The route only counts a click and 302s to the form —

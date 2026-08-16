@@ -2483,6 +2483,12 @@ async function main() {
     check("a self PR still fires no business machinery (training win only)",
       (await prisma.referral.count({ where: { referrerClientId: self.id } })) === 0);
 
+    // A name lookup for a check-in/note must NEVER resolve to Cole's own record
+    // (kind:"self") — he isn't one of the people he coaches (council boundary).
+    const { findClientByName } = await import("../crm/service.ts");
+    check("a name lookup never resolves to the Athlete Zero self record",
+      !(await findClientByName(self.name)).some((c) => c.id === self.id));
+
     // Cole can point his OWN workout sheet at Athlete Zero (reuses updateClient's
     // Google-Sheets validation), and clear it. A bad URL is refused, not stored.
     const { linkSelfSheet } = await import("../athlete/self.ts");

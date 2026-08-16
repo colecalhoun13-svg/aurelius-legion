@@ -52,7 +52,22 @@ function timingSafeEq(a: string, b: string): boolean {
 
 export async function middleware(req: NextRequest) {
   const secret = process.env.APP_UNLOCK_SECRET?.trim();
-  if (!secret) return NextResponse.next(); // dormant until configured
+  if (!secret) {
+    // PRODUCTION FAIL-CLOSED (council G4). Locally the lock stays dormant so dev
+    // is frictionless. But in production these API routes import the brain and
+    // run OUTWARD finalizers, and this middleware is their ONLY guard — so a
+    // deploy that forgot the secret must fail CLOSED, never silently open the
+    // door to anonymous confirms. Public funnel paths stay reachable so a
+    // misconfig doesn't also silently kill lead intake.
+    if (process.env.NODE_ENV === "production") {
+      const { pathname } = req.nextUrl;
+      if (PUBLIC_PATHS.some((p) => p.test(pathname))) return NextResponse.next();
+      const msg = "server misconfigured — APP_UNLOCK_SECRET is required in production";
+      if (pathname.startsWith("/api/")) return NextResponse.json({ error: msg }, { status: 503 });
+      return new NextResponse(msg, { status: 503 });
+    }
+    return NextResponse.next(); // dormant until configured (local dev only)
+  }
 
   const { pathname } = req.nextUrl;
   if (PUBLIC_PATHS.some((p) => p.test(pathname))) return NextResponse.next();

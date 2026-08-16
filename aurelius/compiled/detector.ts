@@ -157,7 +157,12 @@ async function persistProposals(
         where: { id: existing.id },
         data: {
           supportCount: p.supportCount,
-          confidenceScore: Math.max(existing.confidenceScore, p.confidenceScore),
+          // Track the FRESH consistency, don't ratchet. Math.max meant mere
+          // repetition could only ever raise confidence — a pattern Cole is
+          // cooling on (falling reasoning-consistency) would keep its old high
+          // score forever, so time-decay could never win (council G6). The
+          // latest recomputed score is the honest one.
+          confidenceScore: p.confidenceScore,
           evidence: Array.from(new Set([...(existing.evidence as string[]), ...p.evidenceIds])),
         },
       });

@@ -710,10 +710,12 @@ export async function clientDetail(idOrName: string) {
   return { client, engagements, sessions, invoices, payments, lifetimeCents, lifetime: fromCents(lifetimeCents) };
 }
 
-/** Resolve a client by name for chat ("log a check-in for Jake"). */
+/** Resolve a client by name for chat ("log a check-in for Jake"). Never matches
+ *  the Athlete Zero self record (kind:"self") — Cole is not one of the people he
+ *  coaches, so a name lookup for a check-in/note must never resolve to him. */
 export async function findClientByName(name: string) {
   const matches = await prisma.client.findMany({
-    where: { name: { contains: name.trim(), mode: "insensitive" } },
+    where: { name: { contains: name.trim(), mode: "insensitive" }, kind: { not: "self" } },
     select: { id: true, name: true },
     take: 5,
   });
