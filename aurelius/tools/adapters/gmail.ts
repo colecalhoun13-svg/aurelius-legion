@@ -1,10 +1,10 @@
 // aurelius/tools/adapters/gmail.ts
 //
-// GMAIL as a registered tool — Aurelius reads the inbox and drafts
-// replies via [TOOL: ...] directives. Draft-only by construction: the
-// OAuth grant has no send scope, so create_draft lands in Cole's Gmail
-// drafts and nothing leaves without him hitting send. Honest-dormant
-// until the one-time /api/gmail/auth.
+// GMAIL as a registered tool — Aurelius reads the inbox and drafts replies via
+// [TOOL: ...] directives. Sending exists but is OUTWARD: `send` stages a gated
+// proposal, so a message leaves ONLY on Cole's Bridge confirm — never on its
+// own, never on a grant. Drafting lands in Cole's Gmail for review; sending is
+// the one tap after. Honest-dormant until the one-time /api/gmail/auth.
 
 import type { ToolAdapter, ToolAdapterResult } from "../types.ts";
 import { gmailAuth, listInbox, readMessage, draftReply } from "../../gmail/engine.ts";
@@ -19,12 +19,19 @@ export const gmailAdapter: ToolAdapter = {
   // drafts. Fail once, honestly, and let Cole decide.
   maxRetries: 0,
   description:
-    "Gmail (read + draft only, never sends): scan the inbox for what needs Cole, read a message, draft a reply for his review.",
+    "Gmail: scan the inbox for what needs Cole, read a message, draft a reply for his review, and — only on his confirm — SEND a reviewed draft.",
   actions: [
     {
       name: "read_inbox",
       description: "Recent messages worth attention (unread + important, last 7 days by default).",
       dataSchema: '{ max?: number, query?: string (Gmail search, e.g. "is:starred") }',
+    },
+    {
+      name: "send",
+      description:
+        "SEND a drafted email — OUTWARD, always Cole's confirm. Stages a gated 'Send?' proposal on the Bridge; nothing leaves until he taps, and a send can't be recalled. Give a lead name to send the outreach draft waiting for them, or a draftId+to for any draft. Use for 'send that to Jake', 'send the reply'.",
+      dataSchema: '{ lead?: string, draftId?: string, to?: string }',
+      example: '[TOOL: gmail.send {"lead": "Jake"}]',
     },
     {
       name: "read_message",
@@ -80,6 +87,31 @@ export const gmailAdapter: ToolAdapter = {
             body: m.body ? defuseDirectives(m.body) : m.body,
           },
         };
+      }
+      case "send": {
+        const { stageGmailSend } = await import("../../gmail/send.ts");
+        // By lead name → the outreach draft waiting for them (its stored draftId).
+        if (data?.lead) {
+          const { prisma } = await import("../../core/db/prisma.ts");
+          const name = String(data.lead).trim();
+          const lead = await prisma.lead.findFirst({
+            where: { name: { contains: name, mode: "insensitive" } },
+            orderBy: { updatedAt: "desc" },
+          });
+          if (!lead) return { ok: false, output: null, error: `No lead matching "${name}".` };
+          if (!lead.outreachDraftId) return { ok: false, output: null, error: `No draft waiting for ${lead.name} — draft an outreach message first, then send it.` };
+          if (!lead.email) return { ok: false, output: null, error: `${lead.name} has no email on file.` };
+          const staged = await stageGmailSend({ draftId: lead.outreachDraftId, to: lead.email, subject: `Reply to ${lead.name}`, kind: "outreach", leadId: lead.id });
+          if (!staged.ok) return { ok: false, output: null, error: staged.error };
+          return { ok: true, output: { summary: `Send to ${lead.name} is waiting on your confirm — check the Bridge. Nothing goes out until you tap.`, bridgeSignalId: staged.bridgeSignalId } };
+        }
+        // Explicit draft → generic email send.
+        if (data?.draftId && data?.to) {
+          const staged = await stageGmailSend({ draftId: String(data.draftId), to: String(data.to), kind: "email" });
+          if (!staged.ok) return { ok: false, output: null, error: staged.error };
+          return { ok: true, output: { summary: `Send to ${data.to} is waiting on your confirm — check the Bridge.`, bridgeSignalId: staged.bridgeSignalId } };
+        }
+        return { ok: false, output: null, error: "Give a lead name, or a draftId + to." };
       }
       case "draft_reply": {
         if (!data?.to || !data?.subject || !data?.body) {

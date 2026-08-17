@@ -76,6 +76,7 @@ import { gmailRouter } from "./router/gmailRouter.ts";
 import { instagramRouter } from "./router/instagramRouter.ts";
 import { crmRouter } from "./router/crmRouter.ts";
 import { MEDIA_DIR, MEDIA_ROUTE } from "./media/host.ts";
+import { VOICE_DIR, VOICE_ROUTE } from "./voice/tts.ts";
 
 // Structured tracing — every request and scheduled run leaves a LogEntry
 // row the cockpit can read. Telemetry is fire-and-forget by design.
@@ -217,6 +218,13 @@ console.log("=== Aurelius OS — preflight ===");
 console.log("[preflight] database:", process.env.DATABASE_URL ? "url set" : "NO DATABASE_URL — nothing will work");
 preflight();
 console.log("===================================================");
+
+// Cole's OWN voice clips, served behind THE LOCK (registered after the auth
+// middleware above). Unlike the public media host, these are his private words
+// — so they ride the API key, not an open origin. This is what makes
+// synthesizeSpeech's returned URL actually resolve instead of being a dead
+// server path (the sharpest rule-8 gap the audit found for voice).
+app.use(VOICE_ROUTE, express.static(VOICE_DIR, { index: false, dotfiles: "deny", maxAge: "7d" }));
 
 app.use("/api", engineTestRouter);
 // The doctor + truthful integration status, behind the same lock as everything

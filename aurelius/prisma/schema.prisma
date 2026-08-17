@@ -789,6 +789,11 @@ model Lead {
   // credit the angle. Without it, a reply is invisible to the pipeline.
   outreachThreadId String?
 
+  // The Gmail DRAFT id of the message waiting for this lead, persisted so Cole
+  // can one-tap "send that to <name>" and the gated outreach.send knows exactly
+  // which reviewed draft to deliver — without it, sending means hunting in Gmail.
+  outreachDraftId String?
+
   attributionEvents AttributionEvent[]
 
   createdAt DateTime @default(now())

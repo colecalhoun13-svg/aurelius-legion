@@ -142,7 +142,7 @@ export const selfAdapter: ToolAdapter = {
       const { synthesizeSpeech } = await import("../../voice/tts.ts");
       const out = await synthesizeSpeech(String(data?.text ?? ""), { filename: data?.filename ? String(data.filename) : undefined });
       if (!out.ok) return { ok: false, output: null, error: out.error };
-      return { ok: true, output: { path: out.path, provider: out.provider, cloned: out.cloned, bytes: out.bytes, note: "Audio of your approved words — yours to share. I don't post it." } };
+      return { ok: true, output: { url: out.url, provider: out.provider, cloned: out.cloned, bytes: out.bytes, note: "Audio of your approved words — open the url to play or share it. I don't post it anywhere." } };
     }
     if (action === "log") {
       const { logSelfMetric } = await import("../../athlete/self.ts");

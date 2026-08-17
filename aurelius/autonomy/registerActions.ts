@@ -51,6 +51,27 @@ export function registerAllActions(): void {
   // Outward: publishing content. executeAction always GATES this (outward class),
   // so the finalizer only runs on Cole's Bridge confirm.
   registerActionFinalizer("content.publish", finalizeContentPublish);
+  // Outward: SEND a drafted email. Gated by construction (outward class), so
+  // this only ever runs on Cole's Bridge confirm — the flagship "one tap".
+  // email.send (an inbox reply) and outreach.send (a lead message) share this
+  // finalizer but stay distinct classes so the trust ledger tells them apart.
+  // No inverse: a sent email can't be recalled, so there is no Undo to offer —
+  // the gate before it is the safety.
+  const finalizeGmailSend = async (payload: any) => {
+    const { sendDraft } = await import("../gmail/engine.ts");
+    const sent = await sendDraft(payload?.draftId);
+    // A real send is the true contact moment — stamp the lead so its follow-up
+    // cadence counts from when it actually went out, not when it was drafted.
+    if (payload?.leadId) {
+      const { prisma } = await import("../core/db/prisma.ts");
+      await prisma.lead
+        .update({ where: { id: payload.leadId }, data: { lastContactAt: new Date(), status: "contacted" } })
+        .catch(() => {});
+    }
+    return { messageId: sent.messageId, threadId: sent.threadId, to: payload?.to };
+  };
+  registerActionFinalizer("email.send", finalizeGmailSend);
+  registerActionFinalizer("outreach.send", finalizeGmailSend);
   // Outward: send an SMS via Twilio. Gated by construction; runs on confirm only.
   registerActionFinalizer("sms.send", async (payload: any) => {
     const { sendSms } = await import("../crm/sms.ts");

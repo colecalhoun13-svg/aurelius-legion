@@ -1,20 +1,25 @@
 // aurelius/gmail/engine.ts
 //
 // GMAIL ENGINE (OG doc Part VII) — read broadly, write NARROWLY. Aurelius
-// reads the inbox to flag what needs Cole and drafts replies for his
-// review, but NEVER sends. Scopes are readonly + compose (draft-only);
-// there is no send scope in the grant, so "Aurelius emailed someone
-// without me" is impossible by construction, not just by policy.
+// reads the inbox to flag what needs Cole and drafts replies for his review.
+// Sending exists but is OUTWARD by construction: sendDraft() only ever runs
+// inside the email.send / outreach.send finalizers, which the executor gates
+// as outward classes — so a message leaves only on Cole's explicit confirm,
+// NEVER autonomously and NEVER on a grant. "Aurelius emailed someone without
+// me" stays impossible; "Aurelius emailed someone the instant I tapped Send"
+// is the whole point of wiring the send.
 //
-// Dormant until the one-time OAuth (/api/gmail/auth). Every entry point
-// fails honestly with the connect instruction.
+// Dormant until the one-time OAuth (/api/gmail/auth). The gmail.send scope is
+// explicit in the grant so the capability is declared, not smuggled through
+// compose — connecting Gmail now asks for send permission, and the doctor
+// reports it. Every entry point fails honestly with the connect instruction.
 
 import { makeGoogleOAuth } from "../google/oauth.ts";
 
 export const gmailAuth = makeGoogleOAuth({
   service: "gmail",
-  // readonly = read messages · compose = create drafts. No send scope.
-  scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+  // readonly = read · compose = create drafts · send = deliver (gated outward).
+  scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/gmail.send",
   callbackPath: "/api/gmail/callback",
   tokenKey: "google_gmail_tokens",
 });
@@ -155,4 +160,32 @@ export async function draftReply(input: {
   // Expose the thread so a caller (outreach) can persist it and later match an
   // inbound reply on the same thread back to the lead it was drafted for.
   return { draftId: json.id, threadId: json.message?.threadId as string | undefined };
+}
+
+/**
+ * SEND an existing draft — OUTWARD. This is the only function that actually
+ * puts a message in someone's inbox, and it is called ONLY from the
+ * email.send / outreach.send finalizers, which the executor gates as outward
+ * classes. So it runs on Cole's confirm, never on its own and never on a grant.
+ * Sends the draft Cole reviewed (its exact bytes), so what goes out is what he
+ * saw. Fails loudly (dormant Gmail, revoked send scope, deleted draft).
+ */
+export async function sendDraft(draftId: string): Promise<{ messageId: string; threadId?: string }> {
+  if (!draftId) throw new Error("Nothing to send — no draft id.");
+  const res = await gmailAuth.fetch(`${API}/drafts/send`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: draftId }),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok || !json.id) {
+    const msg = json?.error?.message ?? `HTTP ${res.status}`;
+    // A 403 here is almost always the missing send scope on an older grant.
+    throw new Error(
+      /insufficient|scope|permission|403/i.test(msg)
+        ? `Gmail send was refused (${msg}). Reconnect Gmail at /api/gmail/auth to grant send permission — the older grant was draft-only.`
+        : `Send failed: ${msg}`
+    );
+  }
+  return { messageId: json.id, threadId: json.threadId as string | undefined };
 }

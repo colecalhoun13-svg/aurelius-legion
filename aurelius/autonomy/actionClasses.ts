@@ -115,13 +115,11 @@ export const ACTION_CLASSES: ActionClass[] = [
     description: "Send outreach to a lead or client.",
     gate: "always Cole's confirm",
   },
-  {
-    key: "wealth.trade",
-    operator: "wealth",
-    tier: "outward",
-    description: "Execute a trade or move money.",
-    gate: "always Cole's confirm (spend)",
-  },
+  // (Removed wealth.trade — it was declared outward with no finalizer and no
+  // stager: pure decoration that read as a capability. Aurelius has no trading
+  // or money-movement engine and should not advertise one. The wealth operator
+  // is research/market-intel only. Re-add this the day a real, gated execution
+  // path exists — not before.)
   {
     key: "sms.send",
     operator: "business",

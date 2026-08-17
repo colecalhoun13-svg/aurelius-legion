@@ -123,6 +123,10 @@ export async function draftOutreach(
   ok: boolean;
   gated?: boolean;
   bridgeSignalId?: string;
+  // Present only when the draft actually got written (not gated) — the reactive
+  // one-tap send stages off these.
+  draftId?: string;
+  to?: string;
   error?: string;
 }> {
   const lead = await prisma.lead.findUnique({ where: { id: leadId } });
@@ -199,7 +203,15 @@ export async function draftOutreach(
       };
     },
   }).then(
-    (exec) => ({ ok: true, gated: !exec.finalized, bridgeSignalId: exec.bridgeSignalId }),
+    (exec) => ({
+      ok: true,
+      gated: !exec.finalized,
+      bridgeSignalId: exec.bridgeSignalId,
+      // Present only when the draft actually got written (granted/acted, not
+      // gated) — the reactive one-tap send stages off these.
+      draftId: exec.result?.draftId as string | undefined,
+      to: exec.result?.to as string | undefined,
+    }),
     (err) => ({ ok: false, error: err?.message ?? String(err) })
   );
 }
@@ -211,7 +223,7 @@ export async function draftOutreach(
  * lead's follow-up date moves out so the pipeline keeps a next action on every
  * open lead, which is the discipline the whole engine exists to enforce.
  */
-export async function finalizeOutreachDraft(payload: any): Promise<{ draftId?: string; leadId: string }> {
+export async function finalizeOutreachDraft(payload: any): Promise<{ draftId?: string; leadId: string; to?: string }> {
   const { leadId, to, body, name } = payload ?? {};
   if (!leadId) throw new Error("outreach draft payload missing leadId");
 
@@ -254,9 +266,12 @@ export async function finalizeOutreachDraft(payload: any): Promise<{ draftId?: s
       // Persist the thread so an inbound reply can be matched back to this lead
       // and flip it to "conversing" — without it, a reply is invisible.
       ...(threadId ? { outreachThreadId: threadId } : {}),
+      // Persist the draft id so Cole can one-tap "send that to <name>" and the
+      // gated outreach.send delivers the exact reviewed draft.
+      ...(draftId ? { outreachDraftId: draftId } : {}),
     },
   });
-  return { draftId, leadId };
+  return { draftId, leadId, to };
 }
 
 // ── 3. THE SWEEP ─────────────────────────────────────────────────────

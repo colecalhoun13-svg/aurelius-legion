@@ -20,7 +20,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const VOICE_DIR = process.env.VOICE_DIR?.trim() || path.resolve(process.cwd(), "vault", "voice");
+/** Where clips live on disk. Served by Express (see index.ts) behind THE LOCK —
+ *  these are Cole's own words, private, unlike the public media host. */
+export const VOICE_DIR = process.env.VOICE_DIR?.trim() || path.resolve(process.cwd(), "vault", "voice");
+/** The authenticated route Express streams VOICE_DIR under. */
+export const VOICE_ROUTE = "/api/voice";
 const MAX_CHARS = 5000; // keep a single clip bounded (and free-tier friendly)
 
 export type VoiceStatus = { configured: boolean; provider: string | null; cloned: boolean; reason: string | null };
@@ -47,6 +51,9 @@ export function voiceStatus(): VoiceStatus {
 export async function synthesizeSpeech(text: string, opts: { filename?: string } = {}): Promise<{
   ok: boolean;
   path?: string;
+  /** The route the clip is reachable at (e.g. /api/voice/foo.mp3) — resolves
+   *  through the app so Cole can actually play it, not a dead disk path. */
+  url?: string;
   provider?: string;
   cloned?: boolean;
   bytes?: number;
@@ -68,11 +75,16 @@ export async function synthesizeSpeech(text: string, opts: { filename?: string }
 
   try {
     fs.mkdirSync(VOICE_DIR, { recursive: true });
-    const safe = (opts.filename || `voice-${words.slice(0, 24).replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`).slice(0, 60);
-    const file = path.join(VOICE_DIR, `${safe}.mp3`);
+    // Sanitise to a safe basename: this name becomes part of a served URL, so a
+    // slash or dot-segment would be a traversal hole.
+    const base = (opts.filename || `voice-${words.slice(0, 24).replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`)
+      .replace(/[^a-z0-9._-]+/gi, "-")
+      .slice(0, 60) || "voice";
+    const name = `${base}.mp3`;
+    const file = path.join(VOICE_DIR, name);
     const buf = Buffer.from(audio);
     fs.writeFileSync(file, buf);
-    return { ok: true, path: file, provider: status.provider!, cloned: status.cloned, bytes: buf.length };
+    return { ok: true, path: file, url: `${VOICE_ROUTE}/${name}`, provider: status.provider!, cloned: status.cloned, bytes: buf.length };
   } catch (err: any) {
     return { ok: false, error: `Voiced, but couldn't write the file: ${(err?.message ?? String(err)).slice(0, 160)}` };
   }

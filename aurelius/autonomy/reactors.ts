@@ -98,6 +98,28 @@ async function reactiveAutoDraft(reason: string, e: { leadId: string; name: stri
       console.warn(`[reactors] ${reason} ${e.name}: auto-draft failed — ${res.error}`);
       return;
     }
+
+    // THE FLAGSHIP ONE TAP (#26). If the draft actually got written (outreach.draft
+    // was granted, so a real Gmail draft + draftId exist), stage the SEND as a
+    // gated outward proposal. Cole then sees a single "Send to <name>?" confirm —
+    // one tap delivers the reviewed draft. This is the reactive lead-catch ONLY;
+    // the scheduled sweeps stay drafts-only. When the draft is still gated (not
+    // granted), there is nothing to send yet — Cole confirms the draft first, then
+    // can send it — so we don't stage a send for a draft that doesn't exist.
+    if (!res.gated && res.draftId && res.to) {
+      const { stageGmailSend } = await import("../gmail/send.ts");
+      const staged = await stageGmailSend({
+        draftId: res.draftId,
+        to: res.to,
+        subject: `Reply to ${e.name}`,
+        kind: "outreach",
+        leadId: e.leadId,
+      }).catch((err) => ({ ok: false, error: err?.message ?? String(err) }) as any);
+      console.log(
+        `[reactors] ${reason} ${e.name}: reply drafted + send ${staged.ok ? "staged for your one-tap confirm" : `not staged — ${staged.error}`}`
+      );
+      return;
+    }
     console.log(
       `[reactors] ${reason} ${e.name}: reply ${res.gated ? "proposed (awaiting confirm)" : "drafted"} for one-tap review`
     );

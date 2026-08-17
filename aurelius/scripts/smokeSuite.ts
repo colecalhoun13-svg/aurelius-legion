@@ -2000,6 +2000,22 @@ async function main() {
     check("outreach.draft has a real finalizer (not a dead toggle on the dial)",
       hasActionFinalizer("outreach.draft") === true);
 
+    // SENDING IS WIRED (council #2) — outreach.send/email.send now have a real
+    // finalizer, so they're no longer decorative outward classes. But sending
+    // stays gated: staging only ASKS.
+    check("outreach.send now has a real finalizer (send is wired, one-tap)", hasActionFinalizer("outreach.send") === true);
+    check("email.send now has a real finalizer", hasActionFinalizer("email.send") === true);
+    check("the decorative wealth.trade class was removed (no finalizer, no engine)",
+      !ACTION_CLASSES.some((c: any) => c.key === "wealth.trade"));
+    // Staging a send GATES by construction (outward, never granted): a pending
+    // Bridge confirm, nothing delivered. No Gmail needed — the gate is upstream
+    // of the finalizer, so this proves "nothing leaves without Cole's tap".
+    const { stageGmailSend } = await import("../gmail/send.ts");
+    const stagedSend = await stageGmailSend({ draftId: `${TAG}_draft`, to: "lead@example.com", kind: "outreach" });
+    check("staging a send only asks — it gates a confirm and delivers nothing",
+      stagedSend.ok && stagedSend.finalized === false && !!stagedSend.bridgeSignalId);
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "gmail_send_request" } });
+
     // ── the event bus: react to what HAPPENED, not just the clock (#63) ──
     {
       const { on, off, emit, listEventHandlers, eventHandlerCount } = await import("../core/events.ts");
