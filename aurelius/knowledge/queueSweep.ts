@@ -24,7 +24,7 @@
 // One digest signal reports the sweep's work — counts, not items.
 
 import { prisma } from "../core/db/prisma.ts";
-import { NON_KEYHOLE_SCOPES } from "./proposals.ts";
+import { KEYHOLE_ELIGIBLE_SCOPES, isKeyholeEligible } from "./proposals.ts";
 
 const KEYHOLE_CAP_PER_SWEEP = 25;
 const PROPOSAL_EXPIRY_DAYS = 30;
@@ -50,7 +50,11 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
   // one applied 25 and expired the rest of the eligible backlog unapplied —
   // the two policies in one function defeated each other).
   const ELIGIBLE = {
-    scope: { notIn: [...NON_KEYHOLE_SCOPES] }, // hard rule 1 + one voice + rule 6 (system)
+    // Registry-backed ALLOWLIST (council G1): only concrete field-knowledge
+    // scopes a registered intent class declares auto-apply — not "everything
+    // except three". A per-row isKeyholeEligible check in the apply loop below
+    // enforces the intent-class↔scope match the coarse `in` filter can't express.
+    scope: { in: [...KEYHOLE_ELIGIBLE_SCOPES] },
     OR: [
       { origin: { in: ["research", "ingestion"] } },
       // Backlog rows predate the origin column — the research engine's
@@ -73,6 +77,11 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
       });
       const { executeAction } = await import("../autonomy/executor.ts");
       for (const p of eligible) {
+        // The coarse `scope in allowlist` query can't check the intent-class↔scope
+        // match — a row with an eligible scope but a mismatched/hallucinated intent
+        // class must still wait for Cole. Skip it here (it stays pending, not
+        // expired: the expiry exclusion uses the same scope filter).
+        if (!isKeyholeEligible(p.intentClassId, p.scope)) continue;
         try {
           const res = await executeAction({
             actionClass: "knowledge.apply_proposal",

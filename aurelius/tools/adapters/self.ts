@@ -27,6 +27,13 @@ export const selfAdapter: ToolAdapter = {
       example: '[TOOL: tool=self action=recent_actions data={"limit": 10}]',
     },
     {
+      name: "capabilities",
+      description:
+        "WHAT AURELIUS CAN ACTUALLY DO — the live catalog of every registered tool and its actions, read straight from the registry (never invented). Use when Cole asks 'what can you do', 'what are your tools', 'help', or seems unsure what to ask for. This is how the dozens of capabilities stop being invisible until he happens to guess the command.",
+      dataSchema: "{}",
+      example: "[TOOL: tool=self action=capabilities data={}]",
+    },
+    {
       name: "diagnose",
       description:
         "THE DOCTOR — live-probes every engine, key, and integration from inside this container and reports what is actually working (a key that is set but rejected reports BROKEN, not configured). Every failure carries its fix. Use when Cole says something 'isn't working', asks why an engine/calendar/search is dead, or wants a health check after a deploy.",
@@ -339,6 +346,24 @@ export const selfAdapter: ToolAdapter = {
       } catch (e: any) {
         return { ok: false, output: null, error: e?.message ?? "recent actions failed" };
       }
+    }
+    if (action === "capabilities") {
+      const { listTools } = await import("../toolRegistry.ts");
+      const tools = listTools()
+        .map((t) => ({
+          tool: t.name,
+          does: t.description,
+          actions: (t.actions ?? []).map((a) => a.name),
+        }))
+        .sort((a, b) => a.tool.localeCompare(b.tool));
+      return {
+        ok: true,
+        output: {
+          count: tools.length,
+          tools,
+          note: "The live tool catalog, read from the registry — this is the real surface, not a guess. Ask for any of these by name.",
+        },
+      };
     }
     if (action === "diagnose") {
       try {

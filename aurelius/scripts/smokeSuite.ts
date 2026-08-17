@@ -1172,7 +1172,7 @@ async function main() {
       // Ungranted → a research-born proposal stays pending (the confirm loop).
       const gatedProp = await createProposal({
         operatorId: khOp, operatorName: "training", intentClassId: "rep_band_update",
-        scope: "smoke_keyhole", key: `${TAG}_gated`, proposedValue: "v1",
+        scope: "rep_bands", key: `${TAG}_gated`, proposedValue: "v1",
         rationale: "smoke", coleNaturalLanguage: "smoke", origin: "research",
       });
       check("ungranted: research proposal stays pending", gatedProp.status === "pending");
@@ -1182,12 +1182,12 @@ async function main() {
       // Granted → it auto-files: confirmed, honest provenance, acted receipt + Undo.
       const autoProp = await createProposal({
         operatorId: khOp, operatorName: "training", intentClassId: "rep_band_update",
-        scope: "smoke_keyhole", key: `${TAG}_auto`, proposedValue: "learned value",
+        scope: "rep_bands", key: `${TAG}_auto`, proposedValue: "learned value",
         rationale: "smoke", coleNaturalLanguage: "smoke", origin: "research",
       });
       check("granted: research proposal auto-files as confirmed", autoProp.status === "confirmed");
       const autoEntry = await prisma.knowledgeEntry.findFirst({
-        where: { operatorId: khOp, scope: "smoke_keyhole", key: `${TAG}_auto` },
+        where: { operatorId: khOp, scope: "rep_bands", key: `${TAG}_auto` },
       });
       check(
         "keyhole write lands with honest provenance (research_ingestion by aurelius)",
@@ -1200,7 +1200,7 @@ async function main() {
       // Undo → the learned entry deactivates (no prior value) + proposal denied.
       const undone = receipt ? await undoAction(receipt.id) : { ok: false };
       const afterUndo = await prisma.knowledgeEntry.findFirst({
-        where: { operatorId: khOp, scope: "smoke_keyhole", key: `${TAG}_auto`, active: true },
+        where: { operatorId: khOp, scope: "rep_bands", key: `${TAG}_auto`, active: true },
       });
       const deniedProp = await prisma.knowledgeProposal.findUnique({ where: { id: autoProp.id } });
       check("undo deactivates the learned entry + marks the proposal denied", undone.ok && !afterUndo && deniedProp?.status === "denied");
@@ -1209,7 +1209,7 @@ async function main() {
       // keyhole-apply, even while the grant is active.
       const chatProp = await createProposal({
         operatorId: khOp, operatorName: "training", intentClassId: "rep_band_update",
-        scope: "smoke_keyhole", key: `${TAG}_chat`, proposedValue: "v", rationale: "smoke",
+        scope: "rep_bands", key: `${TAG}_chat`, proposedValue: "v", rationale: "smoke",
         coleNaturalLanguage: "smoke", origin: "chat",
       });
       const personaProp = await createProposal({
@@ -1221,6 +1221,17 @@ async function main() {
         "guards hold under grant: chat origin + persona scope stay pending",
         chatProp.status === "pending" && personaProp.status === "pending"
       );
+
+      // G1 (council): a research proposal whose scope is NOT backed by a
+      // registered intent class never auto-applies, even under grant — an
+      // injected web source can't invent a scope that slips the keyhole.
+      const injectedProp = await createProposal({
+        operatorId: khOp, operatorName: "training", intentClassId: "rep_band_update",
+        scope: "injected_evil_scope", key: `${TAG}_injected`, proposedValue: "pwn",
+        rationale: "smoke", coleNaturalLanguage: "smoke", origin: "research",
+      });
+      check("G1: a research scope with no registered intent class stays pending under grant",
+        injectedProp.status === "pending");
 
       if (!khPreexisting) await revokeAutonomy("knowledge.apply_proposal");
       // cleanup this block's artifacts
@@ -2929,13 +2940,13 @@ async function main() {
       // A research-born proposal filed BEFORE the grant exists = the backlog.
       const backlogProp = await createProposal({
         operatorId: qsOp, operatorName: "training", intentClassId: "rep_band_update",
-        scope: "smoke_qsweep", key: `${TAG}_backlog`, proposedValue: "backlog value",
+        scope: "rep_bands", key: `${TAG}_backlog`, proposedValue: "backlog value",
         rationale: "smoke", coleNaturalLanguage: "smoke", origin: "research",
       });
       // A chat-born proposal 40 days stale → expiry, never keyhole.
       const staleProp = await createProposal({
         operatorId: qsOp, operatorName: "training", intentClassId: "rep_band_update",
-        scope: "smoke_qsweep", key: `${TAG}_stale`, proposedValue: "v",
+        scope: "rep_bands", key: `${TAG}_stale`, proposedValue: "v",
         rationale: "smoke", coleNaturalLanguage: "smoke", origin: "chat",
       });
       await prisma.knowledgeProposal.update({
@@ -2972,7 +2983,7 @@ async function main() {
       const backlogAfter = await prisma.knowledgeProposal.findUnique({ where: { id: backlogProp.id } });
       check("sweep applies the pre-grant research backlog through the keyhole", backlogAfter?.status === "confirmed");
       const backlogEntry = await prisma.knowledgeEntry.findFirst({
-        where: { operatorId: qsOp, scope: "smoke_qsweep", key: `${TAG}_backlog` },
+        where: { operatorId: qsOp, scope: "rep_bands", key: `${TAG}_backlog` },
       });
       check("backlog apply lands with honest provenance", backlogEntry?.sourceType === "research_ingestion");
       const staleAfter = await prisma.knowledgeProposal.findUnique({ where: { id: staleProp.id } });
