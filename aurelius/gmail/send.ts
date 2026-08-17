@@ -21,9 +21,8 @@ import { executeAction } from "../autonomy/executor.ts";
 export type StageSendInput = {
   draftId: string;
   to: string;
+  /** Optional override; when omitted the confirm uses the draft's own subject. */
   subject?: string;
-  /** A short preview of the body so the Bridge card shows what will go out. */
-  preview?: string;
   kind: "outreach" | "email";
   /** For outreach: the lead this send belongs to, stamped on delivery. */
   leadId?: string;
@@ -41,12 +40,31 @@ export async function stageGmailSend(input: StageSendInput): Promise<{
   if (!draftId) return { ok: false, error: "Nothing to send — no draft id." };
   if (!to) return { ok: false, error: "No recipient on the draft." };
 
+  // Read the ACTUAL draft so the confirm card shows Cole the exact words that
+  // will go out. The reactive path auto-composes the draft (possibly from an
+  // inbound message he hasn't opened), so the send confirm must BE the review —
+  // it can't claim "the draft you reviewed" and then show nothing. If the draft
+  // can't be read (dormant Gmail, deleted draft), refuse rather than stage a
+  // blind send.
+  let live: { to: string; subject: string; body: string } | null = null;
+  try {
+    const { readDraft } = await import("./engine.ts");
+    live = await readDraft(draftId);
+  } catch {
+    live = null;
+  }
+  if (!live || !live.body) {
+    return { ok: false, error: "Couldn't read that draft to show you before sending — is Gmail connected and the draft still there? Nothing staged." };
+  }
+  const shownBody = live.body.length > 1200 ? `${live.body.slice(0, 1200)}…` : live.body;
+  const subject = input.subject || live.subject;
+
   const prepare = async () => ({
     title: `Send to ${to}?`,
     body:
-      `${input.subject ? `**${input.subject}**\n\n` : ""}` +
-      `${input.preview ? `${input.preview.slice(0, 400)}${input.preview.length > 400 ? "…" : ""}\n\n` : ""}` +
-      `Confirm to send the draft you reviewed — its exact words. Nothing goes out until you tap, and a send can't be recalled.`,
+      `${subject ? `**${subject}**\n\n` : ""}` +
+      `${shownBody}\n\n` +
+      `— This is the full message. Confirm to send it as-is; nothing goes out until you tap, and a send can't be recalled.`,
     domain: input.kind === "outreach" ? "business" : "inbox",
     payload: { draftId, to, kind: input.kind, leadId: input.leadId ?? null },
   });

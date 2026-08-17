@@ -30,6 +30,9 @@ export default function FinancePage() {
   // add-txn form
   const [amount, setAmount] = useState("");
   const [desc, setDesc] = useState("");
+  // CSV import
+  const [csv, setCsv] = useState("");
+  const [importMsg, setImportMsg] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -45,6 +48,29 @@ export default function FinancePage() {
     setBusy(true);
     try {
       await fetch("/api/finance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      await load();
+    } finally { setBusy(false); }
+  }
+
+  // Parse pasted CSV → {date, amount, description, category} rows. Skips a header
+  // line, tolerates quoted fields, ignores blanks. importCsv is idempotent
+  // (importHash), so re-pasting the same export never double-counts.
+  async function importCsv() {
+    const lines = csv.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) return;
+    const cells = (l: string) => l.match(/(".*?"|[^,]+)(?=,|$)/g)?.map((c) => c.replace(/^"|"$/g, "").trim()) ?? [];
+    const start = /date|amount|description/i.test(lines[0]) ? 1 : 0;
+    const rows = lines.slice(start).map((l) => {
+      const c = cells(l);
+      return { date: c[0] ?? "", amount: c[1] ?? "", description: c[2] ?? undefined, category: c[3] ?? undefined };
+    }).filter((r) => r.date && r.amount);
+    if (rows.length === 0) { setImportMsg("Couldn't read any rows — expected: date, amount, description, category"); return; }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/finance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "import_csv", rows }) });
+      const out = await res.json().catch(() => ({}));
+      setImportMsg(res.ok ? `Imported ${out.imported ?? 0}, skipped ${out.skipped ?? 0} (already there).` : (out.error ?? "Import failed."));
+      setCsv("");
       await load();
     } finally { setBusy(false); }
   }
@@ -124,6 +150,28 @@ export default function FinancePage() {
         </div>
         <p className="au-kicker" style={{ display: "block", marginTop: ".6rem", fontSize: 12, color: "var(--ink3)" }}>
           Signed: a positive number is money in, negative is money out. Private — never business, never shared.
+        </p>
+      </Panel>
+
+      <Divider />
+
+      {/* IMPORT A CSV — bulk transactions from a bank export, idempotent */}
+      <SectionLabel>Import a CSV</SectionLabel>
+      <div style={{ height: ".7rem" }} />
+      <Panel tier="glass">
+        <textarea
+          value={csv}
+          onChange={(e) => setCsv(e.target.value)}
+          placeholder={"Paste rows: date, amount, description, category\n2026-08-01, -42.10, Groceries, food\n2026-08-02, 3200, Client payment, income"}
+          rows={5}
+          style={{ ...inputStyle, width: "100%", fontFamily: "var(--mono, monospace)", resize: "vertical" }}
+        />
+        <div style={{ display: "flex", alignItems: "center", gap: ".7rem", marginTop: ".6rem", flexWrap: "wrap" }}>
+          <Btn disabled={busy || !csv.trim()} onClick={importCsv}>Import</Btn>
+          {importMsg && <span style={{ color: "var(--ink2)", fontSize: 13 }}>{importMsg}</span>}
+        </div>
+        <p className="au-kicker" style={{ display: "block", marginTop: ".6rem", fontSize: 12, color: "var(--ink3)" }}>
+          A positive amount is money in, negative is money out. Re-importing the same export won&apos;t double-count.
         </p>
       </Panel>
     </div>

@@ -56,6 +56,15 @@ export const KEYHOLE_ELIGIBLE_SCOPES = TRAINING_INTENT_CLASSES
   .map((c) => c.scope)
   .filter((s) => s !== "any" && !(NON_KEYHOLE_SCOPES as readonly string[]).includes(s));
 
+/** The exact (intentClass, scope) pairs that may auto-apply — the SQL-expressible
+ *  form of isKeyholeEligible. The queue sweep filters on these so a row with an
+ *  allowlisted scope but a MISMATCHED intent class falls out of "eligible"
+ *  entirely: it is neither applied nor wrongly shielded from expiry (which would
+ *  make it immortal clutter that starves the nightly cap). */
+export const KEYHOLE_ELIGIBLE_PAIRS = TRAINING_INTENT_CLASSES
+  .filter((c) => c.scope !== "any" && !(NON_KEYHOLE_SCOPES as readonly string[]).includes(c.scope))
+  .map((c) => ({ intentClassId: c.id, scope: c.scope }));
+
 /** May THIS (intentClass, scope) pair auto-apply under the keyhole? True only
  *  when a registered intent class declares exactly that concrete scope. */
 export function isKeyholeEligible(intentClassId: string, scope: string): boolean {

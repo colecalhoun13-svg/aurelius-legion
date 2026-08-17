@@ -47,6 +47,23 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
+// Voice clips (self.voice): when Aurelius voices approved words, its reply
+// carries the clip URL (/api/voice/<file>.mp3, served through the same-origin
+// proxy). Render a player so Cole can actually hear it in place, instead of the
+// URL being a dead string he can't do anything with.
+const VOICE_URL_RE = /(?:https?:\/\/[^\s"'<>]+)?\/api\/voice\/[A-Za-z0-9._-]+\.mp3/g;
+function VoiceClips({ content }: { content: string }) {
+  const urls = Array.from(new Set(content.match(VOICE_URL_RE) ?? []));
+  if (urls.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      {urls.map((u, i) => (
+        <audio key={i} controls preload="none" src={u} className="w-full max-w-[320px]" />
+      ))}
+    </div>
+  );
+}
+
 export function AureliusChat() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -312,6 +329,7 @@ export function AureliusChat() {
               </div>
             )}
             <div className="whitespace-pre-wrap leading-relaxed">{m.content}</div>
+            <VoiceClips content={m.content} />
           </div>
         ))}
 

@@ -2018,13 +2018,15 @@ async function main() {
     check("email.send now has a real finalizer", hasActionFinalizer("email.send") === true);
     check("the decorative wealth.trade class was removed (no finalizer, no engine)",
       !ACTION_CLASSES.some((c: any) => c.key === "wealth.trade"));
-    // Staging a send GATES by construction (outward, never granted): a pending
-    // Bridge confirm, nothing delivered. No Gmail needed — the gate is upstream
-    // of the finalizer, so this proves "nothing leaves without Cole's tap".
+    // Staging a send now READS the draft first, to show Cole the exact words in
+    // the confirm (round-2: no blind "the draft you reviewed" card). With Gmail
+    // dormant here (or a deleted draft), there's nothing to show — so it refuses
+    // HONESTLY rather than staging a blind send. That refusal IS the fix: a send
+    // confirm never appears without the real message behind it.
     const { stageGmailSend } = await import("../gmail/send.ts");
     const stagedSend = await stageGmailSend({ draftId: `${TAG}_draft`, to: "lead@example.com", kind: "outreach" });
-    check("staging a send only asks — it gates a confirm and delivers nothing",
-      stagedSend.ok && stagedSend.finalized === false && !!stagedSend.bridgeSignalId);
+    check("staging a send with no readable draft refuses honestly (no blind confirm)",
+      !stagedSend.ok && !!stagedSend.error && !stagedSend.bridgeSignalId);
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: "gmail_send_request" } });
 
     // ── the event bus: react to what HAPPENED, not just the clock (#63) ──
@@ -2952,6 +2954,19 @@ async function main() {
       await prisma.knowledgeProposal.update({
         where: { id: staleProp.id }, data: { createdAt: new Date(Date.now() - 40 * 86400_000) },
       });
+      // STRAND+STARVE (round-2): a research proposal with an ALLOWLISTED scope
+      // but a MISMATCHED intent class must not be immortal. Precise (intentClass,
+      // scope) eligibility means it's not keyhole-eligible — so instead of being
+      // skipped-by-apply yet shielded-from-expiry (lingering forever, starving
+      // the cap), it expires on the normal clock like any other stale proposal.
+      const mismatchProp = await createProposal({
+        operatorId: qsOp, operatorName: "training", intentClassId: "intensity_zone_update",
+        scope: "rep_bands", key: `${TAG}_mismatch`, proposedValue: "v",
+        rationale: "Research-derived from query: smoke", coleNaturalLanguage: "smoke", origin: "research",
+      });
+      await prisma.knowledgeProposal.update({
+        where: { id: mismatchProp.id }, data: { createdAt: new Date(Date.now() - 40 * 86400_000) },
+      });
       // A 20-day notice (no confirm) → expires; a 20-day DECISION → survives.
       const staleNotice = await prisma.bridgeSignal.create({
         data: {
@@ -2988,6 +3003,9 @@ async function main() {
       check("backlog apply lands with honest provenance", backlogEntry?.sourceType === "research_ingestion");
       const staleAfter = await prisma.knowledgeProposal.findUnique({ where: { id: staleProp.id } });
       check("30-day-stale proposal expires (not applied, not denied)", staleAfter?.status === "expired");
+      const mismatchAfter = await prisma.knowledgeProposal.findUnique({ where: { id: mismatchProp.id } });
+      check("scope-eligible but intent-mismatched research proposal expires — not immortal, not applied",
+        mismatchAfter?.status === "expired");
       const noticeAfter = await prisma.bridgeSignal.findUnique({ where: { id: staleNotice.id } });
       const decisionAfter = await prisma.bridgeSignal.findUnique({ where: { id: youngDecision.id } });
       check(

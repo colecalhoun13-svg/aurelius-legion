@@ -84,7 +84,12 @@ export async function synthesizeSpeech(text: string, opts: { filename?: string }
     const file = path.join(VOICE_DIR, name);
     const buf = Buffer.from(audio);
     fs.writeFileSync(file, buf);
-    return { ok: true, path: file, url: `${VOICE_ROUTE}/${name}`, provider: status.provider!, cloned: status.cloned, bytes: buf.length };
+    // Absolute when the app's public origin is known (so a Telegram link is
+    // tappable and opens the clip behind the app unlock), relative otherwise
+    // (the browser resolves it against the app origin via the /api/voice proxy).
+    const appBase = process.env.APP_PUBLIC_BASE_URL?.trim();
+    const url = appBase ? `${appBase.replace(/\/+$/, "")}${VOICE_ROUTE}/${name}` : `${VOICE_ROUTE}/${name}`;
+    return { ok: true, path: file, url, provider: status.provider!, cloned: status.cloned, bytes: buf.length };
   } catch (err: any) {
     return { ok: false, error: `Voiced, but couldn't write the file: ${(err?.message ?? String(err)).slice(0, 160)}` };
   }

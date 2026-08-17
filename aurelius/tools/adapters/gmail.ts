@@ -94,11 +94,21 @@ export const gmailAdapter: ToolAdapter = {
         if (data?.lead) {
           const { prisma } = await import("../../core/db/prisma.ts");
           const name = String(data.lead).trim();
-          const lead = await prisma.lead.findFirst({
+          // Wrong-recipient guard: a loose `contains` + "most-recent" pick could
+          // silently send one person's draft to another (or "Jake" matching
+          // "Drake"). Prefer an EXACT name match; on an ambiguous partial match,
+          // refuse and list candidates rather than guessing who gets the email.
+          const matches = await prisma.lead.findMany({
             where: { name: { contains: name, mode: "insensitive" } },
             orderBy: { updatedAt: "desc" },
+            take: 6,
           });
-          if (!lead) return { ok: false, output: null, error: `No lead matching "${name}".` };
+          if (matches.length === 0) return { ok: false, output: null, error: `No lead matching "${name}".` };
+          const exact = matches.filter((m) => m.name.toLowerCase() === name.toLowerCase());
+          const lead = exact.length === 1 ? exact[0] : matches.length === 1 ? matches[0] : null;
+          if (!lead) {
+            return { ok: false, output: null, error: `"${name}" matches ${matches.length} leads (${matches.map((m) => m.name).join(", ")}). Say the exact name so I send to the right person.` };
+          }
           if (!lead.outreachDraftId) return { ok: false, output: null, error: `No draft waiting for ${lead.name} — draft an outreach message first, then send it.` };
           if (!lead.email) return { ok: false, output: null, error: `${lead.name} has no email on file.` };
           const staged = await stageGmailSend({ draftId: lead.outreachDraftId, to: lead.email, subject: `Reply to ${lead.name}`, kind: "outreach", leadId: lead.id });

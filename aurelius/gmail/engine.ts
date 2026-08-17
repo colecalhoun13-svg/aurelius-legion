@@ -163,6 +163,25 @@ export async function draftReply(input: {
 }
 
 /**
+ * Read back a draft's recipient + subject + body — so the SEND confirm card can
+ * show Cole the exact words that will go out (the review IS the one tap). The
+ * draft may have been LLM-composed from an inbound message, so this is the point
+ * where Cole actually sees it before anything leaves.
+ */
+export async function readDraft(draftId: string): Promise<{ to: string; subject: string; body: string } | null> {
+  if (!draftId) return null;
+  const res = await gmailAuth.fetch(`${API}/drafts/${draftId}?format=full`, {});
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok || !json.message) return null;
+  const headers = json.message.payload?.headers ?? [];
+  return {
+    to: header(headers, "To"),
+    subject: header(headers, "Subject"),
+    body: extractText(json.message.payload).trim(),
+  };
+}
+
+/**
  * SEND an existing draft — OUTWARD. This is the only function that actually
  * puts a message in someone's inbox, and it is called ONLY from the
  * email.send / outreach.send finalizers, which the executor gates as outward

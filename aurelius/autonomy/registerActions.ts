@@ -62,10 +62,13 @@ export function registerAllActions(): void {
     const sent = await sendDraft(payload?.draftId);
     // A real send is the true contact moment — stamp the lead so its follow-up
     // cadence counts from when it actually went out, not when it was drafted.
+    // Clear outreachDraftId: the draft is now sent (Gmail consumed it), so the
+    // lead must not read "draft waiting" and a later "send that" must not re-stage
+    // a dead draftId (which would 404 on confirm).
     if (payload?.leadId) {
       const { prisma } = await import("../core/db/prisma.ts");
       await prisma.lead
-        .update({ where: { id: payload.leadId }, data: { lastContactAt: new Date(), status: "contacted" } })
+        .update({ where: { id: payload.leadId }, data: { lastContactAt: new Date(), status: "contacted", outreachDraftId: null } })
         .catch(() => {});
     }
     return { messageId: sent.messageId, threadId: sent.threadId, to: payload?.to };
