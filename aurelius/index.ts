@@ -76,6 +76,8 @@ import { gmailRouter } from "./router/gmailRouter.ts";
 import { instagramRouter } from "./router/instagramRouter.ts";
 import { crmRouter } from "./router/crmRouter.ts";
 import { systemRouter } from "./router/systemRouter.ts";
+import { financeRouter } from "./router/financeRouter.ts";
+import { athleteRouter } from "./router/athleteRouter.ts";
 import { MEDIA_DIR, MEDIA_ROUTE } from "./media/host.ts";
 import { VOICE_DIR, VOICE_ROUTE } from "./voice/tts.ts";
 
@@ -245,6 +247,8 @@ app.use("/api/gmail", gmailRouter);
 app.use("/api/instagram", instagramRouter);
 app.use("/api/crm", crmRouter);
 app.use("/api/system", systemRouter);
+app.use("/api/finance", financeRouter);
+app.use("/api/athletes", athleteRouter);
 
 // PUBLIC LEAD INTAKE. Deliberately outside THE LOCK: a prospect filling in a
 // form has no API key, and a funnel that requires one captures nobody. This is
