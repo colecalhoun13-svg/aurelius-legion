@@ -1,12 +1,3 @@
-import { NextResponse } from "next/server";
-import { listTasks } from "../../../../aurelius/productivity/service";
-
+import { proxyToBackend } from "../../../lib/proxyToBackend";
 export const dynamic = "force-dynamic";
-
-export async function GET() {
-  try {
-    return NextResponse.json(await listTasks({ status: "inbox" }));
-  } catch (error: any) {
-    return NextResponse.json({ error: error?.message ?? "failed" }, { status: 500 });
-  }
-}
+export async function GET(request: Request) { return proxyToBackend(request, "/api/productivity/inbox"); }
