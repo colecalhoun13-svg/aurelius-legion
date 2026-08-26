@@ -201,9 +201,18 @@ export function auditReachability(): Finding[] {
   // Grants are made from exactly one place: the autonomy dial. If it stops
   // deriving from listGrantableClasses (or is deleted), a grantable keyhole has
   // no switch — a capability Cole can never turn on. (grantable→site.)
+  //
+  // The dial's composite now lives in the BACKEND router (autonomyRouter's
+  // /dial), with the Next route a thin proxy — so the derivation is checked
+  // there. The proxy still has to exist and point at the backend, or the
+  // control has no front door.
+  const dialBackend = join(BACKEND, "router", "autonomyRouter.ts");
   const dialRoute = join(FRONTEND, "app", "api", "autonomy", "dial", "route.ts");
-  if (!existsSync(dialRoute) || !read(dialRoute).includes("listGrantableClasses")) {
-    add("high", "autonomy-dial", `the autonomy dial (${relative(ROOT, dialRoute)}) is missing or no longer derives from listGrantableClasses — grantable keyholes would have no control`);
+  const backendDerives = existsSync(dialBackend) && read(dialBackend).includes("listGrantableClasses");
+  const proxyExists = existsSync(dialRoute) && read(dialRoute).includes("/api/autonomy/dial");
+  const legacyInline = existsSync(dialRoute) && read(dialRoute).includes("listGrantableClasses");
+  if (!(backendDerives && proxyExists) && !legacyInline) {
+    add("high", "autonomy-dial", `the autonomy dial has no live control: the backend /dial must derive from listGrantableClasses (${relative(ROOT, dialBackend)}) and the Next route (${relative(ROOT, dialRoute)}) must proxy to it — otherwise grantable keyholes have no switch`);
   }
 
   // ── 10. Research-source literals that don't exist in the vocab ─────

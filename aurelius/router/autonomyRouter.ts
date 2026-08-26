@@ -71,6 +71,100 @@ autonomyRouter.post("/grants/revoke", async (req: Request, res: Response) => {
   }
 });
 
+// ── The Autonomy DIAL (Tuning Room) ──────────────────────────────────
+// GET  /api/autonomy/dial  — active grants + the grantable menu with each
+//   keyhole's trust track record, the locked dials with their refusal reason,
+//   the "want me to handle it?" suggestions, recent undoable actions, and the
+//   14-day autonomy flow. Moved here from the Next route so the composite runs
+//   in the one process that owns the registry + DB, not a second copy.
+autonomyRouter.get("/dial", async (req: Request, res: Response) => {
+  try {
+    const { listActiveGrants } = await import("../autonomy/grants.ts");
+    const { listGrantableClasses, listAllActionClasses } = await import("../autonomy/actionClasses.ts");
+    const { getTrustLedger, suggestNextGrant } = await import("../autonomy/trustLedger.ts");
+    const { prisma } = await import("../core/db/prisma.ts");
+
+    const [active, ledger, suggestions] = await Promise.all([listActiveGrants(), getTrustLedger(), suggestNextGrant()]);
+    const grantable = listGrantableClasses();
+    const activeKeys = new Set(active.map((g: any) => g.actionClass));
+    const ledgerBy = new Map(ledger.map((r: any) => [r.actionClass, r]));
+
+    const classes = grantable.map((c: any) => {
+      const l: any = ledgerBy.get(c.key);
+      return {
+        key: c.key,
+        description: c.description,
+        on: activeKeys.has(c.key),
+        trackRecord: l ? { acted: l.acted, confirmed: l.confirmed, undone: l.undone, failed: l.failed } : null,
+      };
+    });
+    const locked = listAllActionClasses()
+      .filter((c: any) => !c.grantable)
+      .map((c: any) => ({ key: c.key, description: c.description, reason: c.grantReason }));
+
+    const daysParam = Number(new URL(req.url, "http://x").searchParams.get("days"));
+    const days = Number.isFinite(daysParam) && daysParam > 0 ? Math.min(daysParam, 365) : 7;
+    const acted = await prisma.bridgeSignal.findMany({
+      where: { status: "acted", createdAt: { gte: new Date(Date.now() - days * 24 * 3600 * 1000) } },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+    const recentActions = acted
+      .filter((s: any) => ((s.actions as any[]) ?? []).some((a) => a?.action === "undo_action"))
+      .slice(0, days > 7 ? 50 : 10)
+      .map((s: any) => ({
+        id: s.id,
+        title: s.title,
+        kind: s.kind,
+        createdAt: s.createdAt,
+        actionClass: ((s.actions as any[]) ?? []).find((a) => a?.action === "undo_action")?.payload?.actionClass ?? null,
+      }));
+
+    const flow = await prisma.bridgeSignal.findMany({
+      where: { status: { in: ["acted", "confirmed", "undone"] }, createdAt: { gte: new Date(Date.now() - 14 * 24 * 3600 * 1000) } },
+      select: { status: true, createdAt: true },
+    });
+
+    res.json({
+      active: active.map((g: any) => ({ actionClass: g.actionClass, grantedAt: g.grantedAt })),
+      classes,
+      locked,
+      suggestions,
+      recentActions,
+      flow,
+    });
+  } catch (err: any) {
+    console.error("[autonomy] dial error:", err);
+    res.status(500).json({ error: err?.message ?? "failed to load autonomy dial" });
+  }
+});
+
+// POST /api/autonomy/dial  — { op: "grant" | "revoke", actionClass }. Cole's own
+// hand on the switch (a UI click is his explicit action; the model-invoked tool
+// gates instead). grantAutonomy refuses a non-grantable class with an honest 400.
+autonomyRouter.post("/dial", async (req: Request, res: Response) => {
+  const { op, actionClass } = req.body ?? {};
+  if (!actionClass || typeof actionClass !== "string") {
+    return res.status(400).json({ error: "actionClass is required" });
+  }
+  try {
+    if (op === "grant") {
+      const { grantAutonomy } = await import("../autonomy/grants.ts");
+      const grant = await grantAutonomy({ actionClass, grantedBy: "cole", note: "granted from the Autonomy dial" });
+      return res.json({ ok: true, grant });
+    }
+    if (op === "revoke") {
+      const { revokeAutonomy } = await import("../autonomy/grants.ts");
+      const revoked = await revokeAutonomy(actionClass);
+      return res.json({ ok: true, revoked: revoked !== null });
+    }
+    return res.status(400).json({ error: `unknown op "${op}"` });
+  } catch (err: any) {
+    // grant refusal (outward/training/autonomy/unknown) → honest 400.
+    return res.status(400).json({ ok: false, error: err?.message ?? "action failed" });
+  }
+});
+
 // Cole confirms a gated proposal from the Bridge → commit it now.
 autonomyRouter.post("/confirm", async (req: Request, res: Response) => {
   const { signalId } = req.body ?? {};
