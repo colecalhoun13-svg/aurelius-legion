@@ -22,6 +22,12 @@ missionsRouter.get("/", async (_req: Request, res: Response) => {
 missionsRouter.post("/", async (req: Request, res: Response) => {
   try {
     const b = req.body ?? {};
+    // Launch an already-proposed mission (Aurelius-initiated ones wait for this):
+    // fire-and-forget, the page watches it move. Mirrors the old Next route.
+    if (b.run && typeof b.run === "string") {
+      runMission(b.run).catch((err: any) => console.error("Mission run crashed:", err));
+      return res.json({ started: b.run });
+    }
     if (!b.objective || typeof b.objective !== "string") {
       return res.status(400).json({ error: "objective required" });
     }

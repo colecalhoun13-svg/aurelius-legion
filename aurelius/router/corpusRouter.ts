@@ -1,16 +1,49 @@
 // aurelius/router/corpusRouter.ts — second-brain surface. Mounted at /api/corpus.
 
 import { Router, type Request, type Response } from "express";
-import { ingestDocument, ingestUrl, listCorpus, forgetDocument } from "../corpus/ingest.ts";
+import { ingestDocument, ingestUrl, listCorpus, forgetDocument, getCorpusDoc } from "../corpus/ingest.ts";
 import { ask } from "../corpus/ask.ts";
 
 export const corpusRouter = Router();
 
-corpusRouter.get("/", async (_req: Request, res: Response) => {
+// The catalog/shelves draw from this — return { documents } (the shape the UI
+// reads), and a high limit so volume 51+ isn't hidden (council).
+corpusRouter.get("/", async (req: Request, res: Response) => {
   try {
-    res.json(await listCorpus());
+    const limit = Number(req.query.limit) || 1000;
+    res.json({ documents: await listCorpus(limit) });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+// One document by id (Research Drop / catalog detail).
+corpusRouter.get("/:id", async (req: Request, res: Response) => {
+  try {
+    const doc = await getCorpusDoc(String(req.params.id ?? ""));
+    if (!doc) return res.status(404).json({ error: "not found" });
+    res.json({ document: doc });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? String(err) });
+  }
+});
+
+// Research Drop — a browser upload runs the same hardened ingest pipeline as
+// the inbox folder (allowlist, size cap, defusing, content-hash dedup, honest
+// failure on scanned PDFs). Moved here from the Next route.
+corpusRouter.post("/upload", async (req: Request, res: Response) => {
+  try {
+    const b = req.body ?? {};
+    const filename = b.filename ? String(b.filename) : "";
+    const contentBase64 = b.contentBase64 ? String(b.contentBase64) : "";
+    if (!filename || !contentBase64) {
+      return res.status(400).json({ ok: false, error: "filename + contentBase64 required" });
+    }
+    const { uploadDocument } = await import("../corpus/upload.ts");
+    const result = await uploadDocument({ filename, contentBase64, domain: b.domain ? String(b.domain) : undefined });
+    res.status(result.ok ? 200 : 400).json(result);
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err?.message ?? "upload failed" });
   }
 });
 

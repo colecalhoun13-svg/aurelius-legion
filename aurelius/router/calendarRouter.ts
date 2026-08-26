@@ -139,6 +139,41 @@ calendarRouter.post("/events", async (req: Request, res: Response) => {
   }
 });
 
+// THE GRID — the composite the calendar page reads: events + connection status
+// + scheduled tasks that share the grid, over a from..to range. Moved here from
+// the Next route so the three-way read runs in one process.
+calendarRouter.get("/grid", async (req: Request, res: Response) => {
+  try {
+    const from = req.query.from ? new Date(String(req.query.from)) : new Date();
+    const to = req.query.to ? new Date(String(req.query.to)) : new Date(from.getTime() + 7 * 86400_000);
+    const { prisma } = await import("../core/db/prisma.ts");
+    const [events, connected, tasks] = await Promise.all([
+      listEventsRange(from, to),
+      isCalendarConfigured() ? isCalendarConnected() : Promise.resolve(false),
+      prisma.task.findMany({
+        where: { scheduledFor: { gte: from, lte: to }, status: { notIn: ["done", "abandoned", "dropped"] } },
+        orderBy: { scheduledFor: "asc" },
+        select: { id: true, title: true, scheduledFor: true, status: true },
+      }),
+    ]);
+    res.json({ connected, configured: isCalendarConfigured(), events, tasks });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Failed to load calendar" });
+  }
+});
+
+// Cole's own hand adding an event from the grid — { title, startAt, endAt }.
+calendarRouter.post("/grid", async (req: Request, res: Response) => {
+  try {
+    const { title, startAt, endAt } = req.body ?? {};
+    if (!title || !startAt || !endAt) return res.status(400).json({ error: "title + startAt + endAt required" });
+    const event = await createCalendarEvent({ title: String(title), startAt: new Date(startAt), endAt: new Date(endAt) });
+    res.json({ ok: true, event });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Failed to create event" });
+  }
+});
+
 // GET /api/calendar/availability?days=7&min=60
 calendarRouter.get("/availability", async (req: Request, res: Response) => {
   try {

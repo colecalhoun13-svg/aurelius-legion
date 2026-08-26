@@ -18,10 +18,12 @@ const BACKEND_ORIGIN = process.env.BACKEND_ORIGIN?.trim() || "http://127.0.0.1:3
  * method, body, and query string, and returning the backend's response verbatim
  * (status + JSON). On an unreachable backend, a plain 502 with the fix.
  */
-export async function proxyToBackend(request: Request, backendPath: string): Promise<Response> {
+export async function proxyToBackend(request: Request, backendPath: string, bodyText?: string): Promise<Response> {
   const method = request.method.toUpperCase();
   const hasBody = method !== "GET" && method !== "HEAD";
-  const body = hasBody ? await request.text() : undefined;
+  // A caller that already read the body (to pick the backend sub-path from it)
+  // passes it here, since a Request body can only be read once.
+  const body = hasBody ? (bodyText !== undefined ? bodyText : await request.text()) : undefined;
   const search = new URL(request.url).search;
   const target = `${BACKEND_ORIGIN}${backendPath}${search}`;
 
