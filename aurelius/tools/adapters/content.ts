@@ -84,6 +84,13 @@ export const contentAdapter: ToolAdapter = {
       dataSchema: "{} (no fields)",
       example: "[TOOL: content.instagram_strategy]",
     },
+    {
+      name: "channels",
+      description:
+        "Multi-channel publishing readiness: which channels (instagram/tiktok/youtube) are live vs dormant, what media each takes, and the exact fix for each dormant one. Instagram is the wired publisher; TikTok/YouTube light up when their tokens land. Publishing anywhere still stops for Cole's confirm. Use for 'where can I publish', 'is TikTok connected', 'multi-channel status'.",
+      dataSchema: "{} (no fields)",
+      example: "[TOOL: content.channels]",
+    },
   ],
 
   async run(action, data): Promise<ToolAdapterResult> {
@@ -284,6 +291,11 @@ ${data.notes ? `Notes to weave in: ${String(data.notes)}\n` : ""}Return ONLY the
         } catch (err: any) {
           return { ok: false, output: null, error: err?.message ?? "couldn't build a strategy read" };
         }
+      }
+
+      case "channels": {
+        const { channelReadiness, multiChannelSummary } = await import("../../content/channels.ts");
+        return { ok: true, output: { ...multiChannelSummary(), channels: channelReadiness() } };
       }
 
       default:

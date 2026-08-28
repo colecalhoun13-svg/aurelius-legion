@@ -18,6 +18,7 @@ import { corpusAdapter } from "./adapters/corpus.ts";
 import { selfAdapter } from "./adapters/self.ts";
 import { businessAdapter } from "./adapters/business.ts";
 import { crmAdapter } from "./adapters/crm.ts";
+import { financeAdapter } from "./adapters/finance.ts";
 
 export function registerAllTools(): void {
   registerTool(googleSheetsAdapter);
@@ -34,4 +35,5 @@ export function registerAllTools(): void {
   registerTool(selfAdapter);         // honest mirror: what am I doing / what did I do
   registerTool(businessAdapter);     // the business foundation: facts, gaps, offer drafts
   registerTool(crmAdapter);          // the remote coaching business: leads → clients → money
+  registerTool(financeAdapter);      // Cole's PERSONAL money: net worth, cashflow, runway (private)
 }

@@ -11,13 +11,20 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useNeedsYou } from "../../lib/useNeedsYou";
 
-const TABS: Array<{ label: string; path: string; glyph: string; also?: string[] }> = [
-  { label: "Home", path: "/home", glyph: "❂" },
+const TABS: Array<{ label: string; path: string; glyph: string }> = [
+  { label: "Dashboard", path: "/home", glyph: "❂" },
   { label: "Chat", path: "/chat", glyph: "❧" },
   { label: "Decisions", path: "/decisions", glyph: "⇄" },
   { label: "Business", path: "/business", glyph: "◈" },
-  { label: "More", path: "/more", glyph: "⋯", also: ["/calendar", "/goals", "/athletes", "/projects", "/brain", "/aurelius", "/autonomy", "/tools", "/engines", "/traces", "/settings"] },
+  { label: "More", path: "/more", glyph: "⋯" },
 ];
+
+// The four primary destinations. "More" is the catch-all: it highlights whenever
+// the current page is none of these — derived, not a hand-kept list, so a NEW
+// page lights up More automatically instead of going un-highlighted until
+// someone remembers to add it (the drift the audit flagged).
+const PRIMARY_PATHS = TABS.filter((t) => t.path !== "/more").map((t) => t.path);
+const matchesPath = (pathname: string, p: string) => pathname === p || pathname.startsWith(p + "/");
 
 export default function MobileTabBar() {
   const pathname = usePathname();
@@ -28,7 +35,10 @@ export default function MobileTabBar() {
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       {TABS.map((t) => {
-        const active = pathname === t.path || t.also?.some((a) => pathname.startsWith(a));
+        const active =
+          t.path === "/more"
+            ? pathname !== "/" && !PRIMARY_PATHS.some((p) => matchesPath(pathname, p))
+            : matchesPath(pathname, t.path);
         return (
           <Link
             key={t.path}

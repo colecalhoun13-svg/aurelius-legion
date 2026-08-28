@@ -50,6 +50,19 @@ export const ONCE_PER_DAY = new Set([
   "persona_observer", "weekly_planning", "freshness_sweep", "weekly_scoreboard",
   "capability_gaps", "decision_curriculum", "curriculum_ingest", "db_backup",
   "queue_sweep", "marketing_pass", "content_outcome", "retention_sweep", "training_trend_sweep",
+  "conversation_distill", "roster_patterns",
+]);
+
+// Intentionally SUB-DAILY jobs that run many times a day and must NOT be
+// claim-protected to once per day (that would throttle them to a single run).
+// They are safe to double-fire on a redeploy because each is IDEMPOTENT — a
+// second run in the same minute finds nothing new to do or repeats a harmless
+// re-check. The reachability audit accepts a scheduled job that is in EITHER
+// this set or ONCE_PER_DAY, so a genuinely-daily job can't quietly skip its
+// claim by being mislabeled frequent.
+export const FREQUENT_JOBS = new Set([
+  "delivery_retry", // every 30 min: re-send undelivered pushes (pushedAt-null); stamping makes a repeat a no-op
+  "whoop_sync", // every 30 min: pull Cole's WHOOP recovery; deduped per day, dormant without a token
 ]);
 
 export function localDayKey(): string {

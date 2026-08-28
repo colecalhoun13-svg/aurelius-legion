@@ -24,7 +24,7 @@
 // One digest signal reports the sweep's work — counts, not items.
 
 import { prisma } from "../core/db/prisma.ts";
-import { NON_KEYHOLE_SCOPES } from "./proposals.ts";
+import { KEYHOLE_ELIGIBLE_PAIRS, isKeyholeEligible } from "./proposals.ts";
 
 const KEYHOLE_CAP_PER_SWEEP = 25;
 const PROPOSAL_EXPIRY_DAYS = 30;
@@ -50,13 +50,24 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
   // one applied 25 and expired the rest of the eligible backlog unapplied —
   // the two policies in one function defeated each other).
   const ELIGIBLE = {
-    scope: { notIn: [...NON_KEYHOLE_SCOPES] }, // hard rule 1 + one voice + rule 6 (system)
-    OR: [
-      { origin: { in: ["research", "ingestion"] } },
-      // Backlog rows predate the origin column — the research engine's
-      // deterministic rationale prefix is the provable marker. Anything
-      // unprovable stays for Cole's eyes (or expiry).
-      { origin: null as string | null, rationale: { startsWith: "Research-derived from query:" } },
+    // Registry-backed ALLOWLIST (council G1), expressed PRECISELY as exact
+    // (intentClass, scope) pairs — not a coarse `scope in [...]`. This matters
+    // because ELIGIBLE gates BOTH the apply pass and the expiry EXCLUSION: a
+    // coarse scope filter would let a scope-eligible / intent-MISMATCHED row be
+    // skipped by apply yet shielded from expiry — immortal clutter that starves
+    // the nightly cap (round-2 review). With exact pairs, such a row is simply
+    // not eligible: it expires on its own clock like any other stale proposal.
+    AND: [
+      { OR: KEYHOLE_ELIGIBLE_PAIRS.map((p) => ({ intentClassId: p.intentClassId, scope: p.scope })) },
+      {
+        OR: [
+          { origin: { in: ["research", "ingestion"] } },
+          // Backlog rows predate the origin column — the research engine's
+          // deterministic rationale prefix is the provable marker. Anything
+          // unprovable stays for Cole's eyes (or expiry).
+          { origin: null as string | null, rationale: { startsWith: "Research-derived from query:" } },
+        ],
+      },
     ],
   };
   let grantLive = false;
@@ -73,6 +84,11 @@ export async function sweepQueues(): Promise<QueueSweepResult> {
       });
       const { executeAction } = await import("../autonomy/executor.ts");
       for (const p of eligible) {
+        // The coarse `scope in allowlist` query can't check the intent-class↔scope
+        // match — a row with an eligible scope but a mismatched/hallucinated intent
+        // class must still wait for Cole. Skip it here (it stays pending, not
+        // expired: the expiry exclusion uses the same scope filter).
+        if (!isKeyholeEligible(p.intentClassId, p.scope)) continue;
         try {
           const res = await executeAction({
             actionClass: "knowledge.apply_proposal",

@@ -481,6 +481,95 @@ async function main() {
     await prisma.calendarEvent.deleteMany({ where: { id: { in: [focus.id, clash.id] } } });
   }
 
+  console.log("── delivery-verified: a push that never landed self-heals (#65) ──");
+  {
+    const { retryUndeliveredPushes } = await import("../core/deliverySweep.ts");
+    // A critical, never-delivered, still-pending signal — shouldPushNow always
+    // says yes to critical, so this is unambiguously eligible for retry.
+    const held = await prisma.bridgeSignal.create({
+      data: { kind: "risk", sourceType: "smoke_delivery", sourceId: `${TAG}held`, severity: "critical", status: "pending", title: `${TAG} held critical`, body: "never reached the phone", pushedAt: null },
+    });
+    // An already-delivered signal must never be re-pushed.
+    const done = await prisma.bridgeSignal.create({
+      data: { kind: "risk", sourceType: "smoke_delivery", sourceId: `${TAG}done`, severity: "critical", status: "pending", title: `${TAG} delivered`, body: "already landed", pushedAt: new Date() },
+    });
+
+    const res = await retryUndeliveredPushes();
+    check("the retry sweep finds a should-have-pushed signal that never landed", res.eligible >= 1);
+    // Telegram is dormant in the sandbox, so the send can't land — the row must
+    // be HELD (pushedAt still null) for the next sweep, never falsely stamped.
+    const heldAfter = await prisma.bridgeSignal.findUnique({ where: { id: held.id }, select: { pushedAt: true } });
+    check("an undeliverable push is held for the next sweep, not falsely marked delivered",
+      heldAfter?.pushedAt === null && res.stillPending >= 1);
+    const doneAfter = await prisma.bridgeSignal.findUnique({ where: { id: done.id }, select: { pushedAt: true } });
+    check("an already-delivered signal is never re-pushed", doneAfter?.pushedAt !== null);
+
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "smoke_delivery" } });
+  }
+
+  console.log("── conversation distiller: remembers past 48h, refuses error text (#59) ──");
+  {
+    const { distillRecentConversation } = await import("../memory/distiller.ts");
+    // Too few turns → nothing to condense (deterministic, no engine needed).
+    await prisma.conversationTurn.deleteMany({ where: { content: { startsWith: TAG } } });
+    await prisma.conversationTurn.createMany({
+      data: [
+        { role: "cole", content: `${TAG} hey` },
+        { role: "aurelius", content: `${TAG} hi` },
+      ],
+    });
+    const thin = await distillRecentConversation();
+    check("the distiller skips when there's too little to condense", thin.ran === false && /nothing worth condensing/i.test(thin.reason));
+
+    // Enough turns, but keyless → the model can't distill, so it must REFUSE to
+    // save (never file an engine error as memory, hard rule 3).
+    await prisma.conversationTurn.createMany({
+      data: Array.from({ length: 6 }, (_, i) => ({
+        role: i % 2 === 0 ? "cole" : "aurelius",
+        content: `${TAG} turn ${i}: a real thing worth remembering about the plan`,
+      })),
+    });
+    const before = await prisma.memory.count({ where: { category: "conversation_distillation" } });
+    const keyless = await distillRecentConversation();
+    const after = await prisma.memory.count({ where: { category: "conversation_distillation" } });
+    check("with no engine it refuses to file an error as a memory (hard rule 3)",
+      keyless.ran === false && after === before);
+
+    await prisma.conversationTurn.deleteMany({ where: { content: { startsWith: TAG } } });
+  }
+
+  console.log("── faith rhythm: from the library, never invented (#48) ──");
+  {
+    const { faithRhythm } = await import("../faith/rhythm.ts");
+    // Mock embeddings / no ingested faith material → it must stay DORMANT and
+    // say so, never fabricate a devotional or a verse (the whole point).
+    const fr = await faithRhythm();
+    check("faith rhythm stays dormant (won't invent scripture) with no library material",
+      fr.ok === false && /library/i.test(fr.reason ?? ""));
+
+    // Board of directors (#58): the council is reachable as a tool the model can
+    // aim at a real decision — and refuses an empty one, trusting its own gate.
+    const { selfAdapter } = await import("../tools/adapters/self.ts");
+    const board = await selfAdapter.run("board", {});
+    check("the board tool refuses to convene without a decision", board.ok === false && /decision/i.test(board.error ?? ""));
+
+    // Voice-out (#23): voices only GIVEN approved words; dormant-honest with no
+    // TTS key (never fabricates audio, never silently no-ops).
+    const { synthesizeSpeech, voiceStatus } = await import("../voice/tts.ts");
+    check("voice refuses empty input (voices only approved words it's given)",
+      (await synthesizeSpeech("")).ok === false);
+    const vs = voiceStatus();
+    check("voice is honest about config (dormant with a fix, or a named provider)",
+      typeof vs.configured === "boolean" && (vs.configured ? !!vs.provider : !!vs.reason));
+
+    // Multi-channel (#41): the channel registry names each channel and, for every
+    // dormant one, carries the exact fix — never a silent gap or a fake-live.
+    const { channelReadiness } = await import("../content/channels.ts");
+    const cr = channelReadiness();
+    check("the channel registry lists channels and every dormant one names its fix",
+      cr.length >= 3 && cr.some((c) => c.channel === "tiktok") && cr.filter((c) => !c.live).every((c) => !!c.reason));
+  }
+
   console.log("── new tools: gmail + fred (keyless: honest connect/config fails) ──");
   const { gmailAdapter } = await import("../tools/adapters/gmail.ts");
   const { fredAdapter } = await import("../tools/adapters/fred.ts");
@@ -1083,7 +1172,7 @@ async function main() {
       // Ungranted → a research-born proposal stays pending (the confirm loop).
       const gatedProp = await createProposal({
         operatorId: khOp, operatorName: "training", intentClassId: "rep_band_update",
-        scope: "smoke_keyhole", key: `${TAG}_gated`, proposedValue: "v1",
+        scope: "rep_bands", key: `${TAG}_gated`, proposedValue: "v1",
         rationale: "smoke", coleNaturalLanguage: "smoke", origin: "research",
       });
       check("ungranted: research proposal stays pending", gatedProp.status === "pending");
@@ -1093,12 +1182,12 @@ async function main() {
       // Granted → it auto-files: confirmed, honest provenance, acted receipt + Undo.
       const autoProp = await createProposal({
         operatorId: khOp, operatorName: "training", intentClassId: "rep_band_update",
-        scope: "smoke_keyhole", key: `${TAG}_auto`, proposedValue: "learned value",
+        scope: "rep_bands", key: `${TAG}_auto`, proposedValue: "learned value",
         rationale: "smoke", coleNaturalLanguage: "smoke", origin: "research",
       });
       check("granted: research proposal auto-files as confirmed", autoProp.status === "confirmed");
       const autoEntry = await prisma.knowledgeEntry.findFirst({
-        where: { operatorId: khOp, scope: "smoke_keyhole", key: `${TAG}_auto` },
+        where: { operatorId: khOp, scope: "rep_bands", key: `${TAG}_auto` },
       });
       check(
         "keyhole write lands with honest provenance (research_ingestion by aurelius)",
@@ -1111,7 +1200,7 @@ async function main() {
       // Undo → the learned entry deactivates (no prior value) + proposal denied.
       const undone = receipt ? await undoAction(receipt.id) : { ok: false };
       const afterUndo = await prisma.knowledgeEntry.findFirst({
-        where: { operatorId: khOp, scope: "smoke_keyhole", key: `${TAG}_auto`, active: true },
+        where: { operatorId: khOp, scope: "rep_bands", key: `${TAG}_auto`, active: true },
       });
       const deniedProp = await prisma.knowledgeProposal.findUnique({ where: { id: autoProp.id } });
       check("undo deactivates the learned entry + marks the proposal denied", undone.ok && !afterUndo && deniedProp?.status === "denied");
@@ -1120,7 +1209,7 @@ async function main() {
       // keyhole-apply, even while the grant is active.
       const chatProp = await createProposal({
         operatorId: khOp, operatorName: "training", intentClassId: "rep_band_update",
-        scope: "smoke_keyhole", key: `${TAG}_chat`, proposedValue: "v", rationale: "smoke",
+        scope: "rep_bands", key: `${TAG}_chat`, proposedValue: "v", rationale: "smoke",
         coleNaturalLanguage: "smoke", origin: "chat",
       });
       const personaProp = await createProposal({
@@ -1132,6 +1221,17 @@ async function main() {
         "guards hold under grant: chat origin + persona scope stay pending",
         chatProp.status === "pending" && personaProp.status === "pending"
       );
+
+      // G1 (council): a research proposal whose scope is NOT backed by a
+      // registered intent class never auto-applies, even under grant — an
+      // injected web source can't invent a scope that slips the keyhole.
+      const injectedProp = await createProposal({
+        operatorId: khOp, operatorName: "training", intentClassId: "rep_band_update",
+        scope: "injected_evil_scope", key: `${TAG}_injected`, proposedValue: "pwn",
+        rationale: "smoke", coleNaturalLanguage: "smoke", origin: "research",
+      });
+      check("G1: a research scope with no registered intent class stays pending under grant",
+        injectedProp.status === "pending");
 
       if (!khPreexisting) await revokeAutonomy("knowledge.apply_proposal");
       // cleanup this block's artifacts
@@ -1911,6 +2011,94 @@ async function main() {
     check("outreach.draft has a real finalizer (not a dead toggle on the dial)",
       hasActionFinalizer("outreach.draft") === true);
 
+    // SENDING IS WIRED (council #2) — outreach.send/email.send now have a real
+    // finalizer, so they're no longer decorative outward classes. But sending
+    // stays gated: staging only ASKS.
+    check("outreach.send now has a real finalizer (send is wired, one-tap)", hasActionFinalizer("outreach.send") === true);
+    check("email.send now has a real finalizer", hasActionFinalizer("email.send") === true);
+    check("the decorative wealth.trade class was removed (no finalizer, no engine)",
+      !ACTION_CLASSES.some((c: any) => c.key === "wealth.trade"));
+    // Staging a send now READS the draft first, to show Cole the exact words in
+    // the confirm (round-2: no blind "the draft you reviewed" card). With Gmail
+    // dormant here (or a deleted draft), there's nothing to show — so it refuses
+    // HONESTLY rather than staging a blind send. That refusal IS the fix: a send
+    // confirm never appears without the real message behind it.
+    const { stageGmailSend } = await import("../gmail/send.ts");
+    const stagedSend = await stageGmailSend({ draftId: `${TAG}_draft`, to: "lead@example.com", kind: "outreach" });
+    check("staging a send with no readable draft refuses honestly (no blind confirm)",
+      !stagedSend.ok && !!stagedSend.error && !stagedSend.bridgeSignalId);
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "gmail_send_request" } });
+
+    // ── the event bus: react to what HAPPENED, not just the clock (#63) ──
+    {
+      const { on, off, emit, listEventHandlers, eventHandlerCount } = await import("../core/events.ts");
+      const { registerAllReactors } = await import("../autonomy/reactors.ts");
+
+      // Mechanics: every subscribed handler runs; a throwing sibling neither
+      // starves the others nor rejects emit; register-by-name REPLACES so a
+      // double boot import can't stack a reaction (which would double-draft).
+      const fired: string[] = [];
+      on("lead.inbound", `${TAG}_probe_a`, (e) => { fired.push("a:" + e.name); });
+      on("lead.inbound", `${TAG}_probe_boom`, () => { throw new Error("reactor blew up"); });
+      on("lead.inbound", `${TAG}_probe_b`, (e) => { fired.push("b:" + e.name); });
+      on("lead.inbound", `${TAG}_probe_a`, (e) => { fired.push("a2:" + e.name); }); // replaces a
+      await emit({ type: "lead.inbound", leadId: "probe", name: "Probe", source: "website", hasEmail: false });
+      check("emit runs every subscribed handler", fired.includes("a2:Probe") && fired.includes("b:Probe"));
+      check("a throwing reactor doesn't starve its siblings or reject emit",
+        fired.includes("b:Probe") && !fired.some((f) => f === "boom"));
+      check("registering the same name replaces, never stacks (no double-fire)",
+        !fired.includes("a:Probe") && fired.filter((f) => f === "a2:Probe").length === 1);
+      off("lead.inbound", `${TAG}_probe_a`);
+      off("lead.inbound", `${TAG}_probe_boom`);
+      off("lead.inbound", `${TAG}_probe_b`);
+
+      // The flagship reactor is actually wired to the event — inspectable, not assumed.
+      registerAllReactors();
+      const wiredIn = listEventHandlers().find((h) => h.type === "lead.inbound");
+      const wiredReply = listEventHandlers().find((h) => h.type === "lead.reply_received");
+      check("the flagship lead-catch reactor is wired to lead.inbound",
+        !!wiredIn && wiredIn.handlers.includes("auto_draft_reply"));
+      check("the lead-replied reactor is wired to lead.reply_received (loop closed)",
+        !!wiredReply && wiredReply.handlers.includes("auto_draft_followup"));
+      const wiredPr = listEventHandlers().find((h) => h.type === "pr.recorded");
+      check("the PR→proof reactor is wired to pr.recorded (#39)",
+        !!wiredPr && wiredPr.handlers.includes("auto_draft_proof"));
+      check("the bus reports its live reaction count (inspectable wiring, rule 8)", eventHandlerCount() >= 3);
+
+      // Consent gate: a MINOR client's PR must NOT auto-draft proof content
+      // (that stays a manual, consent-driven step). Emitting for a minor is a no-op.
+      const proofBefore = await prisma.bridgeSignal.count({ where: { sourceType: "proof_autodraft" } });
+      await emit({ type: "pr.recorded", clientId: "no-such", name: "Minor", isMinor: true, label: "vertical", value: 30 });
+      check("a minor's PR never auto-drafts proof (consent stays manual)",
+        (await prisma.bridgeSignal.count({ where: { sourceType: "proof_autodraft" } })) === proofBefore);
+
+      // Guard: a lead with no email can't be emailed, so the auto-draft reactor
+      // no-ops — it must NOT file a draft for someone it could never send to.
+      const before = await prisma.bridgeSignal.count({ where: { sourceType: "outreach_draft" } });
+      await emit({ type: "lead.inbound", leadId: "no-such", name: "NoEmail", source: "website", hasEmail: false });
+      const after = await prisma.bridgeSignal.count({ where: { sourceType: "outreach_draft" } });
+      check("auto-draft skips a lead with no email (can't send what you can't address)", after === before);
+
+      // Council fix: the reactor's daily cap must count ONLY its own reactive
+      // drafts (":auto" suffix), NOT the 07:30 sweep's or a manual draft —
+      // otherwise a busy day starves the rarest, most time-critical event.
+      const { reactiveDraftsToday } = await import("../autonomy/reactors.ts");
+      await prisma.bridgeSignal.createMany({
+        data: [
+          { kind: "opportunity", sourceType: "outreach_draft", sourceId: `outreach:${TAG}sweep:1`, title: `${TAG} sweep draft`, body: "x" },
+          { kind: "opportunity", sourceType: "outreach_draft", sourceId: `outreach:${TAG}auto:1:auto`, title: `${TAG} reactive draft`, body: "x" },
+        ],
+      });
+      check("the auto-draft cap counts reactive drafts only, not the sweep's (flagship not starved)",
+        (await reactiveDraftsToday()) === 1);
+
+      // Leave the registry as we found it so later capture blocks don't trip
+      // keyless draft attempts through the now-global reactors.
+      off("lead.inbound", "auto_draft_reply");
+      off("lead.reply_received", "auto_draft_followup");
+      off("pr.recorded", "auto_draft_proof");
+    }
+
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["inbound_lead", "outreach_draft"] } } });
     await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
   }
@@ -2144,6 +2332,228 @@ async function main() {
     await prisma.lead.deleteMany({ where: { name: { startsWith: TAG } } });
     await prisma.client.deleteMany({ where: { name: { startsWith: TAG } } });
     await prisma.bridgeSignal.deleteMany({ where: { sourceType: { in: ["pr_peak", "check_in_due", "renewal_due", "referral_captured", "inbound_lead"] } } });
+  }
+
+  console.log("── cross-athlete pattern sense: the roster as a field (#11) ──");
+  {
+    const { addClient } = await import("../crm/service.ts");
+    const { logMetric } = await import("../crm/retention.ts");
+    const { crossAthletePatterns, runRosterPatternSweep } = await import("../training/rosterPatterns.ts");
+
+    // Two athletes both improving on the SAME measure = a roster pattern; one
+    // athlete on a lone measure is NOT (needs >= 2).
+    const a1 = await addClient({ name: `${TAG} Field A`, sport: "basketball" });
+    const a2 = await addClient({ name: `${TAG} Field B`, sport: "soccer" });
+    await logMetric({ clientId: a1.id, label: "vertical", value: 24, unit: "in" });
+    await logMetric({ clientId: a1.id, label: "vertical", value: 27, unit: "in" });
+    await logMetric({ clientId: a2.id, label: "vertical", value: 22, unit: "in" });
+    await logMetric({ clientId: a2.id, label: "vertical", value: 25, unit: "in" });
+    await logMetric({ clientId: a1.id, label: "bench", value: 185, unit: "lb" }); // lone measure, one point
+    await logMetric({ clientId: a1.id, label: "bench", value: 195, unit: "lb" }); // only a1 → not a pattern
+
+    const rp = await crossAthletePatterns();
+    const vertical = rp.working.find((p) => p.measure.toLowerCase() === "vertical");
+    check("a measure improving across 2+ athletes surfaces as a working roster pattern",
+      !!vertical && vertical.athletes === 2 && vertical.improving === 2);
+    check("a measure with only one athlete is NOT called a roster pattern",
+      !rp.working.some((p) => p.measure.toLowerCase() === "bench") && !rp.stalling.some((p) => p.measure.toLowerCase() === "bench"));
+
+    const sweep = await runRosterPatternSweep();
+    check("the weekly roster-pattern sweep surfaces the field signal on its own",
+      sweep.ran && sweep.patterns >= 1 &&
+        (await prisma.bridgeSignal.count({ where: { sourceType: "roster_patterns" } })) >= 1);
+
+    // Development curves (#14): a measure with points over real time projects
+    // forward and names its trajectory; too-few/too-short data says "insufficient".
+    const { developmentCurves } = await import("../training/devCurves.ts");
+    const base = Date.now();
+    for (let i = 0; i < 5; i++)
+      await prisma.metric.create({ data: { clientId: a1.id, label: "broad jump", value: 100 + i * 2, unit: "in", achievedAt: new Date(base - (4 - i) * 10 * 86400_000) } });
+    const dc = await developmentCurves(a1.id);
+    const bj = dc?.curves.find((c) => c.measure.toLowerCase() === "broad jump");
+    check("a development curve projects forward and names the trajectory",
+      !!bj && bj.trajectory !== "insufficient" && (bj.ratePerWeek ?? 0) > 0 && (bj.projected90d ?? 0) > bj.latest);
+    const lone = dc?.curves.find((c) => c.measure.toLowerCase() === "vertical"); // 2 same-day points from earlier
+    check("a curve with too little history says insufficient, not a confident line",
+      !lone || lone.trajectory === "insufficient" || lone.count >= 3);
+
+    // Athlete-facing artifact (#18): refuses an athlete with no real numbers,
+    // and keyless it refuses rather than fabricating encouragement (hard rule 3).
+    const { buildProgressArtifact } = await import("../athlete/progressArtifact.ts");
+    check("progress artifact refuses an athlete with no logged numbers (won't invent)",
+      (await buildProgressArtifact(a2.id)).ok === false); // a2 has metrics? it does (vertical) → keyless engine refusal; both are ok:false
+    check("progress artifact refuses an unknown athlete", (await buildProgressArtifact("no-such")).ok === false);
+
+    // Paperwork autopilot (#6): the intake set is deterministic and ships even
+    // keyless; the welcome/agreement refuse rather than fabricate.
+    const { generateOnboardingDocs } = await import("../crm/paperwork.ts");
+    const docs = await generateOnboardingDocs(a1.id); // a1 is a client (addClient default)
+    check("onboarding paperwork ships the intake questions even with no engine",
+      docs.ok === true && (docs.intake?.length ?? 0) >= 5 && docs.welcome === null);
+
+    // Dispatch guard: a declared crm action with no switch case is a dead tool
+    // (progress_artifact shipped one commit without its case). Assert both wire.
+    const { crmAdapter } = await import("../tools/adapters/crm.ts");
+    const paDisp = await crmAdapter.run("progress_artifact", { clientId: "no-such" });
+    const odDisp = await crmAdapter.run("onboarding_docs", { clientId: "no-such" });
+    check("newly-added crm actions actually dispatch (no declared-but-dead tool)",
+      !/Unknown crm action/.test(paDisp.error ?? "") && !/Unknown crm action/.test(odDisp.error ?? ""));
+
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "roster_patterns" } });
+    await prisma.metric.deleteMany({ where: { clientId: { in: [a1.id, a2.id] } } });
+    await prisma.referral.deleteMany({ where: { referrerClientId: { in: [a1.id, a2.id] } } });
+    await prisma.bridgeSignal.deleteMany({ where: { sourceType: "pr_peak" } });
+    await prisma.client.deleteMany({ where: { id: { in: [a1.id, a2.id] } } });
+  }
+
+  console.log("── capacity health + productization: honest business intel (#10) ──");
+  {
+    const { capacityHealth } = await import("../business/capacity.ts");
+    const { productizationRecommendations } = await import("../business/productization.ts");
+    const cap = await capacityHealth();
+    check("capacity refuses to invent a ceiling until Cole sets one",
+      cap.capacityCeiling === null && /isn't set/i.test(cap.headline) && typeof cap.activeClients === "number");
+    // Keyless: productization must refuse rather than invent advice (hard rule 3).
+    const prod = await productizationRecommendations();
+    check("productization refuses to invent recommendations with no engine (hard rule 3)", prod.ok === false);
+
+    // Planning tools: flight-sim needs a scenario; discovery needs a real lead;
+    // both refuse keyless rather than filing an error as a projection/sheet.
+    const { flightSimulate } = await import("../business/flightSim.ts");
+    const { discoveryPrep } = await import("../business/discovery.ts");
+    const noScenario = await flightSimulate("");
+    check("flight-sim asks WHAT to model when given nothing", noScenario.ok === false && /model what/i.test(noScenario.error ?? ""));
+    check("flight-sim refuses to model on a guess with no engine (hard rule 3)",
+      (await flightSimulate("raise the block to $350")).ok === false);
+    check("discovery prep refuses an unknown lead", (await discoveryPrep("no-such-lead")).ok === false);
+
+    // Market intel: research-backed but honest — keyless, refuses rather than
+    // inventing a wedge or competitor claim (hard rule 3).
+    const { nicheWedge, competitorIntel } = await import("../business/marketIntel.ts");
+    check("niche-wedge refuses to invent a wedge with no engine", (await nicheWedge("soccer")).ok === false);
+    check("competitor intel refuses to invent intel with no engine", (await competitorIntel()).ok === false);
+  }
+
+  console.log("── personal finance: net worth + cashflow, private + separate (#51) ──");
+  {
+    const { addAccount, addTxn, importCsv, netWorth, cashflow, financeDashboard } = await import("../finance/service.ts");
+    await prisma.financeTxn.deleteMany({});
+    await prisma.financeAccount.deleteMany({});
+    await prisma.netWorthSnapshot.deleteMany({});
+
+    await addAccount({ name: `${TAG} Checking`, kind: "checking", balance: 5000 });
+    await addAccount({ name: `${TAG} Card`, kind: "debt", balance: 1200 });
+    const nw = await netWorth();
+    check("net worth = assets − debt (a debt subtracts)", nw.netCents === 380000 && nw.assetsCents === 500000 && nw.liabilitiesCents === 120000);
+    check("updating a balance writes a net-worth snapshot (the chosen cadence)", nw.trend.length >= 1);
+
+    await addTxn({ amount: -80, category: "food" });
+    await addTxn({ amount: 2000, category: "income" });
+    const cf = await cashflow();
+    check("cashflow separates money in from money out", cf.inCents === 200000 && cf.outCents === 8000);
+
+    const first = await importCsv([{ date: "2026-08-02", amount: -42.5, description: "shell gas" }]);
+    const again = await importCsv([{ date: "2026-08-02", amount: -42.5, description: "shell gas" }]);
+    check("CSV import is idempotent (re-drop is a no-op, not a double-count)", first.imported === 1 && again.imported === 0 && again.skipped === 1);
+
+    const dash = await financeDashboard();
+    check("the finance dashboard assembles and isn't empty once data exists", !dash.empty && /net worth/i.test(dash.headline));
+
+    // BOUNDARY: personal finance must never touch the business ledger/analyst.
+    const { moneyLedger } = await import("../crm/ledger.ts");
+    check("personal finance never inflates the business ledger", (await moneyLedger()).earnedCents === 0);
+
+    await prisma.financeTxn.deleteMany({});
+    await prisma.financeAccount.deleteMany({});
+    await prisma.netWorthSnapshot.deleteMany({});
+  }
+
+  console.log("── Athlete Zero: Cole's own record, double-excluded (#44/#8) ──");
+  {
+    const { getOrCreateSelf, athleteZeroSummary } = await import("../athlete/self.ts");
+    const { athleteRoster } = await import("../crm/performance.ts");
+    const { pipelineSnapshot } = await import("../crm/service.ts");
+    const { syncWhoop, whoopStatus, latestReadiness } = await import("../health/whoop.ts");
+
+    const self = await getOrCreateSelf();
+    const dupe = await getOrCreateSelf();
+    check("the self record is created once and reused (idempotent)", self.id === dupe.id);
+
+    // DOUBLE EXCLUSION: not among coached athletes, not in the business pipeline.
+    const roster = await athleteRoster();
+    check("Athlete Zero never appears on the coached-athlete roster", !roster.some((r) => r.id === self.id));
+    const snap = await pipelineSnapshot();
+    check("Athlete Zero never counts as a business client", (snap.activeClients ?? 0) === 0 || !("self" in snap));
+
+    // WHOOP dormant-honest.
+    check("WHOOP is dormant-honest without a token", whoopStatus().configured === false && !!whoopStatus().reason);
+    check("WHOOP sync skips cleanly when dormant (no fake reading)", (await syncWhoop()).ran === false);
+    check("readiness is null before any sync (never fabricated)", (await latestReadiness()).recovery === null);
+
+    // The summary reads without throwing (empty-honest for a fresh self record).
+    const z = await athleteZeroSummary();
+    check("the Athlete Zero summary assembles for the self record", z.self.id === self.id);
+
+    // Boundary council fix: a bare listClients() (the list_clients tool + raw
+    // GET /clients) must NOT return the self record — only an explicit kind does.
+    const { listClients } = await import("../crm/service.ts");
+    const bareList = await listClients({});
+    check("a bare client list never includes Athlete Zero (self)", !bareList.some((c) => c.id === self.id));
+
+    // Logging gap closed: Cole can PUT his own numbers/targets into Zero, and
+    // they land on the self record (still excluded from business + roster).
+    const { logSelfMetric, setSelfTarget } = await import("../athlete/self.ts");
+    const logged = await logSelfMetric({ label: "vertical", value: 30, unit: "in" });
+    await logSelfMetric({ label: "vertical", value: 32, unit: "in" });
+    const tgt = await setSelfTarget({ label: "vertical", targetValue: 34, unit: "in" });
+    const z2 = await athleteZeroSummary();
+    check("Cole can log his own numbers into Athlete Zero", logged.ok && (z2.performance?.series?.length ?? 0) >= 1);
+    check("Cole can set his own targets on Athlete Zero", tgt.ok && (z2.performance?.targets?.length ?? 0) >= 1);
+    check("a self PR still fires no business machinery (training win only)",
+      (await prisma.referral.count({ where: { referrerClientId: self.id } })) === 0);
+
+    // A name lookup for a check-in/note must NEVER resolve to Cole's own record
+    // (kind:"self") — he isn't one of the people he coaches (council boundary).
+    const { findClientByName } = await import("../crm/service.ts");
+    check("a name lookup never resolves to the Athlete Zero self record",
+      !(await findClientByName(self.name)).some((c) => c.id === self.id));
+
+    // Cole can point his OWN workout sheet at Athlete Zero (reuses updateClient's
+    // Google-Sheets validation), and clear it. A bad URL is refused, not stored.
+    const { linkSelfSheet } = await import("../athlete/self.ts");
+    const badSheet = await linkSelfSheet("https://evil.example.com/not-a-sheet");
+    check("a non-Google-Sheets workout link is refused", !badSheet.ok);
+    const goodSheet = await linkSelfSheet("https://docs.google.com/spreadsheets/d/SMOKE_SELF/edit");
+    const zSheet = await athleteZeroSummary();
+    check("Cole can link his own workout Google Sheet to Athlete Zero", goodSheet.ok && !!zSheet.sheetUrl);
+    check("clearing the workout-sheet link empties it", (await linkSelfSheet("")).ok && !(await athleteZeroSummary()).sheetUrl);
+
+    // n=1 self-experiments: a hypothesis + metric captures the current value as
+    // baseline; concluding reads the metric now, computes the delta, and returns
+    // an HONEST verdict (deterministic fallback here — no LLM engine in sandbox).
+    const { startExperiment, concludeExperiment, listExperiments, abandonExperiment } = await import("../athlete/experiments.ts");
+    const noHyp = await startExperiment({ hypothesis: "", metricLabel: "vertical" });
+    check("an experiment without a hypothesis is refused", !noHyp.ok);
+    const exp = await startExperiment({ hypothesis: "smoke: creatine raises my vertical", metricLabel: "vertical" });
+    check("starting an experiment captures the latest self metric as baseline", exp.ok && exp.baseline === 32);
+    const running = await listExperiments("running");
+    check("a running experiment lists on Athlete Zero", running.some((e: any) => e.id === exp.id));
+    await logSelfMetric({ label: "vertical", value: 35, unit: "in" });
+    const concl = await concludeExperiment(exp.id!);
+    check("concluding computes the delta from baseline to result", concl.ok && concl.delta === 3);
+    check("the n=1 verdict is honest (a signal, not proof), never fabricated", !!concl.verdict && /signal, not proof/i.test(concl.verdict!));
+    check("a concluded experiment can't be concluded twice", !(await concludeExperiment(exp.id!)).ok);
+    const exp2 = await startExperiment({ hypothesis: "smoke: abandon me", metricLabel: "vertical" });
+    check("an experiment can be abandoned", (await abandonExperiment(exp2.id!)).ok);
+    const zExp = await athleteZeroSummary();
+    check("the Athlete Zero summary carries experiments", (zExp.experiments?.length ?? 0) >= 2);
+
+    await prisma.selfExperiment.deleteMany({ where: { hypothesis: { startsWith: "smoke:" } } });
+    await prisma.metric.deleteMany({ where: { clientId: self.id } });
+    await prisma.athleteTarget.deleteMany({ where: { clientId: self.id } });
+
+    await prisma.metric.deleteMany({ where: { clientId: self.id } });
+    await prisma.client.deleteMany({ where: { kind: "self" } });
   }
 
   console.log("── integrations: money & comms self-record, verified ──");
@@ -2532,17 +2942,30 @@ async function main() {
       // A research-born proposal filed BEFORE the grant exists = the backlog.
       const backlogProp = await createProposal({
         operatorId: qsOp, operatorName: "training", intentClassId: "rep_band_update",
-        scope: "smoke_qsweep", key: `${TAG}_backlog`, proposedValue: "backlog value",
+        scope: "rep_bands", key: `${TAG}_backlog`, proposedValue: "backlog value",
         rationale: "smoke", coleNaturalLanguage: "smoke", origin: "research",
       });
       // A chat-born proposal 40 days stale → expiry, never keyhole.
       const staleProp = await createProposal({
         operatorId: qsOp, operatorName: "training", intentClassId: "rep_band_update",
-        scope: "smoke_qsweep", key: `${TAG}_stale`, proposedValue: "v",
+        scope: "rep_bands", key: `${TAG}_stale`, proposedValue: "v",
         rationale: "smoke", coleNaturalLanguage: "smoke", origin: "chat",
       });
       await prisma.knowledgeProposal.update({
         where: { id: staleProp.id }, data: { createdAt: new Date(Date.now() - 40 * 86400_000) },
+      });
+      // STRAND+STARVE (round-2): a research proposal with an ALLOWLISTED scope
+      // but a MISMATCHED intent class must not be immortal. Precise (intentClass,
+      // scope) eligibility means it's not keyhole-eligible — so instead of being
+      // skipped-by-apply yet shielded-from-expiry (lingering forever, starving
+      // the cap), it expires on the normal clock like any other stale proposal.
+      const mismatchProp = await createProposal({
+        operatorId: qsOp, operatorName: "training", intentClassId: "intensity_zone_update",
+        scope: "rep_bands", key: `${TAG}_mismatch`, proposedValue: "v",
+        rationale: "Research-derived from query: smoke", coleNaturalLanguage: "smoke", origin: "research",
+      });
+      await prisma.knowledgeProposal.update({
+        where: { id: mismatchProp.id }, data: { createdAt: new Date(Date.now() - 40 * 86400_000) },
       });
       // A 20-day notice (no confirm) → expires; a 20-day DECISION → survives.
       const staleNotice = await prisma.bridgeSignal.create({
@@ -2575,11 +2998,14 @@ async function main() {
       const backlogAfter = await prisma.knowledgeProposal.findUnique({ where: { id: backlogProp.id } });
       check("sweep applies the pre-grant research backlog through the keyhole", backlogAfter?.status === "confirmed");
       const backlogEntry = await prisma.knowledgeEntry.findFirst({
-        where: { operatorId: qsOp, scope: "smoke_qsweep", key: `${TAG}_backlog` },
+        where: { operatorId: qsOp, scope: "rep_bands", key: `${TAG}_backlog` },
       });
       check("backlog apply lands with honest provenance", backlogEntry?.sourceType === "research_ingestion");
       const staleAfter = await prisma.knowledgeProposal.findUnique({ where: { id: staleProp.id } });
       check("30-day-stale proposal expires (not applied, not denied)", staleAfter?.status === "expired");
+      const mismatchAfter = await prisma.knowledgeProposal.findUnique({ where: { id: mismatchProp.id } });
+      check("scope-eligible but intent-mismatched research proposal expires — not immortal, not applied",
+        mismatchAfter?.status === "expired");
       const noticeAfter = await prisma.bridgeSignal.findUnique({ where: { id: staleNotice.id } });
       const decisionAfter = await prisma.bridgeSignal.findUnique({ where: { id: youngDecision.id } });
       check(

@@ -56,6 +56,11 @@ export async function tryReuseAnswer(args: {
     // question could surface ANOTHER operator's cached answer. Only reuse this
     // operator's own compiled understanding.
     if (entry.operatorId !== args.operatorId) return null;
+    // A corrected answer must NEVER be re-served. correctedAt is stamped when
+    // Cole corrects a reuse this entry produced; without this filter the same
+    // wrong answer could resurface for the rest of its freshness window and
+    // teach Cole that correcting doesn't take (council G6). A correction is final.
+    if (entry.correctedAt) return null;
     if (Date.now() - entry.createdAt.getTime() > FRESH_DAYS * 86400_000) return null;
 
     // Summary is stored as "Q: ...\nA: ..." — serve only the answer.

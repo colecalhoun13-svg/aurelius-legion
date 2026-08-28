@@ -537,7 +537,9 @@ export async function nudgePostSessionDebriefs(): Promise<number> {
   let roster: string[] = [];
   try {
     const [clients, leads] = await Promise.all([
-      prisma.client.findMany({ select: { name: true }, take: 200 }),
+      // Coached athletes + leads only — the self record (Athlete Zero) is Cole,
+      // so a calendar event with his name isn't a coached-session to debrief.
+      prisma.client.findMany({ where: { kind: { not: "self" } }, select: { name: true }, take: 200 }),
       prisma.lead.findMany({ where: { status: { notIn: ["lost", "dormant"] } }, select: { name: true }, take: 200 }),
     ]);
     roster = [...clients, ...leads]

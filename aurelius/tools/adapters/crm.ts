@@ -247,6 +247,55 @@ export const crmAdapter: ToolAdapter = {
       dataSchema: '{ leadId?: string, clientId?: string, to?: string (raw number), body: string }',
       example: '[TOOL: crm.text_lead {"leadId": "abc123", "body": "Hey Jake — still want to lock in that speed block?"}]',
     },
+    {
+      name: "draft_client_message",
+      description:
+        "Draft a check-in, re-sign, or referral-ask to an EXISTING client — inward, returns the draft for you to read and send yourself. Training-only athletes are refused (business messaging never aims at them). Use for 'draft a check-in to Sarah', 'write a re-sign for Jake', 'ask Maria for a referral'.",
+      dataSchema: '{ clientId: string, kind: "checkin"|"resign"|"referral" }',
+      example: '[TOOL: crm.draft_client_message {"clientId":"abc","kind":"checkin"}]',
+    },
+    {
+      name: "draft_proof_content",
+      description:
+        "Draft a proof content piece from a client's REAL PRs — inward, files a content draft you review before it goes anywhere. Refuses training-only athletes and clients with no PRs on record (never invents proof). Use for 'make a proof post from Jake's numbers'.",
+      dataSchema: "{ clientId: string }",
+      example: '[TOOL: crm.draft_proof_content {"clientId":"abc"}]',
+    },
+    {
+      name: "retention_analytics",
+      description:
+        "Retention truth — average client LTV and churn-risk count — but ONLY once there are enough clients to be honest; below the threshold it says 'too early' rather than a number from one or two. Use for 'what's my LTV', 'who's at risk of churning'.",
+      dataSchema: "{}",
+      example: "[TOOL: crm.retention_analytics {}]",
+    },
+    {
+      name: "pnl",
+      description:
+        "The profit & loss: money received (payments) minus expenses = net, month to date, with all-time earned for context. Honest at zero — an empty or negative P&L is stated plainly, never softened. Carries the quarterly-estimated-tax reminder (words, never a computed tax). Use for 'what's my P&L', 'am I profitable', 'money in vs out'.",
+      dataSchema: "{ month?: string (YYYY-MM, default current) }",
+      example: "[TOOL: crm.pnl {}]",
+    },
+    {
+      name: "dev_curves",
+      description:
+        "Long-term development curves for an athlete: per-measure trend, rate of change per week, a ~90-day projection, and the trajectory shape (accelerating / steady / plateauing / declining). Says 'insufficient' rather than drawing a confident line through too few points. Observation, not a prescription. Use for 'where is Jake heading', 'is she plateauing', 'development trajectory'.",
+      dataSchema: "{ clientId: string }",
+      example: '[TOOL: crm.dev_curves {"clientId":"abc"}]',
+    },
+    {
+      name: "progress_artifact",
+      description:
+        "Build a shareable, athlete-FACING progress piece from an athlete's REAL numbers (PRs, what's improving, goal pace) in Cole's voice — for a minor it addresses the parent too. INWARD: it drafts the piece; Cole reviews and shares it himself (no auto-send, consent stays his). Never invents a stat. Use for 'progress update for <athlete>', 'something to send the parents'.",
+      dataSchema: "{ clientId: string }",
+      example: '[TOOL: crm.progress_artifact {"clientId":"abc"}]',
+    },
+    {
+      name: "onboarding_docs",
+      description:
+        "Generate the onboarding PAPERWORK for a new client — the intake questionnaire (always), a drafted welcome message, and a plain coaching-agreement outline. INWARD: drafts to review and send, never auto-sent; no invented prices/guarantees; training-only athletes refused. Use for 'onboarding docs for <client>', 'intake questions for <client>', 'welcome + agreement'.",
+      dataSchema: "{ clientId: string }",
+      example: '[TOOL: crm.onboarding_docs {"clientId":"abc"}]',
+    },
   ],
 
   async run(action: string, data: Record<string, any>): Promise<ToolAdapterResult> {
@@ -504,6 +553,64 @@ export const crmAdapter: ToolAdapter = {
               message: "Staged and waiting on your confirm — I don't send texts on my own. Confirm on the Bridge to send it.",
             },
           };
+        }
+
+        case "draft_client_message": {
+          const kind = String(data?.kind ?? "");
+          if (!data?.clientId || !["checkin", "resign", "referral"].includes(kind))
+            return { ok: false, output: null, error: 'need clientId and kind ("checkin" | "resign" | "referral")' };
+          const { draftClientMessage } = await import("../../crm/retention.ts");
+          const res = await draftClientMessage(String(data.clientId), kind as "checkin" | "resign" | "referral");
+          if (!res.ok) return { ok: false, output: null, error: res.error };
+          return {
+            ok: true,
+            output: { draft: res.body, note: "Inward draft — read it, then send it yourself. I don't message clients on my own." },
+          };
+        }
+
+        case "draft_proof_content": {
+          if (!data?.clientId) return { ok: false, output: null, error: "need clientId" };
+          const { draftProofContent } = await import("../../crm/retention.ts");
+          const res = await draftProofContent(String(data.clientId));
+          if (!res.ok) return { ok: false, output: null, error: res.error };
+          return {
+            ok: true,
+            output: { draftId: res.draftId, note: "Filed as a content draft from real PRs — review it before it goes anywhere." },
+          };
+        }
+
+        case "retention_analytics": {
+          const { retentionAnalytics } = await import("../../crm/retention.ts");
+          return { ok: true, output: await retentionAnalytics() };
+        }
+
+        case "pnl": {
+          const { profitAndLoss } = await import("../../business/pnl.ts");
+          return { ok: true, output: await profitAndLoss(data?.month ? String(data.month) : undefined) };
+        }
+
+        case "dev_curves": {
+          if (!data?.clientId) return { ok: false, output: null, error: "need clientId" };
+          const { developmentCurves } = await import("../../training/devCurves.ts");
+          const out = await developmentCurves(String(data.clientId));
+          if (!out) return { ok: false, output: null, error: "No such athlete." };
+          return { ok: true, output: out };
+        }
+
+        case "progress_artifact": {
+          if (!data?.clientId) return { ok: false, output: null, error: "need clientId" };
+          const { buildProgressArtifact } = await import("../../athlete/progressArtifact.ts");
+          const out = await buildProgressArtifact(String(data.clientId));
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: { artifact: out.artifact, forMinor: out.forMinor, note: "Inward draft — review, then share it yourself." } };
+        }
+
+        case "onboarding_docs": {
+          if (!data?.clientId) return { ok: false, output: null, error: "need clientId" };
+          const { generateOnboardingDocs } = await import("../../crm/paperwork.ts");
+          const out = await generateOnboardingDocs(String(data.clientId));
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: { intake: out.intake, welcome: out.welcome, agreement: out.agreement, note: out.note } };
         }
 
         default:

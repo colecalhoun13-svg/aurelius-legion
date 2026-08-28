@@ -18,7 +18,7 @@
 import { prisma } from "../core/db/prisma.ts";
 import { setKnowledge, getKnowledge } from "./store.ts";
 import { writeCache } from "../compiled/cache.ts";
-import { getIntentClass } from "./intentClasses.ts";
+import { getIntentClass, TRAINING_INTENT_CLASSES } from "./intentClasses.ts";
 import type { KnowledgeSourceType } from "./types.ts";
 import type { TaggedSignature } from "../compiled/types.ts";
 
@@ -43,6 +43,36 @@ export const NON_KEYHOLE_SCOPES = ["autonomy", "persona", "system"] as const;
 /** Origins the ingestion keyhole may auto-apply from. Anything else keeps Cole's
  *  confirm loop (his own words, his voice, re-anchoring stale truth). */
 export const KEYHOLE_ORIGINS = ["research", "ingestion"] as const;
+
+// REGISTRY-BACKED ALLOWLIST (council G1). Research and ingestion emit an
+// LLM-chosen scope; a three-name blocklist let every OTHER scope — including one
+// an injected web source invents mid-mission — auto-apply under the grant. This
+// inverts it to an allowlist: a scope auto-applies ONLY if a registered intent
+// class declares exactly that scope. Unknown, mismatched, wildcard ("any"), or
+// blocklisted scopes keep Cole's confirm — still proposed, never auto-written.
+// The concrete field scopes below (derived from the intent-class registry, never
+// hand-maintained) are the whole eligible set, so it can't drift from the classes.
+export const KEYHOLE_ELIGIBLE_SCOPES = TRAINING_INTENT_CLASSES
+  .map((c) => c.scope)
+  .filter((s) => s !== "any" && !(NON_KEYHOLE_SCOPES as readonly string[]).includes(s));
+
+/** The exact (intentClass, scope) pairs that may auto-apply — the SQL-expressible
+ *  form of isKeyholeEligible. The queue sweep filters on these so a row with an
+ *  allowlisted scope but a MISMATCHED intent class falls out of "eligible"
+ *  entirely: it is neither applied nor wrongly shielded from expiry (which would
+ *  make it immortal clutter that starves the nightly cap). */
+export const KEYHOLE_ELIGIBLE_PAIRS = TRAINING_INTENT_CLASSES
+  .filter((c) => c.scope !== "any" && !(NON_KEYHOLE_SCOPES as readonly string[]).includes(c.scope))
+  .map((c) => ({ intentClassId: c.id, scope: c.scope }));
+
+/** May THIS (intentClass, scope) pair auto-apply under the keyhole? True only
+ *  when a registered intent class declares exactly that concrete scope. */
+export function isKeyholeEligible(intentClassId: string, scope: string): boolean {
+  if (!scope || scope === "any") return false;
+  if ((NON_KEYHOLE_SCOPES as readonly string[]).includes(scope)) return false;
+  const cls = getIntentClass(intentClassId);
+  return !!cls && cls.scope === scope;
+}
 
 /** Where a proposal was born — decides whether the ingestion keyhole applies. */
 export type ProposalOrigin = "chat" | "research" | "ingestion" | "observer" | "freshness";
@@ -185,7 +215,7 @@ export async function createProposal(
   // (one voice) scopes never auto-apply no matter what's granted.
   try {
     const fromIngestion = input.origin === "research" || input.origin === "ingestion";
-    if (fromIngestion && !(NON_KEYHOLE_SCOPES as readonly string[]).includes(input.scope)) {
+    if (fromIngestion && isKeyholeEligible(input.intentClassId, input.scope)) {
       const { decideAction } = await import("../autonomy/grants.ts");
       if ((await decideAction("knowledge.apply_proposal")).finalize) {
         const { executeAction } = await import("../autonomy/executor.ts");
@@ -314,6 +344,14 @@ export async function resolveProposal(
     if (!proposal.origin || !(KEYHOLE_ORIGINS as readonly string[]).includes(proposal.origin)) {
       throw new Error(
         `keyhole refused: origin "${proposal.origin ?? "none"}" is not research/ingestion (proposal ${proposal.id}) — it needs Cole's confirm`
+      );
+    }
+    // Registry-backed ALLOWLIST (council G1): the emitted scope must be one a
+    // registered intent class actually declares. An LLM (or an injected research
+    // source) can name any scope; only a real field-knowledge scope auto-applies.
+    if (!isKeyholeEligible(proposal.intentClassId, proposal.scope)) {
+      throw new Error(
+        `keyhole refused: scope "${proposal.scope}" (intent "${proposal.intentClassId}") is not a registered field-knowledge scope (proposal ${proposal.id}) — it needs Cole's confirm`
       );
     }
   }

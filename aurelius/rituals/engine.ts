@@ -355,7 +355,51 @@ then close with a single directive sentence. Under 180 words. No headers, no bul
     // the dawn thread is a bonus, never a briefing blocker
   }
 
-  const fullBriefing = briefing + prepFooter + riskFooter + dawnFooter;
+  // ── FAITH RHYTHM (#48): a steady closing line drawn ONLY from faith material
+  // Cole has ingested into his library — appended verbatim (never voiceOver'd,
+  // so nothing is added to or invented about it). Dormant/silent until the
+  // library has something faith-related; never a briefing blocker.
+  let faithFooter = "";
+  try {
+    const { faithRhythm } = await import("../faith/rhythm.ts");
+    const fr = await faithRhythm();
+    if (fr.ok && fr.rhythm) faithFooter = `\n\n✝ ${fr.rhythm}`;
+  } catch {
+    // faith rhythm is a bonus, never a briefing blocker
+  }
+
+  // ── READINESS (audit): today's recovery on EVERY morning, not only red days.
+  // A green light where Cole already looks, so the number reaches him before the
+  // session, not after. Silent when WHOOP is dormant; never a briefing blocker.
+  let readinessFooter = "";
+  try {
+    const { latestReadiness, whoopConfigured } = await import("../health/whoop.ts");
+    if (whoopConfigured()) {
+      const r = await latestReadiness();
+      if (r.recovery != null) {
+        const band = r.recovery >= 67 ? "green — good to push" : r.recovery >= 34 ? "yellow — moderate" : "red — go easy";
+        readinessFooter = `\n\n🫀 Recovery ${r.recovery}% (${band})${r.hrv != null ? ` · HRV ${r.hrv}ms` : ""}.`;
+      }
+    }
+  } catch {
+    // readiness is a bonus, never a briefing blocker
+  }
+
+  // ── RUNWAY HEADS-UP (audit): the number a big life call turns on, surfaced
+  // where Cole looks — but only when it's worth a look (short runway), never as
+  // daily noise. Personal + inward; silent when finance is empty or comfortable.
+  let financeFooter = "";
+  try {
+    const { financeDashboard } = await import("../finance/service.ts");
+    const fin = await financeDashboard();
+    if (!fin.empty && fin.runway.months != null && fin.runway.months < 6) {
+      financeFooter = `\n\n💵 Runway ${fin.runway.months}mo (${fin.netWorth.net} net) — worth a look before any big spend.`;
+    }
+  } catch {
+    // finance is a bonus, never a briefing blocker
+  }
+
+  const fullBriefing = briefing + prepFooter + riskFooter + dawnFooter + readinessFooter + financeFooter + faithFooter;
   const instance = await fileInstance("morning_briefing", fullBriefing, {
     date: today.date,
     taskCount: today.tasks.length,

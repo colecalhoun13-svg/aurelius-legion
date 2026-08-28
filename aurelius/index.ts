@@ -75,7 +75,11 @@ import { correctionsRouter } from "./router/correctionsRouter.ts";
 import { gmailRouter } from "./router/gmailRouter.ts";
 import { instagramRouter } from "./router/instagramRouter.ts";
 import { crmRouter } from "./router/crmRouter.ts";
+import { systemRouter } from "./router/systemRouter.ts";
+import { financeRouter } from "./router/financeRouter.ts";
+import { athleteRouter } from "./router/athleteRouter.ts";
 import { MEDIA_DIR, MEDIA_ROUTE } from "./media/host.ts";
+import { VOICE_DIR, VOICE_ROUTE } from "./voice/tts.ts";
 
 // Structured tracing — every request and scheduled run leaves a LogEntry
 // row the cockpit can read. Telemetry is fire-and-forget by design.
@@ -175,11 +179,26 @@ const AUTH_EXEMPT = new Set([
   "/api/gmail/auth", "/api/gmail/callback",
   "/api/instagram/auth", "/api/instagram/callback",
 ]);
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 if (!API_KEY) {
-  console.warn("[auth] DORMANT — no AURELIUS_API_KEY set. Fine on a private machine; set it BEFORE exposing port 3001 or deploying always-on.");
+  if (IS_PRODUCTION) {
+    // FAIL-CLOSED (council G4). In production the key is the only thing standing
+    // between the outward-action routes and the open internet. A deploy that
+    // forgot it must refuse writes, not silently run open. Webhooks (signature-
+    // verified) and the public funnel stay reachable so intake still works.
+    console.error("[auth] FAIL-CLOSED — AURELIUS_API_KEY is REQUIRED in production and is not set. /api writes are refused until it is.");
+  } else {
+    console.warn("[auth] DORMANT — no AURELIUS_API_KEY set. Fine on a private machine; set it BEFORE exposing port 3001 or deploying always-on.");
+  }
 }
 app.use((req, res, next) => {
-  if (!API_KEY) return next();
+  if (!API_KEY) {
+    // Dev with no key → open (frictionless). Production with no key → fail closed
+    // on everything but the signature-verified webhooks and the public funnel.
+    if (!IS_PRODUCTION) return next();
+    if (AUTH_EXEMPT.has(req.path) || req.path.startsWith("/l/")) return next();
+    return res.status(503).json({ error: "server misconfigured — AURELIUS_API_KEY is required in production" });
+  }
   if (AUTH_EXEMPT.has(req.path)) return next();
   // Public tracked-link redirects: a stranger clicking a link in a bio or a
   // story has no API key. The route only counts a click and 302s to the form —
@@ -203,6 +222,13 @@ console.log("[preflight] database:", process.env.DATABASE_URL ? "url set" : "NO 
 preflight();
 console.log("===================================================");
 
+// Cole's OWN voice clips, served behind THE LOCK (registered after the auth
+// middleware above). Unlike the public media host, these are his private words
+// — so they ride the API key, not an open origin. This is what makes
+// synthesizeSpeech's returned URL actually resolve instead of being a dead
+// server path (the sharpest rule-8 gap the audit found for voice).
+app.use(VOICE_ROUTE, express.static(VOICE_DIR, { index: false, dotfiles: "deny", maxAge: "7d" }));
+
 app.use("/api", engineTestRouter);
 // The doctor + truthful integration status, behind the same lock as everything
 // under /api. Reachable from the app, the phone, or a curl — the diagnosis
@@ -220,6 +246,9 @@ app.use("/api/corrections", correctionsRouter);
 app.use("/api/gmail", gmailRouter);
 app.use("/api/instagram", instagramRouter);
 app.use("/api/crm", crmRouter);
+app.use("/api/system", systemRouter);
+app.use("/api/finance", financeRouter);
+app.use("/api/athletes", athleteRouter);
 
 // PUBLIC LEAD INTAKE. Deliberately outside THE LOCK: a prospect filling in a
 // form has no API key, and a funnel that requires one captures nobody. This is
@@ -1672,6 +1701,11 @@ import { startTelegramBridge, sendToCole } from "./telegram/bot.ts";
 import("./autonomy/registerActions.ts")
   .then((m) => m.registerAllActions())
   .catch((err) => console.error("[autonomy] action registration failed:", err));
+// Wire the event-bus reactors (the reactive spine): lead.inbound → auto-draft
+// reply, and future reactions. Synchronous registration, one boot log line.
+import("./autonomy/reactors.ts")
+  .then((m) => m.registerAllReactors())
+  .catch((err) => console.error("[reactors] registration failed:", err));
 // Dormant without TELEGRAM_BOT_TOKEN; wakes the moment the token lands.
 startTelegramBridge();
 // Dormant without PAPERLESS_URL/TOKEN; wakes on the Mini.
@@ -1766,6 +1800,36 @@ scheduleNamed("content_outcome", "0 9 * * *", "content outcome read-back", async
       console.log(`[content] outcome sweep: ${out.ran ? `read ${out.processed}, reinforced ${out.reinforced}` : `skipped (${out.reason})`}`);
     });
 });
+// Delivery-verified retry every 30 min — re-send should-have-pushed signals
+// whose pushedAt is still null (Telegram was down / the chat wasn't bound yet),
+// so a critical ask that failed to reach the phone self-heals the moment the
+// bridge is back. Dormant-honest: no token → nothing delivered, no error spam.
+scheduleNamed("delivery_retry", "*/30 * * * *", "delivery retry", async () => {
+    await runTraced("schedule", "delivery_retry", async () => {
+      const { retryUndeliveredPushes } = await import("./core/deliverySweep.ts");
+      await retryUndeliveredPushes();
+    });
+});
+// WHOOP sync every 30 min — pull Cole's recovery/HRV onto his Athlete Zero
+// record (deduped per day). Dormant-honest: no token → a clean skip.
+scheduleNamed("whoop_sync", "*/30 * * * *", "whoop sync", async () => {
+    await runTraced("schedule", "whoop_sync", async () => {
+      const { syncWhoop } = await import("./health/whoop.ts");
+      const out = await syncWhoop();
+      if (out.ran && out.stored > 0) console.log(`[whoop] synced ${out.stored} reading(s)`);
+    });
+});
+// Nightly at 23:30 — distill the day's conversation into durable memory, so a
+// decision or preference from yesterday's chat survives past the raw-turn
+// window and stays recall-able. Dedups against its own last run; skips on too
+// few turns; never files an engine error as memory.
+scheduleNamed("conversation_distill", "30 23 * * *", "conversation distiller", async () => {
+    await runTraced("schedule", "conversation_distill", async () => {
+      const { distillRecentConversation } = await import("./memory/distiller.ts");
+      const out = await distillRecentConversation();
+      console.log(`[distiller] ${out.ran ? `condensed ${out.turns} turns` : `skipped (${out.reason})`}`);
+    });
+});
 // Retention sweep at 08:30 daily — overdue check-ins + renewals coming due.
 // Dormant-honest: with no active clients it finds nothing and says so.
 // Monday 06:50 — the training trend sweep: stalls, slides, and off-pace
@@ -1776,6 +1840,16 @@ scheduleNamed("training_trend_sweep", "50 6 * * 1", "training trend sweep", asyn
       const { trainingTrendSweep } = await import("./training/trendSweep.ts");
       const out = await trainingTrendSweep();
       console.log(`[training] trend sweep: ${out.ran ? `${out.flagged} athlete(s) flagged` : `skipped (${out.reason})`}`);
+    });
+});
+// Sunday 08:00 — cross-athlete pattern sense: what's moving/stalling ACROSS the
+// roster (a working stimulus vs a programming gap), one deduped training-domain
+// signal. Observations only; empty-honest until a real roster pattern exists.
+scheduleNamed("roster_patterns", "0 8 * * 0", "roster pattern sweep", async () => {
+    await runTraced("schedule", "roster_patterns", async () => {
+      const { runRosterPatternSweep } = await import("./training/rosterPatterns.ts");
+      const out = await runRosterPatternSweep();
+      console.log(`[training] roster patterns: ${out.ran ? `${out.patterns} surfaced` : `skipped (${out.reason})`}`);
     });
 });
 scheduleNamed("retention_sweep", "30 8 * * *", "retention sweep", async () => {

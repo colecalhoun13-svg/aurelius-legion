@@ -1,23 +1,10 @@
-import { NextResponse } from "next/server";
-import { confirmAction } from "../../../../../aurelius/autonomy/executor";
-import { registerAllActions } from "../../../../../aurelius/autonomy/registerActions";
+import { proxyToBackend } from "../../../../lib/proxyToBackend";
 
-// DB + action-side-effects — never statically evaluate at build time.
+// Confirm an action — proxied to the backend so the finalizer (which may be an
+// OUTWARD send/publish) runs ONLY in the backend process, behind its lock, with
+// the one authoritative action registry. Never in this frontend process.
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  try {
-    // The registry is populated at backend boot; this Next process is separate,
-    // so ensure the finalizers are registered here too (idempotent).
-    registerAllActions();
-    const body = await request.json();
-    if (!body?.signalId || typeof body.signalId !== "string") {
-      return NextResponse.json({ error: "signalId is required" }, { status: 400 });
-    }
-    const result = await confirmAction(body.signalId);
-    return NextResponse.json(result, { status: result.ok ? 200 : 400 });
-  } catch (error: any) {
-    console.error("Confirm action error:", error);
-    return NextResponse.json({ error: error?.message ?? "confirm failed" }, { status: 500 });
-  }
+  return proxyToBackend(request, "/api/autonomy/confirm");
 }

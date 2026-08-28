@@ -111,10 +111,22 @@ export async function importWarmList(
  * defect that had to be fixed in inbox triage, and far worse here, because
  * this one is addressed to someone who might have become a client.
  */
-export async function draftOutreach(leadId: string): Promise<{
+export async function draftOutreach(
+  leadId: string,
+  // origin distinguishes WHO asked for this draft. The reactive lead-catch
+  // passes "inbound" so its drafts carry a marker in the sourceId — that lets
+  // the reactor's daily cap count ONLY reactive drafts, not the scheduled
+  // sweep's or a manual "draft a reply". Default (undefined) is byte-identical
+  // to the historic behaviour, so the sweep/manual/smoke callers are unchanged.
+  opts: { origin?: "inbound" } = {}
+): Promise<{
   ok: boolean;
   gated?: boolean;
   bridgeSignalId?: string;
+  // Present only when the draft actually got written (not gated) — the reactive
+  // one-tap send stages off these.
+  draftId?: string;
+  to?: string;
   error?: string;
 }> {
   const lead = await prisma.lead.findUnique({ where: { id: leadId } });
@@ -140,7 +152,10 @@ export async function draftOutreach(leadId: string): Promise<{
     actionClass: OUTREACH_DRAFT_CLASS,
     sourceType: "outreach_draft",
     // Touch-numbered so a follow-up isn't deduped against the first message.
-    sourceId: `outreach:${lead.id}:${priorTouches + 1}`,
+    // The trailing ":auto" on reactive drafts still startsWith `outreach:${id}`
+    // (so touch-counting above is unaffected) but is countable on its own, so
+    // the reactor caps its budget without starving the scheduled sweep.
+    sourceId: `outreach:${lead.id}:${priorTouches + 1}${opts.origin === "inbound" ? ":auto" : ""}`,
     prepare: async () => {
       const res = await runLLM({
         taskType: "chat",
@@ -188,7 +203,15 @@ export async function draftOutreach(leadId: string): Promise<{
       };
     },
   }).then(
-    (exec) => ({ ok: true, gated: !exec.finalized, bridgeSignalId: exec.bridgeSignalId }),
+    (exec) => ({
+      ok: true,
+      gated: !exec.finalized,
+      bridgeSignalId: exec.bridgeSignalId,
+      // Present only when the draft actually got written (granted/acted, not
+      // gated) — the reactive one-tap send stages off these.
+      draftId: exec.result?.draftId as string | undefined,
+      to: exec.result?.to as string | undefined,
+    }),
     (err) => ({ ok: false, error: err?.message ?? String(err) })
   );
 }
@@ -200,7 +223,7 @@ export async function draftOutreach(leadId: string): Promise<{
  * lead's follow-up date moves out so the pipeline keeps a next action on every
  * open lead, which is the discipline the whole engine exists to enforce.
  */
-export async function finalizeOutreachDraft(payload: any): Promise<{ draftId?: string; leadId: string }> {
+export async function finalizeOutreachDraft(payload: any): Promise<{ draftId?: string; leadId: string; to?: string }> {
   const { leadId, to, body, name } = payload ?? {};
   if (!leadId) throw new Error("outreach draft payload missing leadId");
 
@@ -243,9 +266,12 @@ export async function finalizeOutreachDraft(payload: any): Promise<{ draftId?: s
       // Persist the thread so an inbound reply can be matched back to this lead
       // and flip it to "conversing" — without it, a reply is invisible.
       ...(threadId ? { outreachThreadId: threadId } : {}),
+      // Persist the draft id so Cole can one-tap "send that to <name>" and the
+      // gated outreach.send delivers the exact reviewed draft.
+      ...(draftId ? { outreachDraftId: draftId } : {}),
     },
   });
-  return { draftId, leadId };
+  return { draftId, leadId, to };
 }
 
 // ── 3. THE SWEEP ─────────────────────────────────────────────────────
@@ -512,6 +538,14 @@ export async function captureInboundLead(input: {
       /* counting failed — default to the loud path; a real lead is worth the buzz */
     }
     const { surfaceSignal } = await import("../core/bridge.ts");
+    // The CTA depends on whether Aurelius can act: with an email, the lead.inbound
+    // reactor is about to draft the reply (one-tap flagship); without one, there's
+    // nothing to draft, so the honest ask is for Cole to reach them his way.
+    const cta = lead.email
+      ? `They came to you. I'm drafting your reply now — it'll land here for a one-tap review, and sending stays your call. ` +
+        `Response time is the whole conversion lever at this stage.`
+      : `They came to you. Reply today — response time is the whole conversion lever at this stage. ` +
+        `No email on file, so reach them your way and mark it done (I can't draft without one).`;
     await surfaceSignal({
       kind: "opportunity",
       domain: "business",
@@ -523,11 +557,28 @@ export async function captureInboundLead(input: {
       body:
         `${lead.name}${lead.email ? ` (${lead.email})` : ""} reached out${lead.sport ? ` about ${lead.sport}` : ""}.\n\n` +
         (lead.notes ? `> ${lead.notes.slice(0, 500)}\n\n` : "") +
-        `They came to you. Reply today — response time is the whole conversion lever at this stage. ` +
-        `Say "draft a reply to ${lead.name}" and I'll write it into your Gmail drafts (you send).`,
+        cta,
     });
   } catch {
     /* the lead is captured either way */
+  }
+
+  // Announce the fact on the bus — ONCE, decoupled. The lead.inbound reactor
+  // (autonomy/reactors.ts) drafts the reply so it's waiting for Cole; future
+  // reactors (nurture cadence, Day-Model refresh) attach there without this
+  // function learning about them. Fire-and-forget: an inbound HTTP intake must
+  // not block on a reactor's LLM call, and no handler can throw out of emit.
+  try {
+    const { emit } = await import("../core/events.ts");
+    void emit({
+      type: "lead.inbound",
+      leadId: lead.id,
+      name: lead.name,
+      source: referredBy ? "referral" : channel,
+      hasEmail: !!email,
+    });
+  } catch {
+    /* the lead is captured and surfaced either way */
   }
   return { ok: true, leadId: lead.id };
 }

@@ -100,6 +100,83 @@ export const businessAdapter: ToolAdapter = {
       dataSchema: '{ "question": string (what he\'s weighing — e.g. "how do I get more high school athletes into the gym") }',
       example: '[TOOL: tool=business action=options data={"question": "how should I get more varsity athletes in the door"}]',
     },
+    {
+      name: "research_partners",
+      description:
+        "Research NON-competing partnership candidates (apparel/gear/recovery/complementary brands — NEVER other gyms or PT clinics), grounded in Cole's positioning. Read-only: names and why, not outreach. Use for 'who could I partner with', 'find brand partners'.",
+      dataSchema: "{}",
+      example: "[TOOL: tool=business action=research_partners data={}]",
+    },
+    {
+      name: "draft_partner_intro",
+      description:
+        "Draft an INWARD intro DM/email to a specific partner and mint a per-partner tracked link so a landed partnership is attributable. Drafts only — sending stays Cole's. Use for 'draft an intro to <brand>'.",
+      dataSchema: "{ name: string, handle?: string, angle?: string }",
+      example: '[TOOL: tool=business action=draft_partner_intro data={"name":"<brand>","angle":"co-branded speed program"}]',
+    },
+    {
+      name: "probe_offer",
+      description:
+        "Float 2-3 offer VARIANTS behind tracked links to learn which framing pulls — consistent pricing, never per-lead. Inward: creates the probe + links, nothing outward. Use for 'test my offer framing', 'which package lands'.",
+      dataSchema: "{ variants?: number (2-3) }",
+      example: "[TOOL: tool=business action=probe_offer data={}]",
+    },
+    {
+      name: "offer_probe_standing",
+      description:
+        "Where a running offer probe stands — which variant is pulling and whether there's enough signal to call it. Read-only. Use for 'how's the offer test going'.",
+      dataSchema: "{}",
+      example: "[TOOL: tool=business action=offer_probe_standing data={}]",
+    },
+    {
+      name: "capacity",
+      description:
+        "Roster/capacity health: how many paying clients Cole has vs the remote capacity he can actually handle on top of the gym job, plus headroom. Honest when capacity isn't set (won't invent a ceiling). Gym athletes reported as a coaching load, never a business slot. Use for 'how full am I', 'can I take more clients', 'what's my capacity'.",
+      dataSchema: "{}",
+      example: "[TOOL: tool=business action=capacity data={}]",
+    },
+    {
+      name: "productize",
+      description:
+        "RECOMMENDATIONS for turning time-for-money coaching into something repeatable (a named program, a self-serve template, a cohort). Recommends only — never builds a product or sets a price. Honest pre-data. Use for 'how do I scale', 'can I productize this', 'package my coaching'.",
+      dataSchema: "{}",
+      example: "[TOOL: tool=business action=productize data={}]",
+    },
+    {
+      name: "flight_sim",
+      description:
+        "Model a business move BEFORE committing — 'raise the block to $350 and add 3 clients', 'go part-time at the gym'. Projects revenue/capacity/timeline against Cole's REAL numbers, names what has to be true, and the biggest risk. A model, not a promise — says its assumptions. Use for 'what if I…', 'should I raise my price', 'model this'.",
+      dataSchema: "{ scenario: string }",
+      example: '[TOOL: tool=business action=flight_sim data={"scenario":"raise the block to $350 and add 3 clients"}]',
+    },
+    {
+      name: "discovery_prep",
+      description:
+        "A one-glance discovery-call prep sheet for a lead: the picture, qualifying questions, the offer to present, likely objections. Read-only. Use for 'prep me for the call with <lead>', 'discovery prep for <lead>'.",
+      dataSchema: "{ leadId: string }",
+      example: '[TOOL: tool=business action=discovery_prep data={"leadId":"abc"}]',
+    },
+    {
+      name: "discovery_followup",
+      description:
+        "Draft the post-call follow-up for a lead, from the lead plus Cole's call notes. INWARD — a draft Cole reads and sends. Use for 'follow up with <lead> after the call'.",
+      dataSchema: "{ leadId: string, notes?: string }",
+      example: '[TOOL: tool=business action=discovery_followup data={"leadId":"abc","notes":"wants speed, budget tight, start in Sept"}]',
+    },
+    {
+      name: "niche_wedge",
+      description:
+        "Find under-served NICHE WEDGES — specific athlete/sport/format spots the field leaves open that Cole's standard fits — for floating a new program or sharpening positioning. Research-grounded, honestly labelled (says when it's a hypothesis, not a finding). Use for 'where's my opening', 'what niche should I go after', 'new program idea'.",
+      dataSchema: "{ topic?: string }",
+      example: '[TOOL: tool=business action=niche_wedge data={"topic":"remote speed training for soccer"}]',
+    },
+    {
+      name: "competitor_intel",
+      description:
+        "Competitor intel on OTHER remote coaches (never the gym Cole works for): how they position/promise, price signals, and the positioning gaps Cole could own. Research-grounded, honestly labelled, never fabricates a claim about a named competitor. Use for 'what are other coaches doing', 'competitor research', 'how do I stand out'.",
+      dataSchema: "{ names?: string }",
+      example: '[TOOL: tool=business action=competitor_intel data={}]',
+    },
   ],
   async run(action, data): Promise<ToolAdapterResult> {
     // ── marketing: evidence-carrying, never a bare assertion ──
@@ -175,6 +252,95 @@ export const businessAdapter: ToolAdapter = {
         const out = await O.retireOffer(String(data.offerId));
         if (!out.ok) return { ok: false, output: null, error: out.error };
         return { ok: true, output: await O.offerReadiness() };
+      } catch (err: any) {
+        return { ok: false, output: null, error: err?.message ?? String(err) };
+      }
+    }
+
+    // ── partnerships (non-competing) + offer probe: inward growth ──
+    if (action === "research_partners" || action === "draft_partner_intro" || action === "probe_offer" || action === "offer_probe_standing") {
+      try {
+        if (action === "research_partners") {
+          const { researchPartners } = await import("../../business/partnership.ts");
+          const out = await researchPartners();
+          if (!out.ok) return { ok: false, output: null, error: out.suggestions };
+          return { ok: true, output: { suggestions: out.suggestions, trustThis: out.grounding } };
+        }
+        if (action === "draft_partner_intro") {
+          if (!data?.name) throw new Error("draft_partner_intro needs a partner name.");
+          const { draftPartnerIntro } = await import("../../business/partnership.ts");
+          const out = await draftPartnerIntro({ name: String(data.name), handle: data?.handle, angle: data?.angle });
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return {
+            ok: true,
+            output: { body: out.body, trackedLink: out.refUrl, note: "Inward draft — send it yourself. The link makes a landed partnership attributable." },
+          };
+        }
+        if (action === "probe_offer") {
+          const { probeOffer } = await import("../../business/offers.ts");
+          const out = await probeOffer({ variants: data?.variants != null ? Number(data.variants) : undefined });
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: out };
+        }
+        const { offerProbeStanding } = await import("../../business/offers.ts");
+        return { ok: true, output: await offerProbeStanding() };
+      } catch (err: any) {
+        return { ok: false, output: null, error: err?.message ?? String(err) };
+      }
+    }
+
+    // ── capacity health + productization: business intelligence reads ──
+    if (action === "capacity" || action === "productize") {
+      try {
+        if (action === "capacity") {
+          const { capacityHealth } = await import("../../business/capacity.ts");
+          return { ok: true, output: await capacityHealth() };
+        }
+        const { productizationRecommendations } = await import("../../business/productization.ts");
+        const out = await productizationRecommendations();
+        if (!out.ok) return { ok: false, output: null, error: out.error };
+        return { ok: true, output: { recommendations: out.recommendations, trustThis: out.grounding } };
+      } catch (err: any) {
+        return { ok: false, output: null, error: err?.message ?? String(err) };
+      }
+    }
+
+    // ── planning: flight-sim (what-if) + discovery-call co-pilot ──
+    if (action === "flight_sim" || action === "discovery_prep" || action === "discovery_followup") {
+      try {
+        if (action === "flight_sim") {
+          const { flightSimulate } = await import("../../business/flightSim.ts");
+          const out = await flightSimulate(String(data?.scenario ?? ""));
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: { projection: out.projection, trustThis: out.grounding } };
+        }
+        if (!data?.leadId) throw new Error(`${action} needs a leadId.`);
+        const D = await import("../../business/discovery.ts");
+        if (action === "discovery_prep") {
+          const out = await D.discoveryPrep(String(data.leadId));
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: { sheet: out.sheet } };
+        }
+        const out = await D.discoveryFollowup(String(data.leadId), data?.notes ? String(data.notes) : undefined);
+        if (!out.ok) return { ok: false, output: null, error: out.error };
+        return { ok: true, output: { body: out.body, note: "Inward draft — read it, then send it yourself." } };
+      } catch (err: any) {
+        return { ok: false, output: null, error: err?.message ?? String(err) };
+      }
+    }
+
+    // ── market intel: niche wedges + competitor positioning (research-backed) ──
+    if (action === "niche_wedge" || action === "competitor_intel") {
+      try {
+        const M = await import("../../business/marketIntel.ts");
+        if (action === "niche_wedge") {
+          const out = await M.nicheWedge(data?.topic ? String(data.topic) : undefined);
+          if (!out.ok) return { ok: false, output: null, error: out.error };
+          return { ok: true, output: { wedges: out.wedge, trustThis: out.grounding, sources: out.sources } };
+        }
+        const out = await M.competitorIntel(data?.names ? String(data.names) : undefined);
+        if (!out.ok) return { ok: false, output: null, error: out.error };
+        return { ok: true, output: { intel: out.intel, trustThis: out.grounding, sources: out.sources } };
       } catch (err: any) {
         return { ok: false, output: null, error: err?.message ?? String(err) };
       }

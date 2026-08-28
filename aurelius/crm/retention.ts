@@ -104,6 +104,17 @@ async function onPeak(clientId: string, pr: { label: string; value: number; unit
     await prisma.referral.create({ data: { referrerClientId: clientId, reason: "pr", status: "proposed", askDraftedAt: new Date() } });
   }
 
+  // Announce the PR on the bus — the proof-content reactor drafts a post for
+  // non-minor clients so it's waiting for Cole (minors need consent he handles
+  // by hand, so the reactor skips them). Fire-and-forget; no handler can throw
+  // out of emit. Business clients only — this branch already excluded gym athletes.
+  try {
+    const { emit } = await import("../core/events.ts");
+    void emit({ type: "pr.recorded", clientId, name: client.name, isMinor: !!client.isMinor, label: pr.label, value: pr.value, unit: pr.unit });
+  } catch {
+    /* the PR + referral + signal stand regardless */
+  }
+
   const { surfaceSignal } = await import("../core/bridge.ts");
   await surfaceSignal({
     kind: "opportunity",

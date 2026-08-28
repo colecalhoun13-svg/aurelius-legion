@@ -789,6 +789,11 @@ model Lead {
   // credit the angle. Without it, a reply is invisible to the pipeline.
   outreachThreadId String?
 
+  // The Gmail DRAFT id of the message waiting for this lead, persisted so Cole
+  // can one-tap "send that to <name>" and the gated outreach.send knows exactly
+  // which reviewed draft to deliver — without it, sending means hunting in Gmail.
+  outreachDraftId String?
+
   attributionEvents AttributionEvent[]
 
   createdAt DateTime @default(now())
@@ -1365,5 +1370,71 @@ model Referral {
   updatedAt DateTime @updatedAt
 
   @@index([referrerClientId, status])
+  @@index([status])
+}
+
+// ── PERSONAL FINANCE (Cole's own money — NEVER business, NEVER indexed) ──
+// A separate money world from the business ledger: no business query reads
+// these tables and they are never embedded into the vector index (hard rule 6),
+// so balances/transactions can't leak into a prompt. Integer cents throughout.
+model FinanceAccount {
+  id            String   @id @default(cuid())
+  name          String
+  kind          String   @default("checking") // "checking"|"savings"|"investment"|"debt"|"cash"
+  balanceCents  Int      @default(0) // signed — a debt account is negative
+  currency      String   @default("usd")
+  lastBalanceAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  txns          FinanceTxn[]
+
+  @@index([kind])
+}
+
+model FinanceTxn {
+  id          String          @id @default(cuid())
+  accountId   String?
+  account     FinanceAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  date        DateTime
+  amountCents Int // signed: + in / - out
+  category    String          @default("other")
+  description String?
+  source      String          @default("manual") // "csv" | "manual"
+  importHash  String?         @unique // idempotent CSV dedupe (re-import is a no-op)
+  createdAt   DateTime        @default(now())
+
+  @@index([date])
+  @@index([category])
+}
+
+model NetWorthSnapshot {
+  id               String   @id @default(cuid())
+  at               DateTime @default(now())
+  assetsCents      Int
+  liabilitiesCents Int
+  netCents         Int
+  createdAt        DateTime @default(now())
+
+  @@index([at])
+}
+
+// ── n=1 SELF-EXPERIMENTS (Athlete Zero) — Cole testing things on himself ──
+// "Does X move Y?" — a hypothesis, a metric to watch, a baseline captured at
+// the start and a result at the end, with an honest n=1 verdict (a signal, not
+// proof). Ties to his own metrics on the self record; never business.
+model SelfExperiment {
+  id            String   @id @default(cuid())
+  hypothesis    String
+  protocol      String?
+  metricLabel   String // which self-metric to watch (e.g. "vertical", "recovery")
+  startAt       DateTime @default(now())
+  endAt         DateTime?
+  baselineValue Float?
+  resultValue   Float?
+  status        String   @default("running") // "running" | "concluded" | "abandoned"
+  verdict       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
   @@index([status])
 }

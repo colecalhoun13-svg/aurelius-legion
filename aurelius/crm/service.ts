@@ -253,7 +253,10 @@ export async function listClients(opts: { status?: string; kind?: string; limit?
   return prisma.client.findMany({
     where: {
       ...(opts.status ? { status: must(opts.status, CLIENT_STATUSES, "status") } : {}),
-      ...(opts.kind ? { kind: must(opts.kind, CLIENT_KINDS, "kind") } : {}),
+      // Default to the listable kinds (client + training_only). The self record
+      // (Athlete Zero, kind:"self") is Cole, not someone on his roster, so it
+      // must never appear in a bare "list clients" — only an explicit kind reaches it.
+      ...(opts.kind ? { kind: must(opts.kind, CLIENT_KINDS, "kind") } : { kind: { in: [...CLIENT_KINDS] } }),
     },
     include: { engagements: { where: { status: "active" } } },
     orderBy: { createdAt: "desc" },
@@ -707,10 +710,12 @@ export async function clientDetail(idOrName: string) {
   return { client, engagements, sessions, invoices, payments, lifetimeCents, lifetime: fromCents(lifetimeCents) };
 }
 
-/** Resolve a client by name for chat ("log a check-in for Jake"). */
+/** Resolve a client by name for chat ("log a check-in for Jake"). Never matches
+ *  the Athlete Zero self record (kind:"self") — Cole is not one of the people he
+ *  coaches, so a name lookup for a check-in/note must never resolve to him. */
 export async function findClientByName(name: string) {
   const matches = await prisma.client.findMany({
-    where: { name: { contains: name.trim(), mode: "insensitive" } },
+    where: { name: { contains: name.trim(), mode: "insensitive" }, kind: { not: "self" } },
     select: { id: true, name: true },
     take: 5,
   });

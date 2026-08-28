@@ -144,6 +144,122 @@ const mockEmbeddingAdapter: EmbeddingAdapter = {
   },
 };
 
+// ── Embed-once cache (router efficiency, Build #1) ──────────────────
+//
+// Within ONE turn the same user message is embedded by up to five independent
+// layers — operator routing, semantic recall, compiled-pattern retrieval,
+// semantic reuse, and decision precedent. An embedding is a pure function of
+// (provider, model, text), so calls 2..5 are wasted network round-trips that
+// cost latency and money and change nothing. A bounded LRU keyed by the
+// provider SIGNATURE + text collapses them to one.
+//
+// Correctness: a hit returns the identical vector the provider would have
+// returned — same geometry, same recall. The key carries `${name}:${model}`,
+// so a provider/model swap misses cleanly rather than serving stale geometry
+// (this is the same signature reindex.ts guards the index with). The cache is
+// process-local and never persisted, so it can never outlive a redeploy.
+// Fallback: if anything here throws, the wrapper is transparent — callers get
+// exactly the base adapter's behavior.
+
+const EMBED_CACHE_MAX = Math.max(256, Number(process.env.EMBED_CACHE_MAX) || 4096);
+// Single-flight: the value is the in-flight (or settled) embed PROMISE, so a
+// concurrent second caller for the same text awaits the first call instead of
+// launching its own — the "embed ONCE" guarantee holds even when independent
+// prompt layers embed the same message in parallel.
+const embedCache = new Map<string, Promise<number[]>>(); // insertion-ordered → cheap LRU
+let embedCacheHits = 0;
+let embedCacheMisses = 0;
+
+/** Observability (the "output" half of the spec): callers/tests/doctor can see
+ *  the cache is actually collapsing duplicate embeds instead of guessing. */
+export function embedCacheStats(): { hits: number; misses: number; size: number; max: number } {
+  return { hits: embedCacheHits, misses: embedCacheMisses, size: embedCache.size, max: EMBED_CACHE_MAX };
+}
+
+function cacheGet(key: string): Promise<number[]> | undefined {
+  const v = embedCache.get(key);
+  if (v !== undefined) {
+    // Touch → move to newest slot (LRU recency via insertion order).
+    embedCache.delete(key);
+    embedCache.set(key, v);
+  }
+  return v;
+}
+
+function cacheSet(key: string, vec: Promise<number[]>): void {
+  if (embedCache.has(key)) embedCache.delete(key);
+  embedCache.set(key, vec);
+  while (embedCache.size > EMBED_CACHE_MAX) {
+    const oldest = embedCache.keys().next().value;
+    if (oldest === undefined) break;
+    embedCache.delete(oldest);
+  }
+}
+
+/**
+ * Wrap a base adapter so identical (provider, model, text) embeds are served
+ * from one in-flight call. Batch-aware: only the cache MISSES hit the provider,
+ * together in a single batched call, and the merged result preserves input
+ * order exactly. name/model/dims pass through untouched so the index signature
+ * and doctor probes are unchanged. A provider ERROR evicts the failed keys so
+ * the next turn retries cleanly rather than caching a rejection.
+ */
+function withEmbedCache(base: EmbeddingAdapter): EmbeddingAdapter {
+  const sig = `${base.name}:${base.model}:${base.dims} `;
+  return {
+    name: base.name,
+    model: base.model,
+    dims: base.dims,
+    async embed(texts: string[]): Promise<number[][]> {
+      type Slot = { promise: Promise<number[]>; resolve?: (v: number[]) => void; reject?: (e: unknown) => void; text?: string; key?: string };
+      const slots: Slot[] = [];
+      const missSlots: Slot[] = [];
+      for (const text of texts) {
+        const key = sig + text;
+        const existing = cacheGet(key);
+        if (existing) {
+          embedCacheHits++;
+          slots.push({ promise: existing });
+        } else {
+          embedCacheMisses++;
+          let resolve!: (v: number[]) => void;
+          let reject!: (e: unknown) => void;
+          const promise = new Promise<number[]>((res, rej) => { resolve = res; reject = rej; });
+          const slot: Slot = { promise, resolve, reject, text, key };
+          cacheSet(key, promise);
+          slots.push(slot);
+          missSlots.push(slot);
+        }
+      }
+      if (missSlots.length > 0) {
+        try {
+          const fresh = await base.embed(missSlots.map((s) => s.text!));
+          missSlots.forEach((s, j) => s.resolve!(fresh[j]));
+        } catch (err) {
+          for (const s of missSlots) {
+            if (s.key && embedCache.get(s.key) === s.promise) embedCache.delete(s.key);
+            s.reject!(err);
+          }
+          throw err;
+        }
+      }
+      return Promise.all(slots.map((s) => s.promise));
+    },
+  };
+}
+
+// Base adapters are module singletons, so a stable wrapper per base keeps
+// getEmbeddingAdapter() returning a consistent reference across calls.
+const wrappedAdapters = new WeakMap<EmbeddingAdapter, EmbeddingAdapter>();
+function cached(base: EmbeddingAdapter): EmbeddingAdapter {
+  let w = wrappedAdapters.get(base);
+  if (!w) {
+    w = withEmbedCache(base);
+    wrappedAdapters.set(base, w);
+  }
+  return w;
+}
+
 // ── Resolution ──────────────────────────────────────────────────────
 
 /**
@@ -177,13 +293,13 @@ export function getEmbeddingAdapter(): EmbeddingAdapter | null {
   if (process.env.RETRIEVAL_EMBEDDINGS_ENABLED === "false") return null;
 
   const provider = (process.env.EMBEDDINGS_PROVIDER ?? "openai").trim().toLowerCase();
-  if (provider === "mock") return mockEmbeddingAdapter;
+  if (provider === "mock") return cached(mockEmbeddingAdapter);
   if (provider === "openai") {
-    if (process.env.OPENAI_API_KEY) return openaiEmbeddingAdapter;
+    if (process.env.OPENAI_API_KEY) return cached(openaiEmbeddingAdapter);
     return warnKeyless("openai", "OPENAI_API_KEY");
   }
   if (provider === "gemini") {
-    if (process.env.GEMINI_API_KEY) return geminiEmbeddingAdapter;
+    if (process.env.GEMINI_API_KEY) return cached(geminiEmbeddingAdapter);
     return warnKeyless("gemini", "GEMINI_API_KEY");
   }
   // Future: "ollama" adapter slots in here (Mac Mini phase).

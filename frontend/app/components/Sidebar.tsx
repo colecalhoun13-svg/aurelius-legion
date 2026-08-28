@@ -6,9 +6,11 @@ import AureliusCrest from "../../components/identity/AureliusCrest";
 import { operatorRegistry, OperatorDefinition } from "../../lib/operators/operatorRegistry";
 
 const NAV_GLYPHS: Record<string, string> = {
-  Morning: "❂",
+  Dashboard: "❂",
   Chat: "❧",
   Decisions: "⇄",
+  Zero: "◉",
+  Finance: "❦",
   Business: "◈",
   Goals: "◎",
   Brain: "❈",
