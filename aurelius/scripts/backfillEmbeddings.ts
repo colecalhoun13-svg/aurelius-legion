@@ -50,6 +50,22 @@ async function main() {
   const adapter = getEmbeddingAdapter()!;
   console.log(`[backfill] provider: ${adapter.name} (${adapter.model}, ${adapter.dims}d)`);
 
+  // SAFETY — refuse the MOCK provider (prod footgun). Mock emits deterministic
+  // hash vectors, not real embeddings. Backfilling under mock — above all with
+  // --force — overwrites the real index with garbage and silently destroys
+  // recall. upsertEmbedding keys on (sourceType, sourceId, chunkIndex) with no
+  // model in the key, so a mock run REPLACES good vectors in place; there is no
+  // undo. There is no legitimate reason to populate a real index with mock, so
+  // halt outright rather than trust the operator to have set the env right.
+  if (adapter.name === "mock" || /mock/i.test(`${adapter.name} ${adapter.model}`)) {
+    console.error(
+      `[backfill] REFUSING: live embedding provider is MOCK (${adapter.name}:${adapter.model}). ` +
+        `Mock vectors are hash garbage — writing them${force ? " with --force would WIPE the real index" : " would corrupt the index"}. ` +
+        `Re-run with EMBEDDINGS_PROVIDER=gemini (or --provider gemini) and a real GEMINI_API_KEY.`
+    );
+    process.exit(1);
+  }
+
   let embedded = 0;
   let skipped = 0;
   let failed = 0;
