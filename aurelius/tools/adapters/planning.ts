@@ -17,6 +17,10 @@ import { setSchedule, listSchedules, setEnabled } from "../../core/schedule.ts";
 
 export const planningAdapter: ToolAdapter = {
   name: "planning",
+  // Release 1 (trust foundation): plan_day / weekly-planning / ritual-retime
+  // write state — a retried partial write duplicates plans or re-times twice.
+  // Non-idempotent: never auto-retry.
+  maxRetries: 0,
   description:
     "Planning & scheduling: plan the day, analyze the week, detect overload (calendar-aware when synced), decompose goals into proposed tasks, run the weekly planning session, and change the times of Aurelius's daily/weekly rituals (morning briefing, midday check, nightly debrief, etc.).",
   actions: [

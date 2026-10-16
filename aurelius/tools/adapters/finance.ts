@@ -8,6 +8,10 @@ import type { ToolAdapter, ToolAdapterResult } from "../types.ts";
 
 export const financeAdapter: ToolAdapter = {
   name: "finance",
+  // Release 1 (trust foundation): add_txn/add_account/update_balance are
+  // non-idempotent writes — a retried partial write double-books money. Never
+  // auto-retry; a failed call fails loudly instead of silently re-firing.
+  maxRetries: 0,
   description:
     "Cole's PERSONAL money (separate from the business): net worth, cashflow, spending by category, and runway. Manual + CSV. Private and inward — reports and records his own finances, never business, never outward.",
   actions: [

@@ -1769,6 +1769,25 @@ scheduleNamed("morning_briefing", "0 7 * * *", "morning briefing", async () => {
       await sendToCole(briefing);
     });
 });
+// Daily doctor sweep at 06:55 — just before the 07:00 brief. The doctor
+// (core/doctor.ts) is the truth-teller, but it was PULL-only: a degraded system
+// (dead LLM credits → 100% failover, rotted Google OAuth, stranded vectors, a
+// backup landing on ephemeral disk) could run for WEEKS unless Cole happened to
+// open it. This converts it to PUSH — it texts only the FAILs, each with its
+// concrete fix, and stays SILENT when healthy (attention by exception). The #1
+// reliability gap from the audit; reuses runDoctor(), adds no new surface.
+scheduleNamed("doctor_sweep", "55 6 * * *", "daily doctor sweep", async () => {
+    await runTraced("schedule", "doctor_sweep", async () => {
+      const { runDoctor } = await import("./core/doctor.ts");
+      const { checks } = await runDoctor();
+      const fails = checks.filter((c) => c.status === "fail");
+      if (fails.length === 0) return; // healthy — say nothing
+      const body = fails
+        .map((c) => `✗ ${c.area} / ${c.name}: ${c.detail}${c.fix ? `\n   → ${c.fix}` : ""}`)
+        .join("\n\n");
+      await sendToCole(`🩺 Doctor — ${fails.length} thing(s) broken this morning:\n\n${body}`.slice(0, 3500));
+    });
+});
 // Outreach sweep at 07:30 — straight after the briefing, so the day starts
 // with the prospecting already drafted rather than as another intention.
 // Bounded to 3 drafts/run: the constraint is Cole's review capacity, not

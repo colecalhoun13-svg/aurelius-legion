@@ -491,6 +491,18 @@ export async function recordPayment(input: {
   const amountCents = toCents(input.amount);
   if (amountCents === 0) throw new Error("A payment of zero isn't a payment.");
 
+  // Idempotency (Release 1 — trust foundation): a payment carrying an externalRef
+  // is booked at most once. Previously only the Stripe/self-record path deduped
+  // (crm/selfRecord.ts); a manual or API retry through this function with the same
+  // ref would double-book — money is the one place a duplicate is unforgivable. A
+  // null ref (hand-entered with no external id) can't be auto-deduped; a caller
+  // that needs manual idempotency passes a derived externalRef.
+  const idemRef = input.externalRef?.trim() || null;
+  if (idemRef) {
+    const existing = await prisma.payment.findFirst({ where: { externalRef: idemRef } });
+    if (existing) return existing; // already recorded (and already attributed) — no-op
+  }
+
   const payment = await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.create({
       data: {

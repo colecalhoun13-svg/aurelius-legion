@@ -90,6 +90,15 @@ The PDF was treated as hypothesis. Each claim checked against the code this sess
 | 5 | ~148 actions across 15 adapters | **CONFIRMED** | 161 `name:` entries in `tools/adapters/*.ts` − 15 adapter-level names = **~146 actions** across **15** registered adapters (`registerTools.ts` = 15 `registerTool` calls). PDF's "~148 / 15" is accurate. |
 | 6 | `runNervousSystemTick` has no production invoker | **CONFIRMED** | Only `scripts/runNervousSystemTick.ts` and `scripts/runNervousSystemLoop.ts` call it; nothing in `index.ts`/`core/schedule.ts`. Not on the spine. |
 
+### Upgrades landed this session (on branch `claude/aurelius-legion-expansion-syxk9f` — pending deploy)
+Release 0 / Release 1 fixes for the verified gaps above. `tsc` 0/0 both trees;
+reachability clean. Smoke suite not run (no pgvector on the sandbox).
+- **Daily doctor push** (`index.ts` `doctor_sweep`, 06:55, claim-protected in `schedule.ts`) — pushes only FAILs to Telegram, silent when healthy. Closes the #1 reliability risk (silent degradation). *Moves #14 → 3 once deployed.*
+- **`/api/unlock` rate-limit + lockout** (`frontend/app/api/unlock/route.ts`) — per-IP throttle, 15-min lockout after 10 bad keys. Closes the highest-severity security hole. *Moves #12 hardening.*
+- **Retry idempotency** (claim 1) — `maxRetries: 0` on the `finance` and `planning` adapters (the two write-adapters that hadn't opted out).
+- **Payment idempotency** (claim 2) — `recordPayment` (`crm/service.ts`) now returns the existing row on a duplicate `externalRef` instead of double-booking.
+- *Still open (next session, need design review):* gating the destructive tool actions `google_calendar.delete_event` / `corpus.forget` (claim 3), the confirm-card full-payload rendering (claim 4), and the new observe-only perception job (Release 2).
+
 ### Nervous-system revive-vs-rebuild (resolves the review↔PDF conflict)
 The objective review said delete `nervousSystem` as dead code; the PDF's Release 2
 revives it. **Evidence says: don't revive it — build a new observe-only perception
