@@ -76,3 +76,32 @@ substrate but **wired to nothing**, so today it mostly speaks on a clock, not in
   (Step 3 — needs a prod dry-run; sandbox has no DB/keys).
 - Whether the smoke suite passes against a real DB (couldn't run here — no `DATABASE_URL`).
 - Whether `initiative_pulse` registers at boot (nested under a conditional, `index.ts:1988`).
+
+## Verification — Build Plan PDF code claims (2026-10-16)
+
+The PDF was treated as hypothesis. Each claim checked against the code this session.
+
+| # | PDF claim | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Non-idempotent retries can double-execute | **CONFIRMED (partial coverage)** | `toolEngine.ts:74` retries via `adapter.maxRetries ?? MAX_RETRIES`, default `MAX_RETRIES=1` (`:22`). Write adapters that opt out with `maxRetries:0`: crm, productivity, googleCalendar, gmail, content, googleSheets, learning. **Gaps: `finance` (writes `add_txn`/`add_account`/`update_balance`, `finance.ts`, no `maxRetries`) and `planning` do NOT opt out** → a partial-write-then-throw retries once → duplicate. Mechanism is right; coverage incomplete. |
+| 2 | Payment/manual-txn idempotency needs hardening | **CONFIRMED** | Stripe-webhook path is idempotent (`crm/selfRecord.ts:182-183` dedupes `externalRef`, `:211` catches P2002). But `recordPayment` (`crm/service.ts:464`) — the manual path — has **no dedup guard**, and manual entries pass a null `externalRef` (not unique-constrained) → duplicate manual payments/txns possible. |
+| 3 | Irreversible **inward** actions not consistently gated | **CONFIRMED** | Tool actions execute via `adapter.run(...)` directly (`toolEngine.ts:89`) with **no confirm gate**; the executor's gate (`autonomy/executor.ts`) covers only the 16 action **classes**, not the ~146 tool actions. Destructive tool actions run immediately from chat: `google_calendar.delete_event` (`tools/adapters/googleCalendar.ts:54,139` → deletes a real event), `corpus.forget` (`tools/adapters/corpus.ts:25` → purges a doc from embeddings+memory+vault). Both irreversible, inward, ungated. |
+| 4 | Preview vs executed payload mismatch | **PLAUSIBLE (nuanced)** | Execution is faithful: `confirmAction` runs the exact stored payload — `finalizer(confirm.payload.actionPayload)` (`executor.ts:276`). BUT the human-readable card `body` is authored **independently** of `actionPayload` (no structural link), and phone pushes **truncate** it (`core/bridge.ts:169,205` `.slice(0,3500)`). So a card can under-show/misrepresent what executes — the gap the PDF targets. The gmail case was already spot-fixed (readDraft). No divergence at execution; the *preview* is the weak point. |
+| 5 | ~148 actions across 15 adapters | **CONFIRMED** | 161 `name:` entries in `tools/adapters/*.ts` − 15 adapter-level names = **~146 actions** across **15** registered adapters (`registerTools.ts` = 15 `registerTool` calls). PDF's "~148 / 15" is accurate. |
+| 6 | `runNervousSystemTick` has no production invoker | **CONFIRMED** | Only `scripts/runNervousSystemTick.ts` and `scripts/runNervousSystemLoop.ts` call it; nothing in `index.ts`/`core/schedule.ts`. Not on the spine. |
+
+### Nervous-system revive-vs-rebuild (resolves the review↔PDF conflict)
+The objective review said delete `nervousSystem` as dead code; the PDF's Release 2
+revives it. **Evidence says: don't revive it — build a new observe-only perception
+job instead.** `runNervousSystemTick` (`core/nervousSystem.ts:54`) →
+`runAutonomyCycle` (`autonomy/autonomyEngineDB.ts:40`) → `routeTask` from the
+**legacy** `core/engineRouter.ts` (flagged for deletion) with a **stub
+`EngineContext`**: `memory.read→null`, `memory.search→[]`, `tools.runTool→null`
+(`autonomyEngineDB.ts:28-37`). It perceives nothing and acts nothing; it writes an
+`AutonomyGoal` + a log. Reviving it resurrects the legacy router + the
+`AutonomyGoal` model for a cycle that cannot observe real signals. The PDF's
+*intent* (scheduled, observe-only detection + dedupe + urgency scoring + one
+digest) is better met by a ~40-line job on the existing `scheduleNamed` +
+`claimDailyRun` pattern reading the real inbox/calendar/job-health services. This
+satisfies both docs: the module is dead (review was right); the capability is
+wanted (PDF is right) — so build the capability fresh, don't revive the shell.

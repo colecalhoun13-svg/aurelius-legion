@@ -4,6 +4,12 @@
 wins all conflicts. This file is the how: hard rules and hard-won gotchas for
 anyone (human or agent) working in this repo.
 
+**`docs/PLANS_INDEX.md` indexes the planning docs** (BUILD_PLAN · OPERATOR_CHARTER
+· SUPER_JARVIS_PLAN · SUPER_JARVIS_ROADMAP) and the rules for resolving conflicts
+between them: boundaries and security rules from any doc always apply and the most
+restrictive wins; on order/scope conflicts the higher doc in that index wins
+(under NORTH_STAR); anything uncovered, ask Cole.
+
 ## Hard rules
 
 1. **Act inward, gate outward, never self-escalate.** (Hybrid Autonomy —
